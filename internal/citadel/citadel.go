@@ -17,8 +17,10 @@ import (
 
 	"github.com/nats-io/nats.go"
 
+	v1 "github.com/skylands-ai/skylands/api/v1"
 	"github.com/skylands-ai/skylands/internal/citadel/projections"
 	"github.com/skylands-ai/skylands/internal/citadel/web"
+	"github.com/skylands-ai/skylands/internal/es"
 	webclient "github.com/skylands-ai/skylands/web"
 )
 
@@ -40,11 +42,17 @@ type Config struct {
 // citadel is one running citadel.
 type citadel struct {
 	cfg     Config
+	ctx     context.Context
 	web     *web.Server
 	islands *projections.Islands
+	terrain *projections.Terrain
+	store   *es.Store
 
 	mu sync.Mutex
 	nc *nats.Conn
+	// following holds the hosts whose streams this citadel mirrors and
+	// follows.
+	following map[string]bool
 }
 
 // Run connects to the world and serves until ctx is cancelled. It keeps
@@ -57,8 +65,9 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.PollWindow <= 0 {
 		cfg.PollWindow = time.Second
 	}
-	c := &citadel{cfg: cfg}
+	c := &citadel{cfg: cfg, ctx: ctx, following: map[string]bool{}}
 	c.islands = projections.NewIslands(c.onIsland)
+	c.terrain = projections.NewTerrain(c.onRepo)
 	dist, err := fs.Sub(webclient.Dist, "dist")
 	if err != nil {
 		return fmt.Errorf("web client: %w", err)
@@ -81,8 +90,13 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("connect to NATS at %s: %w", cfg.NATSURL, err)
 	}
+	store, err := es.New(nc)
+	if err != nil {
+		return err
+	}
 	c.mu.Lock()
 	c.nc = nc
+	c.store = store
 	c.mu.Unlock()
 	defer nc.Close()
 	if !nc.IsConnected() {
@@ -100,7 +114,7 @@ func Run(ctx context.Context, cfg Config) error {
 // connects.
 func (c *citadel) snapshot() web.Message {
 	info := c.serverInfo()
-	return web.Message{Type: "snapshot", Server: &info, Islands: c.islands.List()}
+	return web.Message{Type: "snapshot", Server: &info, Islands: c.islands.List(), Repos: c.terrain.List()}
 }
 
 // serverInfo describes the NATS server as the citadel sees it right now.
@@ -145,8 +159,55 @@ func (c *citadel) onDisconnect(nc *nats.Conn, err error) {
 func (c *citadel) onIsland(isl projections.Island) {
 	if isl.Reachable {
 		slog.Info("citadel: island reachable", "host", isl.Host, "daemon", isl.Daemon.Version, "os", isl.Daemon.OS+"/"+isl.Daemon.Arch)
+		c.followHost(isl.Host)
 	} else {
 		slog.Info("citadel: island unreachable", "host", isl.Host, "lastHeard", isl.LastSeen.Format(time.RFC3339))
 	}
 	c.web.Broadcast(web.Message{Type: "island", Island: &isl})
+}
+
+// onRepo runs whenever a repository is registered or its terrain changes.
+func (c *citadel) onRepo(r projections.Repo) {
+	slog.Info("citadel: terrace", "host", r.Host, "repo", r.Name, "files", len(r.Files))
+	c.web.Broadcast(web.Message{Type: "repo", Repo: &r})
+}
+
+// followHost mirrors a host's stream into the world's domain the first time
+// the host is seen, then projects its events. Creating a mirror that already
+// exists changes nothing.
+func (c *citadel) followHost(host string) {
+	c.mu.Lock()
+	if c.following[host] {
+		c.mu.Unlock()
+		return
+	}
+	c.following[host] = true
+	store := c.store
+	c.mu.Unlock()
+
+	go func() {
+		name := v1.IslandStreamName(host)
+		for {
+			err := store.EnsureMirror(c.ctx, name, name, host)
+			if err == nil {
+				break
+			}
+			slog.Warn("citadel: mirror host stream", "host", host, "err", err)
+			select {
+			case <-c.ctx.Done():
+				return
+			case <-time.After(2 * time.Second):
+			}
+		}
+		slog.Info("citadel: following host events", "host", host)
+		err := store.Follow(c.ctx, name, []string{v1.IslandEventFilter(host)}, func(seq uint64, ev v1.Event) {
+			c.terrain.Apply(host, ev)
+		})
+		if err != nil && c.ctx.Err() == nil {
+			slog.Warn("citadel: follow host events", "host", host, "err", err)
+			c.mu.Lock()
+			delete(c.following, host)
+			c.mu.Unlock()
+		}
+	}()
 }

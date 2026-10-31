@@ -8,11 +8,13 @@ import '@fontsource/sora/700.css'
 import './style.css'
 
 import { byId, el } from './dom'
-import { renderHeader } from './header'
+import { renderHeader, type NavActions } from './header'
+import { renderFilePanel } from './panels/file'
 import { renderIslandPanel } from './panels/island'
+import { renderTerracePanel } from './panels/terrace'
 import { renderWorldPanel } from './panels/world'
 import { citadelLabelStatus, clockText, durationText, islandStatus, isStale, secondsSince } from './status'
-import { islandList, Store, type State } from './store'
+import { islandList, level, reposOn, Store, type State } from './store'
 import { World } from './world/world'
 import { connectToCitadel } from './ws'
 
@@ -36,13 +38,13 @@ try {
   stage.appendChild(el('div', { class: 'nogl', text: 'This view needs WebGL, and it isn’t available in this browser right now.' }))
 }
 
-const select = (id: string): void => {
-  if (world) world.select(id)
-  else store.update({ selected: id })
-}
-const overview = (): void => {
-  if (world) world.overview()
-  else store.update({ selected: 'cit' })
+// Navigation goes through the world when it runs, so the camera moves, and
+// straight to the store otherwise.
+const nav: NavActions & { selectFile(host: string, terrace: string, idx: number): void } = {
+  overview: () => (world ? world.overview() : store.update({ selected: 'cit', terrace: null, file: null })),
+  select: (host) => (world ? world.select(host) : store.update({ selected: host, terrace: null, file: null })),
+  land: (host, terrace) => (world ? world.land(host, terrace) : store.update({ selected: host, terrace, file: null })),
+  selectFile: (host, terrace, idx) => (world ? world.selectFile(host, terrace, idx) : store.update({ selected: host, terrace, file: idx })),
 }
 
 function renderVeil(s: State): void {
@@ -61,16 +63,41 @@ function renderVeil(s: State): void {
   )
 }
 
+function renderPanel(s: State, stale: boolean): void {
+  const island = s.selected !== 'cit' ? s.islands[s.selected] : undefined
+  const repo = s.terrace ? s.repos[s.terrace] : undefined
+  switch (level(s)) {
+    case 'file':
+      if (island && repo && s.file !== null) {
+        renderFilePanel(panelEl, repo, island, s.file, () => nav.land(island.host, repo.id))
+        return
+      }
+      break
+    case 'terrace':
+      if (island && repo) {
+        const shown = world?.buildingCount(island.host, repo.id) ?? repo.files.length
+        renderTerracePanel(panelEl, repo, island, stale, shown, (idx) => nav.selectFile(island.host, repo.id, idx))
+        return
+      }
+      break
+    case 'island':
+      if (island) {
+        renderIslandPanel(panelEl, island, reposOn(s, island.host), stale, s.lastContact, (terrace) => nav.land(island.host, terrace))
+        return
+      }
+      break
+  }
+  renderWorldPanel(panelEl, s, nav.select)
+}
+
 store.subscribe((s) => {
   const stale = isStale(s)
-  renderHeader(crumbsEl, connectedEl, linkEl, s, overview)
+  renderHeader(crumbsEl, connectedEl, linkEl, s, nav)
   renderVeil(s)
-  const island = s.selected !== 'cit' ? s.islands[s.selected] : undefined
-  if (island) renderIslandPanel(panelEl, island, stale, s.lastContact)
-  else renderWorldPanel(panelEl, s, select)
   if (world) {
     for (const i of islandList(s)) {
       world.upsertIsland(i.host, i.reachable)
+      world.setRepos(i.host, reposOn(s, i.host))
       world.setLabel(i.host, i.host, islandStatus(i, stale), 0)
     }
     world.setLabel('cit', 'Citadel', citadelLabelStatus(s), 0)
@@ -78,11 +105,15 @@ store.subscribe((s) => {
     world.setStale(stale)
     world.setCitadelCrystal(!!s.server?.connected)
   }
+  renderPanel(s, stale)
 })
 
+// A handle for debugging and screenshots: skylands.world.rig.flyTo(...).
+;(window as unknown as { skylands: unknown }).skylands = { world, store }
+
 if (world) {
-  world.onSelect = (id) => store.update({ selected: id })
-  byId<HTMLButtonElement>('overview').addEventListener('click', overview)
+  world.onNav = (n) => store.update(n)
+  byId<HTMLButtonElement>('overview').addEventListener('click', nav.overview)
   window.addEventListener('keydown', (e) => {
     const t = e.target as HTMLElement | null
     const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)

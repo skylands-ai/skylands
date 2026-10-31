@@ -44,6 +44,22 @@ Its island rises within a few seconds. Stop it with Ctrl-C and the island
 drifts out on a slack tether about six seconds later. Start it again and it
 comes back.
 
+### Register a repository
+
+On the machine whose island should carry it:
+
+```sh
+./bin/skylands repo register ~/code/storefront
+./bin/skylands daemon status
+```
+
+The daemon records the repository and a snapshot of its tracked files in
+its own event stream, the citadel mirrors that stream, and a terrace with a
+building per file appears on the island. Click the island, then "Fly in" on
+the terrace, then a building. Each daemon has one local socket, so a second
+daemon on the same machine needs `--socket` on both `daemon up` and these
+commands.
+
 ### An island on another machine
 
 Nothing is authenticated yet, so only do this on a network you trust. The
@@ -71,8 +87,8 @@ and shows the last state it heard.
 `devworld up` is the same code as the separate roles, with NATS started for
 you. Against your own nats-server, run `skylands citadel up --nats-url ...`
 and `skylands daemon up --nats-url ...` on each host. The remaining
-commands, such as `world init` and `repo register`, print "unimplemented"
-until their milestones land.
+commands, such as `world init` and the request commands, print
+"unimplemented" until their milestones land.
 
 ## Development
 

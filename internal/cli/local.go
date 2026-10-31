@@ -6,8 +6,11 @@ package cli
 // user that owns it, which unblocks agents even while the host is offline.
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
+	"github.com/skylands-ai/skylands/internal/daemon/socket"
 	"github.com/skylands-ai/skylands/internal/stub"
 )
 
@@ -36,7 +39,12 @@ snapshots its tracked files and their sizes, and a terrace with a building
 for every file appears on the island.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return stub.ErrUnimplemented
+			repo, err := socket.Dial(socketPath).RegisterRepo(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Registered %s: %d tracked files at %s\n", repo.Name, repo.Files, repo.Path)
+			return nil
 		},
 	}
 	socketFlag(cmd, &socketPath)

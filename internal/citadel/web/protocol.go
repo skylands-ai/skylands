@@ -5,14 +5,19 @@ import "github.com/skylands-ai/skylands/internal/citadel/projections"
 // Message is the envelope for everything the citadel sends to a browser over
 // its WebSocket. Type names which other fields are set:
 //
-//   - "snapshot" carries Server and Islands, and opens every connection.
+//   - "snapshot" carries Server, Islands, and Repos, and opens every
+//     connection.
 //   - "server" carries Server when the citadel's NATS connection changes.
 //   - "island" carries Island when one host's state changes.
+//   - "repo" carries Repo when a repository is registered or its terrain
+//     changes.
 type Message struct {
 	Type    string               `json:"type"`
 	Server  *ServerInfo          `json:"server,omitempty"`
 	Islands []projections.Island `json:"islands,omitempty"`
 	Island  *projections.Island  `json:"island,omitempty"`
+	Repos   []projections.Repo   `json:"repos,omitempty"`
+	Repo    *projections.Repo    `json:"repo,omitempty"`
 }
 
 // ServerInfo describes the NATS server as it describes itself to the

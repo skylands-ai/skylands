@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -140,7 +141,17 @@ func sendJSON(ctx context.Context, c *websocket.Conn, m Message) error {
 func (s *Server) staticHandler() http.Handler {
 	if s.cfg.Dist != nil {
 		if _, err := fs.Stat(s.cfg.Dist, "index.html"); err == nil {
-			return http.FileServerFS(s.cfg.Dist)
+			files := http.FileServerFS(s.cfg.Dist)
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Vite names assets by content hash, so they can be cached for
+				// good. The page that references them must always be fresh.
+				if strings.HasPrefix(r.URL.Path, "/assets/") {
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				} else {
+					w.Header().Set("Cache-Control", "no-cache")
+				}
+				files.ServeHTTP(w, r)
+			})
 		} else if !errors.Is(err, fs.ErrNotExist) {
 			slog.Warn("web: client build unreadable, serving placeholder", "err", err)
 		}

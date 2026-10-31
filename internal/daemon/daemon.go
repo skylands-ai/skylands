@@ -20,6 +20,10 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/micro"
 
+	v1 "github.com/skylands-ai/skylands/api/v1"
+	"github.com/skylands-ai/skylands/internal/daemon/host"
+	"github.com/skylands-ai/skylands/internal/daemon/socket"
+	"github.com/skylands-ai/skylands/internal/es"
 	"github.com/skylands-ai/skylands/internal/natsembed"
 )
 
@@ -43,7 +47,8 @@ type Config struct {
 	// leaf store lives under DataDir/leaf/<host>, so daemons for different
 	// hosts can share a DataDir.
 	DataDir string
-	// SocketPath is the Unix socket the local CLI connects to.
+	// SocketPath is the Unix socket the local CLI connects to. Empty runs
+	// no local API.
 	SocketPath string
 	// Version is the skylands version this daemon reports to the world.
 	Version string
@@ -51,18 +56,18 @@ type Config struct {
 
 // Run joins the world and runs agents until ctx is cancelled. The daemon
 // keeps running while the world's server is unreachable: its leaf node
-// retries the link on its own.
+// retries the link on its own, and its events wait in the leaf's stream.
 func Run(ctx context.Context, cfg Config) error {
-	host := cleanHost(cfg.Host)
-	if host == "" {
-		host = DefaultHost()
+	hostName := cleanHost(cfg.Host)
+	if hostName == "" {
+		hostName = DefaultHost()
 	}
 	leaf, err := natsembed.StartLeaf(ctx, natsembed.LeafConfig{
-		Name:      ServiceName + "-" + host,
+		Name:      ServiceName + "-" + hostName,
 		RemoteURL: cfg.NATSURL,
 		CredsFile: cfg.CredsFile,
-		StoreDir:  filepath.Join(cfg.DataDir, "leaf", host),
-		Domain:    host,
+		StoreDir:  filepath.Join(cfg.DataDir, "leaf", hostName),
+		Domain:    hostName,
 	})
 	if err != nil {
 		return err
@@ -75,15 +80,30 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer nc.Close()
 
+	// The host's stream lives in the leaf's JetStream domain, and the
+	// daemon is its only writer.
+	store, err := es.New(nc)
+	if err != nil {
+		return err
+	}
+	if err := store.EnsureStream(ctx, v1.IslandStreamName(hostName), v1.IslandSubjects(hostName)); err != nil {
+		return err
+	}
+	agg, err := host.Load(ctx, store, hostName)
+	if err != nil {
+		return err
+	}
+
+	started := time.Now().UTC()
 	svc, err := micro.AddService(nc, micro.Config{
 		Name:        ServiceName,
 		Version:     semver(cfg.Version),
-		Description: "Skylands daemon on " + host,
+		Description: "Skylands daemon on " + hostName,
 		Metadata: map[string]string{
-			"host":             host,
+			"host":             hostName,
 			"os":               runtime.GOOS,
 			"arch":             runtime.GOARCH,
-			"started":          time.Now().UTC().Format(time.RFC3339),
+			"started":          started.Format(time.RFC3339),
 			"skylands_version": cfg.Version,
 		},
 	})
@@ -92,10 +112,52 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer func() { _ = svc.Stop() }()
 
-	slog.Info("daemon: island up", "host", host, "world", cfg.NATSURL, "version", cfg.Version)
-	<-ctx.Done()
-	slog.Info("daemon: stopping", "host", host)
-	return nil
+	slog.Info("daemon: island up", "host", hostName, "world", cfg.NATSURL, "version", cfg.Version, "repos", len(agg.Repos()))
+
+	api := &localAPI{host: hostName, world: cfg.NATSURL, version: cfg.Version, started: started, agg: agg}
+	errc := make(chan error, 1)
+	if cfg.SocketPath != "" {
+		go func() { errc <- socket.Serve(ctx, cfg.SocketPath, api) }()
+	}
+	select {
+	case <-ctx.Done():
+		if cfg.SocketPath != "" {
+			if err := <-errc; err != nil {
+				slog.Warn("daemon: local API stopped", "err", err)
+			}
+		}
+		slog.Info("daemon: stopping", "host", hostName)
+		return nil
+	case err := <-errc:
+		return err
+	}
+}
+
+// localAPI answers the local CLI from the daemon's aggregates.
+type localAPI struct {
+	host    string
+	world   string
+	version string
+	started time.Time
+	agg     *host.Host
+}
+
+func (a *localAPI) Status(context.Context) socket.StatusInfo {
+	repos := a.agg.Repos()
+	infos := make([]socket.RepoInfo, 0, len(repos))
+	for _, r := range repos {
+		infos = append(infos, repoInfo(r))
+	}
+	return socket.StatusInfo{Host: a.host, World: a.world, Version: a.version, Started: a.started, Repos: infos}
+}
+
+func (a *localAPI) RegisterRepo(ctx context.Context, path, commandID string) (socket.RepoInfo, error) {
+	r, err := a.agg.RegisterRepo(ctx, v1.RegisterRepo{ID: commandID, Path: path})
+	return repoInfo(r), err
+}
+
+func repoInfo(r host.Repo) socket.RepoInfo {
+	return socket.RepoInfo{ID: r.ID, Name: r.Name, Path: r.Path, Commit: r.Commit, Files: r.TotalFiles, RegisteredAt: r.RegisteredAt}
 }
 
 // DefaultHost names this machine from its hostname: the first label, in

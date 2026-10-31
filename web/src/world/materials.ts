@@ -5,17 +5,22 @@ export function std(color: number, extra?: THREE.MeshStandardMaterialParameters)
   return new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.92, metalness: 0, ...extra })
 }
 
+/** Building faces sit a hair behind their edge lines, so the strokes never flicker. */
+const offset: THREE.MeshStandardMaterialParameters = { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }
+
 /** Shared materials, named for what they color. */
 export const M = {
   grass: std(0x5e8f4e),
   soil: std(0x7a5a3e),
   rock: std(0xffffff, { vertexColors: true }),
   plaza: std(0x3a3531),
-  bld: std(0xe2dccb, { emissive: 0x34302a, emissiveIntensity: 1 }),
-  bldEdit: std(0xf4e7c2, { emissive: 0x8a6a20, emissiveIntensity: 0.6 }),
-  bldRead: std(0xdce8f4, { emissive: 0x2f5f95, emissiveIntensity: 0.45 }),
-  bldConflict: std(0xf3c6be, { emissive: 0xa8352a, emissiveIntensity: 0.7 }),
-  bldFocus: std(0xffffff, { emissive: 0x555555, emissiveIntensity: 0.5 }),
+  bld: std(0xe2dccb, { emissive: 0x34302a, emissiveIntensity: 1, ...offset }),
+  bldEdit: std(0xf4e7c2, { emissive: 0x8a6a20, emissiveIntensity: 0.6, ...offset }),
+  bldRead: std(0xdce8f4, { emissive: 0x2f5f95, emissiveIntensity: 0.45, ...offset }),
+  bldConflict: std(0xf3c6be, { emissive: 0xa8352a, emissiveIntensity: 0.7, ...offset }),
+  bldFocus: std(0xffffff, { emissive: 0x555555, emissiveIntensity: 0.5, ...offset }),
+  /** The single-stroke outline on every building edge. */
+  bldEdge: new THREE.LineBasicMaterial({ color: 0x4a4238, transparent: true, opacity: 0.6 }),
   trunk: std(0x6b4a30),
   leafA: std(0x3f7a3a),
   leafB: std(0x4f8f45),
@@ -47,6 +52,8 @@ export const G = {
   round: new THREE.IcosahedronGeometry(0.55, 0),
   hill: new THREE.IcosahedronGeometry(1, 0),
   crystal: new THREE.OctahedronGeometry(0.9, 0),
+  /** The twelve edges of the unit box, for building outlines. */
+  boxEdges: new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
   beam: new THREE.CylinderGeometry(0.09, 0.09, 1, 6),
   ball: new THREE.SphereGeometry(0.35, 10, 8),
   bag: new THREE.SphereGeometry(0.13, 6, 5),

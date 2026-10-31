@@ -28,6 +28,7 @@ type devworldOptions struct {
 	natsListen string
 	leafListen string
 	host       string
+	socketPath string
 }
 
 func newDevworldUpCmd() *cobra.Command {
@@ -53,6 +54,7 @@ Nothing is authenticated yet, so every listener defaults to 127.0.0.1.`,
 	f.StringVar(&o.natsListen, "nats-listen", "127.0.0.1:4222", "address the embedded NATS server accepts clients on")
 	f.StringVar(&o.leafListen, "leaf-listen", "127.0.0.1:7422", "address the embedded NATS server accepts daemon leaf nodes on")
 	f.StringVar(&o.host, "host", daemon.DefaultHost(), "name of this machine's island")
+	f.StringVar(&o.socketPath, "socket", defaultSocketPath(), "Unix socket the daemon listens on for the local CLI")
 	return cmd
 }
 
@@ -79,7 +81,7 @@ func runDevworld(ctx context.Context, o devworldOptions) error {
 		errc <- citadel.Run(ctx, citadel.Config{NATSURL: srv.ClientURL(), HTTPAddr: o.httpAddr})
 	}()
 	go func() {
-		errc <- daemon.Run(ctx, daemon.Config{Host: o.host, NATSURL: srv.LeafURL(), DataDir: o.dataDir, Version: versionString()})
+		errc <- daemon.Run(ctx, daemon.Config{Host: o.host, NATSURL: srv.LeafURL(), DataDir: o.dataDir, SocketPath: o.socketPath, Version: versionString()})
 	}()
 	err = <-errc
 	cancel()

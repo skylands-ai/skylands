@@ -23,9 +23,7 @@ var unimplemented = []struct {
 	path string
 }{
 	{[]string{"daemon", "enroll", "workstation"}, "skylands daemon enroll"},
-	{[]string{"daemon", "status"}, "skylands daemon status"},
 	{[]string{"world", "init"}, "skylands world init"},
-	{[]string{"repo", "register", "."}, "skylands repo register"},
 	{[]string{"request", "list"}, "skylands request list"},
 	{[]string{"request", "approve", "req-1"}, "skylands request approve"},
 	{[]string{"request", "deny", "req-1"}, "skylands request deny"},
@@ -53,11 +51,13 @@ func TestCommandsReportUnimplemented(t *testing.T) {
 // here once it has a real implementation.
 func TestEveryRunnableCommandIsListed(t *testing.T) {
 	implemented := map[string]bool{
-		"skylands version":     true,
-		"skylands help":        true,
-		"skylands devworld up": true,
-		"skylands citadel up":  true,
-		"skylands daemon up":   true,
+		"skylands version":       true,
+		"skylands help":          true,
+		"skylands devworld up":   true,
+		"skylands citadel up":    true,
+		"skylands daemon up":     true,
+		"skylands daemon status": true,
+		"skylands repo register": true,
 	}
 	listed := map[string]bool{}
 	for _, tc := range unimplemented {
@@ -76,6 +76,16 @@ func TestEveryRunnableCommandIsListed(t *testing.T) {
 		}
 	}
 	walk(NewRoot())
+}
+
+func TestLocalCommandsNeedTheDaemon(t *testing.T) {
+	sock := t.TempDir() + "/none.sock"
+	for _, args := range [][]string{{"repo", "register", ".", "--socket", sock}, {"daemon", "status", "--socket", sock}} {
+		code, _, stderr := run(t, args...)
+		if code != 1 || !strings.Contains(stderr, "no daemon is listening") {
+			t.Errorf("%v: exit %d, stderr %q; want a no-daemon error", args, code, stderr)
+		}
+	}
 }
 
 func TestVersion(t *testing.T) {

@@ -285,7 +285,7 @@ The daemon configures Claude Code command hooks that forward hook payloads to it
 
 ### Terrain
 
-When a repo is registered, the daemon snapshots its tracked files and their sizes, which become the terrace and its buildings. A file watcher records changes made through shell commands, and attributes them to the session whose worktree changed.
+When a repo is registered, the daemon snapshots its tracked files and their sizes, which become the terrace and its buildings. A terrace shows at most 64 buildings, an 8 by 8 grid, so each stays large enough to click. Until recently touched files can take priority, the daemon keeps the largest files, sorted by descending size and clamped at the limit, and records the total count alongside them. A file watcher records changes made through shell commands, and attributes them to the session whose worktree changed.
 
 ### Placement
 

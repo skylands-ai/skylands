@@ -18,6 +18,14 @@ specifies. No events, streams, or aggregates are needed for it.
 - Milestone 5 is done: `test/e2e` runs hosts coming, going, and restarting,
   and a NATS restart under a live citadel and daemon. The README has the
   quickstart, and the browser shows a lost citadel as a dimmed world.
+- The terrain slice is done, the first real event path: `repo register`
+  reaches the daemon over its Unix socket, the Host aggregate records
+  `RepoRegistered` and `TerrainSnapshotted` in the host's JetStream stream,
+  the citadel mirrors that stream into the world's domain and projects it,
+  and the browser shows a terrace with a building per tracked file, with
+  terrace and file levels. The event-sourcing kit (`internal/es`), the
+  public event types (`api/v1`), and the socket API now exist for everything
+  after it.
 
 ## What the MVP proves
 

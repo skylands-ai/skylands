@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats-server/v2/server"
@@ -137,7 +138,7 @@ func run(ctx context.Context, opts *server.Options) (*server.Server, error) {
 		if !ok {
 			ns.Shutdown()
 			ns.WaitForShutdown()
-			return nil, errors.New("nats-server did not become ready")
+			return nil, fmt.Errorf("nats-server did not become ready; is another skylands or nats-server already using %s?", listenersOf(opts))
 		}
 	case <-ctx.Done():
 		ns.Shutdown()
@@ -184,4 +185,19 @@ func splitAddr(addr string) (string, int, error) {
 		port = server.RANDOM_PORT
 	}
 	return host, port, nil
+}
+
+// listenersOf names the addresses a server would listen on, for errors.
+func listenersOf(opts *server.Options) string {
+	var addrs []string
+	if !opts.DontListen {
+		addrs = append(addrs, net.JoinHostPort(opts.Host, strconv.Itoa(opts.Port)))
+	}
+	if opts.LeafNode.Port > 0 {
+		addrs = append(addrs, net.JoinHostPort(opts.LeafNode.Host, strconv.Itoa(opts.LeafNode.Port)))
+	}
+	if len(addrs) == 0 {
+		return "its ports"
+	}
+	return strings.Join(addrs, " or ")
 }

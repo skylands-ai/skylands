@@ -46,6 +46,14 @@ func TestServesBuiltClient(t *testing.T) {
 	if code != http.StatusOK || !strings.Contains(body, "built client") {
 		t.Errorf("GET / = %d %q, want 200 with the built page", code, body)
 	}
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-cache" {
+		t.Errorf("page Cache-Control = %q, want no-cache", cc)
+	}
 	code, body = get(t, ts.URL+"/healthz")
 	if code != http.StatusOK || body != "ok\n" {
 		t.Errorf("GET /healthz = %d %q, want 200 %q", code, body, "ok\n")

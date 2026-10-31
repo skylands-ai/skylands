@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/spf13/cobra"
 
 	"github.com/skylands-ai/skylands/internal/daemon"
-	"github.com/skylands-ai/skylands/internal/stub"
+	"github.com/skylands-ai/skylands/internal/daemon/socket"
 	"github.com/skylands-ai/skylands/internal/world"
 )
 
@@ -68,7 +71,25 @@ func newDaemonStatusCmd() *cobra.Command {
 		Short: "Report the daemon's link to the world, its repos, and its agents",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return stub.ErrUnimplemented
+			st, err := socket.Dial(socketPath).Status(cmd.Context())
+			if err != nil {
+				return err
+			}
+			w := cmd.OutOrStdout()
+			fmt.Fprintf(w, "Host:     %s\n", st.Host)
+			fmt.Fprintf(w, "World:    %s\n", st.World)
+			fmt.Fprintf(w, "Daemon:   skylands %s, up %s\n", st.Version, time.Since(st.Started).Round(time.Second))
+			if len(st.Repos) == 0 {
+				fmt.Fprintln(w, "Repos:    none registered")
+			}
+			for i, r := range st.Repos {
+				label := "          "
+				if i == 0 {
+					label = "Repos:    "
+				}
+				fmt.Fprintf(w, "%s%s  %d files  %s\n", label, r.Name, r.Files, r.Path)
+			}
+			return nil
 		},
 	}
 	socketFlag(cmd, &socketPath)

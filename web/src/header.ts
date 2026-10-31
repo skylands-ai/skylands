@@ -1,16 +1,51 @@
 import { el } from './dom'
+import { base, sortedFiles } from './files'
 import { islandCounts, isStale } from './status'
-import type { State } from './store'
+import { level, type State } from './store'
+
+export interface NavActions {
+  overview(): void
+  select(host: string): void
+  land(host: string, terrace: string): void
+}
+
+function crumbBtn(text: string, fn: () => void): HTMLElement {
+  return el('button', { type: 'button', class: 'btn small', text, onclick: fn })
+}
+
+function current(text: string): HTMLElement {
+  return el('span', { style: 'font-weight:600', 'aria-current': 'page', text })
+}
+
+function sep(): HTMLElement {
+  return el('span', { class: 'sep', 'aria-hidden': 'true', text: '/' })
+}
 
 /** The breadcrumb, the connected-islands count, and the citadel link pill in the top bar. */
-export function renderHeader(crumbs: HTMLElement, connected: HTMLElement, link: HTMLElement, s: State, overview: () => void): void {
+export function renderHeader(crumbs: HTMLElement, connected: HTMLElement, link: HTMLElement, s: State, nav: NavActions): void {
   crumbs.textContent = ''
-  if (s.selected === 'cit') {
+  const l = level(s)
+  if (l === 'world') {
     crumbs.appendChild(el('span', { class: 'btn small', 'aria-current': 'page', text: 'World' }))
   } else {
-    crumbs.appendChild(el('button', { type: 'button', class: 'btn small', text: 'World', onclick: overview }))
-    crumbs.appendChild(el('span', { class: 'sep', 'aria-hidden': 'true', text: '/' }))
-    crumbs.appendChild(el('span', { style: 'font-weight:600', 'aria-current': 'page', text: s.selected }))
+    crumbs.appendChild(crumbBtn('World', nav.overview))
+    crumbs.appendChild(sep())
+    const host = s.selected
+    if (l === 'island') crumbs.appendChild(current(host))
+    else {
+      crumbs.appendChild(crumbBtn(host, () => nav.select(host)))
+      crumbs.appendChild(sep())
+      const repo = s.terrace ? s.repos[s.terrace] : undefined
+      const tname = repo?.name ?? 'terrace'
+      if (l === 'terrace') crumbs.appendChild(current(tname))
+      else {
+        const tid = s.terrace as string
+        crumbs.appendChild(crumbBtn(tname, () => nav.land(host, tid)))
+        crumbs.appendChild(sep())
+        const f = repo && s.file !== null ? sortedFiles(repo)[s.file] : undefined
+        crumbs.appendChild(current(f ? base(f.path) : 'file'))
+      }
+    }
   }
   const { reachable, total } = islandCounts(s)
   const counts = total ? `${reachable} of ${total} islands connected` : 'No islands yet'

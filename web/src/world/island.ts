@@ -37,6 +37,7 @@ export function buildIsland(id: string, h: Placement): IslandMeshes {
     const hill = new THREE.Mesh(G.hill, M.hill)
     hill.scale.set(1.3 + r(), 0.45 + r() * 0.3, 1.2 + r())
     hill.position.set(Math.cos(a) * d, 0, Math.sin(a) * d)
+    hill.userData.scenery = 'hill'
     g.add(hill)
   }
   const WA = 1.5
@@ -58,6 +59,7 @@ export function buildIsland(id: string, h: Placement): IslandMeshes {
     tree.scale.setScalar(0.8 + r() * 0.6)
     tree.position.set(tx, 0, tz)
     tree.rotation.y = r() * 6.283
+    tree.userData.scenery = 'tree'
     g.add(tree)
     trees--
   }

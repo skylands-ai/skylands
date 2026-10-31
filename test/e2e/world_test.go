@@ -8,6 +8,9 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +21,7 @@ import (
 	"github.com/skylands-ai/skylands/internal/citadel/projections"
 	"github.com/skylands-ai/skylands/internal/citadel/web"
 	"github.com/skylands-ai/skylands/internal/daemon"
+	"github.com/skylands-ai/skylands/internal/daemon/socket"
 	"github.com/skylands-ai/skylands/internal/natsembed"
 )
 
@@ -90,11 +94,16 @@ func (w *world) startHub() {
 // startDaemon runs a real daemon for host and returns a function that stops
 // it and waits for it to exit.
 func (w *world) startDaemon(host string) (stop func()) {
+	return w.startDaemonWithSocket(host, "")
+}
+
+// startDaemonWithSocket is startDaemon with a local API on socketPath.
+func (w *world) startDaemonWithSocket(host, socketPath string) (stop func()) {
 	w.t.Helper()
 	ctx, cancel := context.WithCancel(w.ctx)
 	done := make(chan error, 1)
 	go func() {
-		done <- daemon.Run(ctx, daemon.Config{Host: host, NATSURL: w.hub.LeafURL(), DataDir: w.t.TempDir(), Version: "v0.1.0"})
+		done <- daemon.Run(ctx, daemon.Config{Host: host, NATSURL: w.hub.LeafURL(), DataDir: w.t.TempDir(), SocketPath: socketPath, Version: "v0.1.0"})
 	}()
 	return func() {
 		cancel()
@@ -109,6 +118,7 @@ type browser struct {
 	mu        sync.Mutex
 	server    web.ServerInfo
 	islands   map[string]projections.Island
+	repos     map[string]projections.Repo
 	snapshots int
 	err       error
 }
@@ -120,7 +130,7 @@ func (w *world) openBrowser() *browser {
 		w.t.Fatalf("dial: %v", err)
 	}
 	w.t.Cleanup(func() { _ = c.CloseNow() })
-	b := &browser{islands: map[string]projections.Island{}}
+	b := &browser{islands: map[string]projections.Island{}, repos: map[string]projections.Repo{}}
 	go func() {
 		for {
 			_, data, err := c.Read(w.ctx)
@@ -142,6 +152,10 @@ func (w *world) openBrowser() *browser {
 				for _, isl := range m.Islands {
 					b.islands[isl.Host] = isl
 				}
+				b.repos = map[string]projections.Repo{}
+				for _, r := range m.Repos {
+					b.repos[r.ID] = r
+				}
 				if m.Server != nil {
 					b.server = *m.Server
 				}
@@ -153,6 +167,10 @@ func (w *world) openBrowser() *browser {
 				if m.Island != nil {
 					b.islands[m.Island.Host] = *m.Island
 				}
+			case "repo":
+				if m.Repo != nil {
+					b.repos[m.Repo.ID] = *m.Repo
+				}
 			}
 			b.mu.Unlock()
 		}
@@ -163,6 +181,7 @@ func (w *world) openBrowser() *browser {
 type view struct {
 	server  web.ServerInfo
 	islands map[string]projections.Island
+	repos   map[string]projections.Repo
 }
 
 // wait blocks until pred holds for the browser's state, or fails the test
@@ -172,9 +191,12 @@ func (b *browser) wait(t *testing.T, what string, timeout time.Duration, pred fu
 	deadline := time.Now().Add(timeout)
 	for {
 		b.mu.Lock()
-		v := view{server: b.server, islands: make(map[string]projections.Island, len(b.islands))}
+		v := view{server: b.server, islands: make(map[string]projections.Island, len(b.islands)), repos: make(map[string]projections.Repo, len(b.repos))}
 		for k, isl := range b.islands {
 			v.islands[k] = isl
+		}
+		for k, r := range b.repos {
+			v.repos[k] = r
 		}
 		err := b.err
 		b.mu.Unlock()
@@ -275,5 +297,91 @@ func TestWorldSurvivesNATSRestart(t *testing.T) {
 	v := b.wait(t, "NATS back", 30*time.Second, func(v view) bool { return v.server.Connected && reachable(v, "solo", true) })
 	if v.server.Name != "e2e" {
 		t.Errorf("reconnected to %q, want e2e", v.server.Name)
+	}
+}
+
+// gitRepo makes a repository with committed files and returns its path.
+func gitRepo(t *testing.T, files ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q")
+	for _, f := range files {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte(f), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run("add", ".")
+	run("commit", "-q", "-m", "init")
+	return dir
+}
+
+// shortSocket returns a socket path short enough for every platform's limit.
+func shortSocket(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "sk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "d.sock")
+}
+
+func TestRepoRegisterMakesATerrace(t *testing.T) {
+	if testing.Short() {
+		t.Skip("whole-world test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	w := startWorld(t, ctx)
+	b := w.openBrowser()
+	sock := shortSocket(t)
+	stop := w.startDaemonWithSocket("ws", sock)
+	defer stop()
+	b.wait(t, "ws reachable", 15*time.Second, func(v view) bool { return reachable(v, "ws", true) })
+
+	// The local CLI registers a repo through the daemon's socket.
+	repoDir := gitRepo(t, "main.go", "README.md", "go.mod")
+	cli := socket.Dial(sock)
+	var info socket.RepoInfo
+	var err error
+	for i := 0; i < 100; i++ {
+		if info, err = cli.RegisterRepo(ctx, repoDir); err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil || info.Files != 3 {
+		t.Fatalf("RegisterRepo = %+v, %v", info, err)
+	}
+
+	// The event crosses the leaf link into the mirror, and the citadel
+	// projects it into a terrace the browser sees, with every building.
+	v := b.wait(t, "the terrace", 20*time.Second, func(v view) bool {
+		r, ok := v.repos[info.ID]
+		return ok && len(r.Files) == 3
+	})
+	r := v.repos[info.ID]
+	if r.Host != "ws" || r.Name != info.Name || r.Path != info.Path || r.Commit == "" || r.RegisteredAt.IsZero() || r.SnapshottedAt.IsZero() {
+		t.Errorf("repo = %+v", r)
+	}
+
+	// A later browser gets the terrace in its snapshot, and the daemon's
+	// status lists it.
+	b2 := w.openBrowser()
+	b2.wait(t, "a snapshot with the terrace", 5*time.Second, func(v view) bool {
+		r, ok := v.repos[info.ID]
+		return ok && len(r.Files) == 3
+	})
+	st, err := cli.Status(ctx)
+	if err != nil || len(st.Repos) != 1 || st.Repos[0].ID != info.ID {
+		t.Errorf("Status = %+v, %v", st, err)
 	}
 }
