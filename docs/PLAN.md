@@ -45,6 +45,25 @@ specifies. No events, streams, or aggregates are needed for it.
   the airship, and the agent panel shows the plan, activity, response, and
   worktree diff fetched from the host. Compaction puffs and subagent leashes
   wait for their events.
+- Milestone 7 is done: a working session. Sessions are multi-turn: the
+  agent process stays up between turns, TurnEnded leaves the session idle
+  and waiting for a person, and SendPrompt and StopAgent continue or end it
+  from the conversation. The agent titles its conversation in a side session
+  as the first turn starts (SessionTitled). The Inbox view replaces the
+  world with a table of every session on every island, newest activity
+  first, with an Open or All filter, and an open conversation reads as a
+  chat with Markdown rendered safely as DOM and the reply box at the bottom.
+  The conversation streams: every transcript append is published on the
+  session's live subject with its byte offset, plain NATS with no stream,
+  and a browser watching the conversation grows the running bubble in
+  place, with tool calls as chips where they happened, and reads the file
+  once when the turn ends. "Waiting on you" means idle with a last message
+  you have not read, or a tool call waiting for an answer; the tab title
+  and the Inbox badge count those.
+- Milestone 8 is done: approvals. The host's rules let reads, searches, and
+  thinking pass; everything else blocks the agent until a person answers
+  from the conversation, the inbox, or `request approve` on the host, or
+  the session is trusted. Every request and answer is recorded.
 
 ## After the MVP
 
@@ -94,12 +113,31 @@ beacon, and the waiting count. The fake agent asks before its edit, so
 every test exercises the path. Signed approvals remain for the users
 milestone; the rule language remains a kind allow-list for now.
 
-### Milestone 9: sessions that outlive the daemon, and landing the work
+### Milestone 9: recovery from a daemon restart, and landing the work
 
-The daemon resumes sessions through ACP session load after a restart, which
-matters most when the daemon under development is the one running the
-session. Sessions can run in the registered checkout or in a worktree, and
-`session` commands stop, remove, and prune worktrees and branches.
+A daemon bounces for many reasons, and the one running the session is often
+the one being rebuilt. Today a restart marks every open session failed,
+expires whatever was waiting on a person, and the conversation can be read
+but not continued. After this milestone:
+
+- **The history survives.** The events are in the host's stream and the
+  transcript is on disk, so the conversation, its title, its turns, its
+  tool calls, and its approvals are all still there after a bounce, in the
+  inbox and in the world, with a note of when the daemon restarted.
+- **The conversation continues.** The daemon resumes the agent through ACP
+  session load when the agent supports it, which Claude Code does, so the
+  next prompt carries on with the agent's own memory of the conversation.
+  When the agent cannot load a session, the daemon opens a new one and
+  seeds it with the transcript, and says so in the conversation. Either
+  way the session goes back to idle rather than failed, the airship
+  returns to its terrace, and pending requests are asked again.
+- **A restart is visible, not fatal.** AgentFailed is reserved for an agent
+  that actually failed; a bounce records that the daemon restarted and what
+  it resumed.
+- **Landing the work.** Sessions can run in the registered checkout or in a
+  worktree, the conversation offers to commit the worktree and merge or
+  open a pull request, and `session` commands stop, remove, and prune
+  worktrees and branches.
 
 ## What the MVP proves
 
@@ -124,31 +162,6 @@ value drives the crystal, the tether material, and the sparks.
 Two things it lacks for the MVP. Islands are built once from a fixed list, so
 there is no path for a host to appear or leave. And island positions are
 hand-placed rather than derived from the host.
-- Milestone 7 is under way: sessions are multi-turn. The agent process stays
-  up between turns, TurnEnded leaves the session idle and waiting for a
-  person, and SendPrompt and StopAgent continue or end it from the
-  conversation. The Inbox view replaces the world with a table of every
-  session on every island, newest activity first, with a mark for waiting,
-  working, finished, or failed, and a dot and bold line while something
-  happened since it was last looked at. The agent titles its conversation
-  in a side session as the first turn starts (SessionTitled), the first
-  prompt line standing in until then, and agents go by their display name,
-  with an Open or All filter. An open conversation reads as a
-  chat, with Markdown rendered safely as DOM, the reply box at the bottom,
-  and the transcript re-read after each session event rather than polled.
-  "Waiting on you" means idle with a last message you have not read, which
-  is what the tab title and the Inbox badge count; reading it in the inbox
-  makes the session idle. Approvals will join that count in milestone 8.
-- Milestone 8 is done: approvals. See the milestone for what landed.
-- Milestone 7 is done: the conversation streams. Every transcript append is
-  published on the session's live subject with its byte offset, plain NATS
-  with no stream; a browser watching a conversation over the WebSocket gets
-  the pieces and grows the running bubble in place, with tool calls as
-  chips where they happened, and reads the file once when the turn ends.
-  A piece that arrives out of place triggers a re-read, so the page can
-  never drift from the file.
-  Streaming of the agent's words as they arrive remains.
-
 ## Milestones
 
 Each milestone is demoable on its own and builds on the last.
@@ -265,8 +278,9 @@ Demo: the MVP.
 
 ## Deferred past the MVP
 
-World init, accounts, credentials, and auth callout. Passkeys and user
-sessions. JetStream streams, events, and every aggregate. Agents, ACP, and
-adapters. Repos, terrain, and buildings. Rules, approvals, and push
-notifications. Work orders. Drill-down below the island level. The phone
-inbox. Packaging and goreleaser.
+World init, accounts, credentials, and auth callout. Passkeys, user sessions,
+and signed approvals. The rule language and rule events; rules are a kind
+allow-list on the host for now. Push notifications and the phone inbox. Work
+orders and dynamic dispatch. Compaction puffs and subagent leashes, which
+wait for their events. Claude Code hooks, so terminal sessions appear on the
+island. The three.js upgrade. Packaging and goreleaser.

@@ -53,8 +53,9 @@ type Session struct {
 	Turns      int    `json:"turns"`
 	// Title is what the agent named the conversation, if it has yet.
 	Title string `json:"title,omitempty"`
-	// Trusted means the session's tool calls are allowed without asking.
-	Trusted bool `json:"trusted,omitempty"`
+	// Trusted means the session's tool calls are allowed without asking. It
+	// is always sent, so a browser sees it turn back off.
+	Trusted bool `json:"trusted"`
 	// Pending holds the tool calls waiting on a person, oldest first.
 	Pending   []Permission `json:"pending"`
 	StartedAt time.Time    `json:"startedAt"`

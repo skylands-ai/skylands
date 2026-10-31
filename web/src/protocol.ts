@@ -100,7 +100,7 @@ export interface Session {
   /** What the agent named the conversation, once it has. */
   title?: string
   /** Whether the session's tool calls are allowed without asking. */
-  trusted?: boolean
+  trusted: boolean
   /** The tool calls waiting on a person, oldest first. */
   pending: Permission[]
   startedAt: string

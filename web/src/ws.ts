@@ -9,7 +9,7 @@ export interface Link {
 
 /** Fills in lists an older citadel might send as null, so renderers never check. */
 function normalizeSession(s: Session): Session {
-  return { ...s, recent: s.recent ?? [], files: s.files ?? {}, plan: s.plan ?? [], pending: s.pending ?? [], turns: s.turns ?? 1, updatedAt: s.updatedAt ?? s.startedAt }
+  return { ...s, recent: s.recent ?? [], files: s.files ?? {}, plan: s.plan ?? [], pending: s.pending ?? [], trusted: s.trusted ?? false, turns: s.turns ?? 1, updatedAt: s.updatedAt ?? s.startedAt }
 }
 
 // The browser stays on one citadel through this socket. When it drops, keep
