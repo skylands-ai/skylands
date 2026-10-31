@@ -1,4 +1,6 @@
 import { el } from '../dom'
+import { agentColor } from '../status'
+import { providerOf } from '../world/airship'
 import { agoText, durationText, secondsSince, upText } from '../status'
 import type { Status } from '../world/world'
 
@@ -68,6 +70,24 @@ const ICONS: Record<Place, string> = {
   repo: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="13" r="1.8"/><circle cx="5.5" cy="3" r="1.8"/><circle cx="12" cy="6" r="1.8"/><path d="M5.5 4.8v6.4M5.5 10.2Q5.5 7.9 12 7.8"/></svg>',
   // An island: a flat top floating on a cone of rock.
   island: '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="currentColor"><path d="M2 6.2C2 4.9 4.7 4 8 4s6 .9 6 2.2S11.3 8.4 8 8.4 2 7.5 2 6.2z"/><path d="M3.6 8.3c1.2.5 2.7.8 4.4.8s3.2-.3 4.4-.8L8 14.5z" opacity=".7"/></svg>',
+}
+
+/**
+ * An agent type's glyph: its airship's hull in its color, so the panel and
+ * the sky agree on who is who. A long envelope for Claude, a boxy hull for
+ * Codex, a round one for Gemini, and a four-sided one for local agents.
+ */
+export function agentGlyph(agent: string): HTMLElement {
+  const color = agentColor(agent)
+  const shapes: Record<string, string> = {
+    claude: `<ellipse cx="11" cy="10" rx="9" ry="4.5" fill="${color}"/><rect x="8" y="14" width="6" height="3" rx="1" fill="${color}" opacity=".7"/>`,
+    codex: `<rect x="3" y="5" width="16" height="9" rx="2.5" fill="${color}"/><rect x="8" y="14" width="6" height="3" rx="1" fill="${color}" opacity=".7"/>`,
+    gemini: `<circle cx="11" cy="9" r="7" fill="${color}"/><rect x="8" y="16" width="6" height="3" rx="1" fill="${color}" opacity=".7"/>`,
+    local: `<path d="M11 2l8 7-8 7-8-7z" fill="${color}"/><rect x="8" y="16" width="6" height="3" rx="1" fill="${color}" opacity=".7"/>`,
+  }
+  const icon = el('span', { 'aria-hidden': 'true', style: 'display:inline-flex;flex:none' })
+  icon.innerHTML = `<svg viewBox="0 0 22 22" width="22" height="22">${shapes[providerOf(agent)] ?? shapes.local}</svg>`
+  return icon
 }
 
 /** The glyph for a level of the world, drawn in the surrounding text color. */

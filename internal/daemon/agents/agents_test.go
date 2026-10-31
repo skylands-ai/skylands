@@ -81,7 +81,7 @@ func TestRunPromptDrivesTheFakeAgent(t *testing.T) {
 		t.Errorf("plans=%d usage=%v messages=%d", rec.plans, rec.usage, len(rec.messages))
 	}
 	// The agent streams its answer in rapid chunks; they must land in order.
-	want := "Done. I read 2 files and edited README.md. Every tracked file was counted, every hidden one was skipped, and nothing was changed on disk."
+	want := "Done with \"do the thing\". I read 2 files and edited README.md. Every tracked file was counted, every hidden one was skipped, and nothing was changed on disk."
 	if got := strings.Join(rec.messages, ""); got != want {
 		t.Errorf("message chunks arrived out of order:\n got %q\nwant %q", got, want)
 	}
@@ -92,6 +92,26 @@ func TestRunPromptDrivesTheFakeAgent(t *testing.T) {
 			t.Errorf("tool call %s completed before it started", c.ID)
 		}
 		seen[c.ID] = true
+	}
+}
+
+func TestTitleUsesASideSession(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cwd := t.TempDir()
+	cmd, env := fakeagent.TestCommand()
+	rec := &recorder{}
+	run, err := Start(ctx, Adapter{Name: "fake", Command: cmd, Env: env}, cwd, "", rec)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = run.Close() }()
+	title, err := run.Title(ctx, "please tidy the readme and the docs", 10*time.Second)
+	if err != nil || title != "Please tidy the readme" {
+		t.Fatalf("Title = %q, %v", title, err)
+	}
+	if len(rec.messages) != 0 || len(rec.calls) != 0 {
+		t.Errorf("the title request leaked into the observer: messages %d, calls %d", len(rec.messages), len(rec.calls))
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -27,6 +28,8 @@ const seqKey = "skylands_seq"
 // stdio, numbering session updates on the way in.
 type processTransport struct {
 	cmd *exec.Cmd
+	// read counts the session updates read from the agent so far.
+	read atomic.Uint64
 }
 
 // Connect starts the process and returns an ACP connection to it.
@@ -43,19 +46,20 @@ func (t *processTransport) Connect(ctx context.Context) (acp.Connection, error) 
 		return nil, err
 	}
 	pr, pw := io.Pipe()
-	go stampUpdates(stdout, pw)
+	go t.stampUpdates(stdout, pw)
 	return (&acp.IOTransport{Reader: pr, Writer: &processStdin{stdin: stdin, cmd: t.cmd}}).Connect(ctx)
 }
 
 // stampUpdates copies newline-delimited JSON-RPC messages from the agent,
 // adding a sequence number to each session/update.
-func stampUpdates(from io.Reader, to *io.PipeWriter) {
+func (t *processTransport) stampUpdates(from io.Reader, to *io.PipeWriter) {
 	reader := bufio.NewReaderSize(from, 1<<20)
 	var seq uint64
 	for {
 		line, err := reader.ReadBytes('\n')
 		if len(line) > 0 {
 			line = stamp(line, &seq)
+			t.read.Store(seq)
 			if _, werr := to.Write(line); werr != nil {
 				to.CloseWithError(werr)
 				return
@@ -168,6 +172,13 @@ type sequencer struct {
 
 func newSequencer(fn func(*acp.SessionNotification)) *sequencer {
 	return &sequencer{next: 1, pending: map[uint64]*acp.SessionNotification{}, fn: fn}
+}
+
+// Delivered is how many stamped updates have been handled so far.
+func (s *sequencer) Delivered() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.next - 1
 }
 
 // Deliver handles n now if it is next, or when its turn comes. An update

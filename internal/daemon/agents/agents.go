@@ -6,13 +6,11 @@ package agents
 import (
 	"bytes"
 	"context"
-	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/spachava753/acp-sdk/acp"
@@ -77,62 +75,6 @@ type Observer interface {
 	Message(text string)
 }
 
-// RunPrompt launches the adapter's agent in cwd, sends one prompt, reports
-// what happens to obs, and returns the stop reason when the turn ends. The
-// agent process is stopped before it returns, and cancelling ctx stops it
-// early. A non-empty model is passed through the adapter's ModelEnv.
-func RunPrompt(ctx context.Context, ad Adapter, cwd, prompt, model string, obs Observer) (string, error) {
-	if len(ad.Command) == 0 {
-		return "", fmt.Errorf("adapter %q has no command", ad.Name)
-	}
-	cmd := exec.CommandContext(ctx, ad.Command[0], ad.Command[1:]...)
-	cmd.Dir = cwd
-	cmd.Env = append(os.Environ(), ad.Env...)
-	if model != "" && ad.ModelEnv != "" {
-		cmd.Env = append(cmd.Env, ad.ModelEnv+"="+model)
-	}
-	stderr := &tailBuffer{limit: 4096}
-	cmd.Stderr = stderr
-
-	h := &handler{cwd: cwd, obs: obs, calls: map[acp.ToolCallId]ToolCall{}}
-	h.seq = newSequencer(h.update)
-	client, err := acp.Connect(ctx, &processTransport{cmd: cmd}, h)
-	if err != nil {
-		return "", fmt.Errorf("start %s agent: %w", ad.Name, err)
-	}
-	defer func() { _ = client.Close() }()
-	fail := func(step string, err error) error {
-		if msg := stderr.String(); msg != "" {
-			return fmt.Errorf("%s: %w (agent said: %s)", step, err, msg)
-		}
-		return fmt.Errorf("%s: %w", step, err)
-	}
-
-	init, err := client.Initialize(ctx, &acp.InitializeRequest{
-		ProtocolVersion:    acp.ProtocolVersion(1),
-		ClientInfo:         &acp.Implementation{Name: "skylands", Version: "dev"},
-		ClientCapabilities: &acp.ClientCapabilities{},
-	})
-	if err != nil {
-		return "", fail("initialize "+ad.Name, err)
-	}
-	name, version := ad.Name, ""
-	if init.AgentInfo != nil {
-		name, version = init.AgentInfo.Name, init.AgentInfo.Version
-	}
-	obs.Spawned(name, version)
-
-	sess, err := client.NewSession(ctx, &acp.NewSessionRequest{Cwd: cwd, McpServers: []acp.McpServer{}})
-	if err != nil {
-		return "", fail("open session", err)
-	}
-	resp, err := client.Prompt(ctx, &acp.PromptRequest{SessionID: sess.SessionID, Prompt: []acp.ContentBlock{acp.TextContentBlock(prompt)}})
-	if err != nil {
-		return "", fail("prompt", err)
-	}
-	return string(resp.StopReason), nil
-}
-
 // handler answers the agent's calls to the client side of ACP.
 type handler struct {
 	cwd   string
@@ -140,6 +82,31 @@ type handler struct {
 	seq   *sequencer
 	mu    sync.Mutex
 	calls map[acp.ToolCallId]ToolCall
+	// side collects the text of side sessions, such as a title request,
+	// which the observer never sees.
+	side map[acp.SessionId]*strings.Builder
+}
+
+// aside starts collecting the text of a session instead of reporting it.
+func (h *handler) aside(id acp.SessionId) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.side == nil {
+		h.side = map[acp.SessionId]*strings.Builder{}
+	}
+	h.side[id] = &strings.Builder{}
+}
+
+// collected returns a side session's text and stops collecting.
+func (h *handler) collected(id acp.SessionId) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	b := h.side[id]
+	delete(h.side, id)
+	if b == nil {
+		return ""
+	}
+	return b.String()
 }
 
 // Update receives session updates, possibly concurrently and out of order,
@@ -151,6 +118,17 @@ func (h *handler) Update(_ context.Context, n *acp.SessionNotification) error {
 
 func (h *handler) update(n *acp.SessionNotification) {
 	u := n.Update
+	h.mu.Lock()
+	b := h.side[n.SessionID]
+	h.mu.Unlock()
+	if b != nil {
+		if u.SessionUpdate == acp.SessionUpdateTypeAgentMessageChunk {
+			h.mu.Lock()
+			b.WriteString(contentText(u.Content))
+			h.mu.Unlock()
+		}
+		return
+	}
 	switch u.SessionUpdate {
 	case acp.SessionUpdateTypeToolCall, acp.SessionUpdateTypeToolCallUpdate:
 		h.mu.Lock()
@@ -275,4 +253,3 @@ func (t *tailBuffer) String() string {
 }
 
 var _ io.Writer = (*tailBuffer)(nil)
-var _ = errors.New

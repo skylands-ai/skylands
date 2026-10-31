@@ -25,16 +25,18 @@ export class FetchCache {
 
   /**
    * Returns the cached text for one session's transcript or diff, starting a
-   * fetch when there is none or when the entry is older than refreshMs.
+   * fetch when there is none, when the entry is older than refreshMs, or
+   * when it was fetched before `since`, the session's latest event, so the
+   * text is read again after each event without polling.
    */
-  get(kind: 'transcript' | 'diff', host: string, id: string, refreshMs: number): Fetched {
+  get(kind: 'transcript' | 'diff', host: string, id: string, refreshMs: number, since = 0): Fetched {
     const key = `${kind}/${host}/${id}`
     let e = this.entries.get(key)
     if (!e) {
       e = { text: '', truncated: false, loading: false, at: 0 }
       this.entries.set(key, e)
     }
-    const stale = e.at === 0 || (refreshMs > 0 && Date.now() - e.at > refreshMs)
+    const stale = e.at === 0 || e.at < since || (refreshMs > 0 && Date.now() - e.at > refreshMs)
     if (stale && !e.loading) {
       e.loading = true
       void this.load(kind, host, id, e)

@@ -1,6 +1,6 @@
 import { el } from '../dom'
 import type { Island, Repo, Session } from '../protocol'
-import { clockText, islandStatus } from '../status'
+import { clockText, islandStatus, isOpen } from '../status'
 import { factsBox, header, note, section, timeNode } from './parts'
 
 /** The island-level panel: one host, as the citadel last heard it. */
@@ -59,7 +59,7 @@ export function renderIslandPanel(
         'Terraces',
         repos.map((r) => {
           const n = r.totalFiles
-          const agents = sessions.filter((s) => s.repoId === r.id && s.status === 'running').length
+          const agents = sessions.filter((s) => s.repoId === r.id && isOpen(s)).length
           const detail = `${n} tracked ${n === 1 ? 'file' : 'files'}, ${agents ? `${agents} ${agents === 1 ? 'agent' : 'agents'} working` : 'no agents'}`
           return el('div', { class: 'row' }, [
             el('span', { class: 'grow' }, [

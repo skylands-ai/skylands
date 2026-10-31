@@ -442,6 +442,18 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 	}
 	b.wait(t, "the terrace", 20*time.Second, func(v view) bool { _, ok := v.repos[info.ID]; return ok })
 
+	post2 := func(path, body string) (int, map[string]any) {
+		t.Helper()
+		resp, err := http.Post(w.webURL+path, "application/json", bytes.NewBufferString(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		data, _ := io.ReadAll(resp.Body)
+		var out map[string]any
+		_ = json.Unmarshal(data, &out)
+		return resp.StatusCode, out
+	}
 	post := func(body string) (int, map[string]any) {
 		t.Helper()
 		resp, err := http.Post(w.webURL+"/api/sessions", "application/json", bytes.NewBufferString(body))
@@ -469,21 +481,38 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 		t.Fatalf("start session: %d %v", code, out)
 	}
 	id := out["sessionId"].(string)
-	v := b.wait(t, "the session to end", 30*time.Second, func(v view) bool {
+	v := b.wait(t, "the first turn to end", 30*time.Second, func(v view) bool {
 		s, ok := v.sessions[id]
-		return ok && s.Status == "ended"
+		return ok && s.Status == "idle"
 	})
 	s := v.sessions[id]
-	if s.Host != "ws" || s.RepoID != info.ID || s.Prompt != "make it faster" || s.AgentName != "skylands-fakeagent" || s.StopReason != "end_turn" {
+	if s.Host != "ws" || s.RepoID != info.ID || s.Prompt != "make it faster" || s.AgentName != "skylands-fakeagent" || s.StopReason != "end_turn" || s.Turns != 1 {
 		t.Errorf("session = %+v", s)
 	}
 	if len(s.Recent) != 3 || s.Files["main.go"] != "edit" || s.Files["util.go"] != "read" || s.CurrentFile != "main.go" || s.Used == 0 {
 		t.Errorf("activity: recent=%+v files=%v current=%q used=%d", s.Recent, s.Files, s.CurrentFile, s.Used)
 	}
 
+	// The conversation continues with another prompt, then stops.
+	if code, out := post2("/api/sessions/ws/"+id+"/prompt", `{"text":"now make it smaller"}`); code != http.StatusOK {
+		t.Fatalf("prompt: %d %v", code, out)
+	}
+	b.wait(t, "the second turn to end", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "idle" && s.Turns == 2 })
+	v = b.wait(t, "the agent to name the conversation", 15*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Title != "" })
+	if v.sessions[id].Title != "Make it faster" {
+		t.Errorf("title = %q", v.sessions[id].Title)
+	}
+	if code, out := post2("/api/sessions/ws/"+id+"/stop", `{}`); code != http.StatusOK {
+		t.Fatalf("stop: %d %v", code, out)
+	}
+	b.wait(t, "the session to end", 15*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "ended" })
+	if code, _ := post2("/api/sessions/ws/"+id+"/prompt", `{"text":"too late"}`); code != http.StatusBadRequest {
+		t.Errorf("prompt after stop: %d", code)
+	}
+
 	// A later browser gets the session in its snapshot.
 	b2 := w.openBrowser()
-	b2.wait(t, "a snapshot with the session", 5*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "ended" })
+	b2.wait(t, "a snapshot with the session", 5*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "ended" && s.Turns == 2 })
 
 	// The response and the diff are fetched from the host through the citadel.
 	get := func(path string) (int, string) {
@@ -496,7 +525,7 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 		data, _ := io.ReadAll(resp.Body)
 		return resp.StatusCode, string(data)
 	}
-	if code, body := get("/api/sessions/ws/" + id + "/transcript"); code != http.StatusOK || !strings.Contains(body, "make it faster") || !strings.Contains(body, "Done.") {
+	if code, body := get("/api/sessions/ws/" + id + "/transcript"); code != http.StatusOK || !strings.Contains(body, "make it faster") || !strings.Contains(body, "now make it smaller") || !strings.Contains(body, "Done with") {
 		t.Errorf("transcript: %d %s", code, body)
 	}
 	if code, body := get("/api/sessions/ws/" + id + "/diff"); code != http.StatusOK || !strings.Contains(body, `"text"`) {

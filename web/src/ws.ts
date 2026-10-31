@@ -3,7 +3,7 @@ import type { Store } from './store'
 
 /** Fills in lists an older citadel might send as null, so renderers never check. */
 function normalizeSession(s: Session): Session {
-  return { ...s, recent: s.recent ?? [], files: s.files ?? {}, plan: s.plan ?? [] }
+  return { ...s, recent: s.recent ?? [], files: s.files ?? {}, plan: s.plan ?? [], turns: s.turns ?? 1, updatedAt: s.updatedAt ?? s.startedAt }
 }
 
 // The browser stays on one citadel through this socket. When it drops, keep

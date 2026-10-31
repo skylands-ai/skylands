@@ -1,7 +1,7 @@
 import { el } from './dom'
 import { base, sortedFiles } from './files'
 import { placeIcon, type Place } from './panels/parts'
-import { islandCounts, isStale } from './status'
+import { agentLabel, islandCounts, isStale } from './status'
 import { level, type State } from './store'
 
 export interface NavActions {
@@ -48,7 +48,7 @@ export function renderHeader(crumbs: HTMLElement, connected: HTMLElement, link: 
         crumbs.appendChild(sep())
         if (l === 'agent') {
           const ag = s.agent ? s.sessions[s.agent] : undefined
-          crumbs.appendChild(current(ag?.agentName ?? ag?.agent ?? 'agent'))
+          crumbs.appendChild(current(ag ? agentLabel(ag.agent) : 'agent'))
         } else {
           const f = repo && s.file !== null ? sortedFiles(repo)[s.file] : undefined
           crumbs.appendChild(current(f ? base(f.path) : 'file'))

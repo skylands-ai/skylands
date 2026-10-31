@@ -295,6 +295,15 @@ export class World {
     requestAnimationFrame((now) => this.frame(now))
   }
 
+  private paused = false
+
+  /** Stops drawing while the stage is hidden; nothing moves in the meantime. */
+  setPaused(paused: boolean): void {
+    if (paused === this.paused) return
+    this.paused = paused
+    if (!paused) this.last = performance.now()
+  }
+
   private setNav(n: Nav): void {
     this.nav = n
     this.showRings()
@@ -486,6 +495,10 @@ export class World {
   }
 
   private frame(now: number): void {
+    if (this.paused) {
+      requestAnimationFrame((n) => this.frame(n))
+      return
+    }
     const dt = Math.min(0.05, Math.max(0, (now - this.last) / 1000))
     this.last = now
     this.time += dt

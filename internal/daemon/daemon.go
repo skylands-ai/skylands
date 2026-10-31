@@ -203,6 +203,32 @@ func (c *commands) handle(ctx context.Context, msg *nats.Msg) {
 			return
 		}
 		c.replyResult(msg, v1.StartSessionResult{SessionID: s.ID, Worktree: s.Worktree, Branch: s.Branch})
+	case v1.CommandSendPrompt:
+		var cmd v1.SendPrompt
+		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+			c.reply(msg, v1.Reply{Error: "bad SendPrompt: " + err.Error()})
+			return
+		}
+		cmd.SessionID = sessionID
+		s, err := c.sessions.Prompt(ctx, cmd)
+		if err != nil {
+			c.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		c.replyResult(msg, map[string]any{"sessionId": s.ID, "turns": s.Turns, "status": s.Status})
+	case v1.CommandStopAgent:
+		var cmd v1.StopAgent
+		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+			c.reply(msg, v1.Reply{Error: "bad StopAgent: " + err.Error()})
+			return
+		}
+		cmd.SessionID = sessionID
+		s, err := c.sessions.Stop(ctx, cmd)
+		if err != nil {
+			c.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		c.replyResult(msg, map[string]any{"sessionId": s.ID, "status": s.Status})
 	default:
 		c.reply(msg, v1.Reply{Error: "unknown command " + commandType})
 	}
@@ -246,7 +272,7 @@ func (a *localAPI) Status(context.Context) socket.StatusInfo {
 		if r, ok := a.agg.Repo(s.RepoID); ok {
 			name = r.Name
 		}
-		sessions = append(sessions, socket.SessionInfo{ID: s.ID, Repo: name, Agent: s.Agent, Status: string(s.Status), Prompt: s.Prompt, StartedAt: s.StartedAt})
+		sessions = append(sessions, socket.SessionInfo{ID: s.ID, Repo: name, Agent: s.Agent, Status: string(s.Status), Turns: s.Turns, Title: s.Title, Prompt: s.Prompt, StartedAt: s.StartedAt})
 	}
 	return socket.StatusInfo{Host: a.host, World: a.world, Version: a.version, Started: a.started, Repos: infos, Sessions: sessions}
 }

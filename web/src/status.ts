@@ -53,11 +53,49 @@ export function agentColor(agent: string): string {
   }
 }
 
-/** What a session is doing right now, in a few words. */
-export function sessionStatus(s: Session): Status {
+/** What to call an adapter in the interface. */
+export function agentLabel(agent: string): string {
+  switch (agent) {
+    case 'claude':
+      return 'Claude Code'
+    case 'codex':
+      return 'Codex'
+    case 'gemini':
+      return 'Gemini CLI'
+    case 'fake':
+      return 'Fake agent'
+    default:
+      return agent
+  }
+}
+
+/**
+ * A conversation's label: the title its agent gave it, or until then the
+ * first line of its first prompt, cut to fit a subject line.
+ */
+export function sessionLabel(s: Session, max = 72): string {
+  const line = s.title || (s.prompt.split('\n').find((l) => l.trim() !== '') ?? '')
+  const text = line.replace(/[#*_`>]+/g, '').replace(/\s+/g, ' ').trim() || 'Untitled conversation'
+  return text.length > max ? text.slice(0, max - 1).trimEnd() + '\u2026' : text
+}
+
+/** The yellow of "waiting on you", shared with the tags and the beacon. */
+export const WAITING = '#E0B000'
+
+/**
+ * What a session is doing right now, in a few words. An idle session is
+ * "waiting for you" until its last message has been seen, then just idle.
+ */
+export function sessionStatus(s: Session, waiting = s.status === 'idle'): Status {
   if (s.status === 'failed') return [`Failed: ${s.error ?? 'unknown error'}`, 'var(--bad)']
-  if (s.status === 'ended') return [`Finished${s.stopReason && s.stopReason !== 'end_turn' ? ` (${s.stopReason.replace(/_/g, ' ')})` : ''}`, 'var(--muted)']
+  if (s.status === 'ended') return [`Finished${s.stopReason && s.stopReason !== 'end_turn' && s.stopReason !== 'stopped' ? ` (${s.stopReason.replace(/_/g, ' ')})` : s.stopReason === 'stopped' ? ', stopped' : ''}`, 'var(--muted)']
+  if (s.status === 'idle') return waiting ? ['Waiting for you', WAITING] : ['Idle', 'var(--idle)']
   return [s.currentAction ?? (s.agentName ? 'Thinking' : 'Starting'), 'var(--ok)']
+}
+
+/** Whether the session is still open: an agent process exists for it. */
+export function isOpen(s: Session): boolean {
+  return s.status === 'running' || s.status === 'idle'
 }
 
 /** Shortens a NATS id to its ends, the way the prototype shows them. */

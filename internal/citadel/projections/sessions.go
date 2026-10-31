@@ -24,19 +24,26 @@ type ToolCall struct {
 // Session is one agent run on one repository, as the citadel projects it
 // from session events.
 type Session struct {
-	Host       string    `json:"host"`
-	ID         string    `json:"id"`
-	RepoID     string    `json:"repoId"`
-	Agent      string    `json:"agent"`
-	Model      string    `json:"model,omitempty"`
-	AgentName  string    `json:"agentName,omitempty"`
-	Prompt     string    `json:"prompt"`
-	Branch     string    `json:"branch"`
-	Status     string    `json:"status"`
-	StopReason string    `json:"stopReason,omitempty"`
-	Error      string    `json:"error,omitempty"`
-	StartedAt  time.Time `json:"startedAt"`
-	EndedAt    time.Time `json:"endedAt,omitzero"`
+	Host      string `json:"host"`
+	ID        string `json:"id"`
+	RepoID    string `json:"repoId"`
+	Agent     string `json:"agent"`
+	Model     string `json:"model,omitempty"`
+	AgentName string `json:"agentName,omitempty"`
+	Prompt    string `json:"prompt"`
+	Branch    string `json:"branch"`
+	// Status is running, idle (waiting for a person), ended, or failed.
+	Status     string `json:"status"`
+	StopReason string `json:"stopReason,omitempty"`
+	Error      string `json:"error,omitempty"`
+	Turns      int    `json:"turns"`
+	// Title is what the agent named the conversation, if it has yet.
+	Title     string    `json:"title,omitempty"`
+	StartedAt time.Time `json:"startedAt"`
+	EndedAt   time.Time `json:"endedAt,omitzero"`
+	// UpdatedAt is the time of the latest event, which is what "something
+	// new happened" means.
+	UpdatedAt time.Time `json:"updatedAt"`
 	// CurrentFile is the file of the latest tool call that named one, and
 	// CurrentAction that call's title.
 	CurrentFile   string `json:"currentFile,omitempty"`
@@ -84,7 +91,27 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 		var d v1.PromptSent
 		if ev.Decode(&d) == nil {
 			if s, ok := p.byID[d.SessionID]; ok {
-				s.Prompt = d.Text
+				if s.Turns == 0 {
+					s.Prompt = d.Text
+				}
+				s.Turns++
+				s.Status = "running"
+				changed = s
+			}
+		}
+	case v1.EventTurnEnded:
+		var d v1.TurnEnded
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok && s.Status == "running" {
+				s.Status, s.StopReason = "idle", d.StopReason
+				changed = s
+			}
+		}
+	case v1.EventSessionTitled:
+		var d v1.SessionTitled
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.Title = d.Title
 				changed = s
 			}
 		}
@@ -164,6 +191,9 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 	}
 	var copy Session
 	if changed != nil {
+		if ev.Time.After(changed.UpdatedAt) {
+			changed.UpdatedAt = ev.Time
+		}
 		copy = cloneSession(changed)
 	}
 	p.mu.Unlock()

@@ -72,11 +72,17 @@ export interface Session {
   agentName?: string
   prompt: string
   branch: string
-  status: 'running' | 'ended' | 'failed'
+  /** running: the agent works on a turn. idle: it waits for a person. */
+  status: 'running' | 'idle' | 'ended' | 'failed'
   stopReason?: string
   error?: string
+  turns: number
+  /** What the agent named the conversation, once it has. */
+  title?: string
   startedAt: string
   endedAt?: string
+  /** When the session's latest event happened. */
+  updatedAt: string
   currentFile?: string
   currentAction?: string
   recent: ToolCall[]

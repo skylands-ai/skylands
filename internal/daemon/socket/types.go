@@ -30,6 +30,8 @@ type SessionInfo struct {
 	Repo      string    `json:"repo"`
 	Agent     string    `json:"agent"`
 	Status    string    `json:"status"`
+	Turns     int       `json:"turns"`
+	Title     string    `json:"title,omitempty"`
 	Prompt    string    `json:"prompt"`
 	StartedAt time.Time `json:"startedAt"`
 }

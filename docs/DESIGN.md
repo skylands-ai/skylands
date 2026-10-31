@@ -226,7 +226,7 @@ Sessions are event-sourced, and each daemon is the single writer of the session 
 
 | Aggregate | Lives in | Handles commands | Produces events |
 | --- | --- | --- | --- |
-| Session | Daemon | StartSession, SendPrompt, RecordToolCall, RecordToolResult, RecordPlan, RecordUsage, RecordCompaction, RecordPermissionRequest, ApproveToolCall, DenyToolCall, RetryAgent, PauseAgent, ResumeAgent, StopAgent, ForkSession, ExpirePendingRequests | SessionStarted, PromptSent, AgentSpawned, ToolCallStarted, ToolCallCompleted, PlanUpdated, UsageReported, ContextCompacted, PermissionRequested, PermissionGranted, PermissionDenied, PermissionExpired, AgentFailed, AgentPaused, AgentResumed, SessionForked, SessionEnded |
+| Session | Daemon | StartSession, SendPrompt, RecordToolCall, RecordToolResult, RecordPlan, RecordUsage, RecordCompaction, RecordPermissionRequest, ApproveToolCall, DenyToolCall, RetryAgent, PauseAgent, ResumeAgent, StopAgent, ForkSession, ExpirePendingRequests | SessionStarted, PromptSent, AgentSpawned, SessionTitled, ToolCallStarted, ToolCallCompleted, TurnEnded, PlanUpdated, UsageReported, ContextCompacted, PermissionRequested, PermissionGranted, PermissionDenied, PermissionExpired, AgentFailed, AgentPaused, AgentResumed, SessionForked, SessionEnded |
 | Host | Daemon | RegisterRepo, SnapshotTerrain, RecordFileChanges, RecordAdapterAvailability | RepoRegistered, TerrainSnapshotted, FilesChanged, AdapterAvailabilityChanged |
 | Rules | Citadel | AddRule, RemoveRule | RuleAdded, RuleRemoved |
 | Users | Citadel | EnrollUser, EnrollApproverKey, RevokeUser | UserEnrolled, ApproverKeyEnrolled, UserRevoked |

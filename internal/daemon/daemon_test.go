@@ -186,20 +186,45 @@ func TestStartSessionOverNATS(t *testing.T) {
 		t.Error("an unknown repo was accepted")
 	}
 
-	// The session runs to the end and shows in the daemon's status.
-	for {
-		st, err := cli.Status(ctx)
-		if err == nil && len(st.Sessions) == 1 && st.Sessions[0].Status == "ended" {
-			if st.Sessions[0].Repo != repo.Name || st.Sessions[0].Agent != "fake" {
-				t.Errorf("session = %+v", st.Sessions[0])
+	// The first turn ends and the session waits, as the daemon's status shows.
+	waitSession := func(status string, turns int) {
+		t.Helper()
+		for {
+			st, err := cli.Status(ctx)
+			if err == nil && len(st.Sessions) == 1 && st.Sessions[0].Status == status && st.Sessions[0].Turns == turns {
+				if st.Sessions[0].Repo != repo.Name || st.Sessions[0].Agent != "fake" {
+					t.Errorf("session = %+v", st.Sessions[0])
+				}
+				return
 			}
-			break
+			if time.Now().After(deadline.Add(30 * time.Second)) {
+				t.Fatalf("session never reached %s with %d turns: %+v, %v", status, turns, st, err)
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
-		if time.Now().After(deadline.Add(20 * time.Second)) {
-			t.Fatalf("session never ended: %+v, %v", st, err)
-		}
-		time.Sleep(100 * time.Millisecond)
 	}
+	waitSession("idle", 1)
+
+	// SendPrompt runs another turn, and StopAgent ends the session.
+	command := func(typ string, body any) v1.Reply {
+		t.Helper()
+		data, _ := json.Marshal(body)
+		msg, err := nc.Request(v1.SessionCommandSubject("ws", "sess-1", typ), data, 10*time.Second)
+		if err != nil {
+			t.Fatalf("%s: %v", typ, err)
+		}
+		var r v1.Reply
+		_ = json.Unmarshal(msg.Data, &r)
+		return r
+	}
+	if r := command(v1.CommandSendPrompt, v1.SendPrompt{ID: "cmd-p", Text: "once more"}); r.Error != "" {
+		t.Fatalf("SendPrompt failed: %s", r.Error)
+	}
+	waitSession("idle", 2)
+	if r := command(v1.CommandStopAgent, v1.StopAgent{ID: "cmd-stop"}); r.Error != "" {
+		t.Fatalf("StopAgent failed: %s", r.Error)
+	}
+	waitSession("ended", 2)
 
 	// The transcript and the worktree's diff come from the host on request.
 	fetchText := func(kind, sessionID string) (v1.TextResult, string) {
@@ -215,7 +240,7 @@ func TestStartSessionOverNATS(t *testing.T) {
 		_ = json.Unmarshal(reply.Result, &res)
 		return res, reply.Error
 	}
-	if res, errText := fetchText(v1.FetchTranscript, "sess-1"); errText != "" || !strings.Contains(res.Text, "# Prompt") || !strings.Contains(res.Text, "fix it") || !strings.Contains(res.Text, "Done.") || !strings.Contains(res.Text, "Finished: end_turn") {
+	if res, errText := fetchText(v1.FetchTranscript, "sess-1"); errText != "" || !strings.Contains(res.Text, "## You\n\nfix it") || !strings.Contains(res.Text, "Done with \"fix it\"") || !strings.Contains(res.Text, "## You\n\nonce more") || !strings.Contains(res.Text, "*Stopped*") {
 		t.Errorf("transcript = %q, err %q", res.Text, errText)
 	}
 	if err := os.WriteFile(filepath.Join(result.Worktree, "main.go"), []byte("changed by a test\n"), 0o644); err != nil {

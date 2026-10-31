@@ -1,8 +1,8 @@
 import { el } from '../dom'
 import { fmtBytes, shortCommit, sortedFiles } from '../files'
 import type { Island, Repo, Session } from '../protocol'
-import { agentColor, sessionStatus } from '../status'
-import { backButton, factsBox, header, hint, note, section, timeNode } from './parts'
+import { agentLabel, isOpen } from '../status'
+import { agentGlyph, backButton, factsBox, header, hint, note, section, timeNode } from './parts'
 
 /** The terrace-level panel: one repository on one host. */
 export function renderTerracePanel(
@@ -12,13 +12,13 @@ export function renderTerracePanel(
   stale: boolean,
   shown: number,
   sessions: Session[],
+  waiting: (s: Session) => boolean,
   selectFile: (idx: number) => void,
-  selectAgent: (id: string) => void,
   backToIsland: () => void,
 ): void {
   panel.textContent = ''
   const down = stale || !island.reachable
-  const running = sessions.filter((s) => s.status === 'running').length
+  const running = sessions.filter(isOpen).length
   panel.appendChild(
     header(
       repo.name,
@@ -31,30 +31,7 @@ export function renderTerracePanel(
     ),
   )
   panel.appendChild(backButton('island', island.host, backToIsland))
-  if (sessions.length) {
-    panel.appendChild(
-      section(
-        'Agents',
-        sessions.map((s) => {
-          const st = sessionStatus(s)
-          const file = s.status === 'running' && s.currentFile ? ` \u00b7 ${s.currentFile}` : ''
-          return el('button', { type: 'button', class: 'row', style: 'text-align:left;width:100%', onclick: () => selectAgent(s.id) }, [
-            el('span', { class: 'dot', style: `width:10px;height:10px;background:${agentColor(s.agent)}` }),
-            el('span', { class: 'grow' }, [
-              el('span', { style: 'font-weight:600' }, [
-                s.agentName ?? s.agent,
-                s.model ? el('span', { class: 'muted', style: 'font-weight:400', text: ` (${s.model})` }) : null,
-                ' ',
-                el('span', { class: 'muted', style: 'font-weight:400', text: s.prompt.length > 60 ? s.prompt.slice(0, 57) + '\u2026' : s.prompt }),
-              ]),
-              el('span', { class: 'sub', text: st[0] + file }),
-            ]),
-            el('span', { class: 'dot', title: st[0], style: `background:${st[1]}` }),
-          ])
-        }),
-      ),
-    )
-  }
+  if (sessions.length) panel.appendChild(section('Agents', agentRows(sessions, waiting)))
   const facts: [string, string | Node][] = [
     ['Path', repo.path],
     ['Commit', shortCommit(repo.commit)],
@@ -84,5 +61,26 @@ export function renderTerracePanel(
   } else {
     panel.appendChild(note('This repository has no tracked files yet.'))
   }
-  panel.appendChild(hint(sessions.length ? 'Click an agent to read its response, or a building to look closer.' : 'Click a building to look closer.'))
+  panel.appendChild(hint(sessions.length ? 'Click an airship to follow its agent, or a building to look closer. Conversations are in the inbox.' : 'Click a building to look closer.'))
+}
+
+/** One line per agent type on this terrace: its glyph, its name, and how many sessions it has open. */
+function agentRows(sessions: Session[], waiting: (s: Session) => boolean): HTMLElement[] {
+  const byAgent = new Map<string, Session[]>()
+  for (const s of sessions) byAgent.set(s.agent, [...(byAgent.get(s.agent) ?? []), s])
+  return [...byAgent.entries()]
+    .sort((a, b) => b[1].filter(isOpen).length - a[1].filter(isOpen).length || a[0].localeCompare(b[0]))
+    .map(([agent, list]) => {
+      const open = list.filter(isOpen).length
+      const onYou = list.filter(waiting).length
+      const past = list.length - open
+      const parts = [open ? `${open} open ${open === 1 ? 'session' : 'sessions'}` : 'No open sessions']
+      if (onYou) parts.push(`${onYou} waiting for you`)
+      if (past) parts.push(`${past} finished`)
+      return el('div', { class: 'row' }, [
+        agentGlyph(agent),
+        el('span', { class: 'grow' }, [el('span', { style: 'font-weight:600', text: agentLabel(agent) }), el('span', { class: 'sub', text: parts.join(' \u00b7 ') })]),
+        open ? el('span', { class: 'badge', text: String(open), 'aria-hidden': 'true' }) : null,
+      ])
+    })
 }

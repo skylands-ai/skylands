@@ -68,9 +68,30 @@ of the repository on a `skylands/<session>` branch and runs the agent there.
 An airship rises from the terrace and lands on each file the agent reads or
 edits, lighting the building blue or amber, and red when two sessions are
 on the same file. The terrace panel shows the agent, what it is reading or
-editing, and when it finishes. Click the airship or the agent to follow it
-and read its response and the diff in its worktree. Both stay on the host, under `transcripts/` and `worktrees/` in
-the data directory, and the citadel fetches them only while you look.
+editing, and when it stops. Click the airship or the agent to follow it
+and read the conversation and the diff in its worktree. Both stay on the
+host, under `transcripts/` and `worktrees/` in the data directory, and the
+citadel fetches them only while you look.
+
+A session is a conversation. When the agent finishes a turn it waits, the
+airship hovers with a "Waiting for you" tag, and the next prompt continues
+it, so one session can carry a long piece of work the way a chat does.
+The Inbox, next to World in the header, is where to hold those
+conversations: one line per session on any island with its title, the
+agent, the repository, its status, and when it last did anything, newest
+first. The agent names the conversation itself: as the first turn starts,
+the daemon asks it for a title in a side session that never touches the
+conversation, and the first line of the prompt stands in until it answers.
+It lists open conversations;
+"All" shows finished ones too, and the choice is remembered. A
+yellow mark is waiting on you, green is working, grey-blue is idle, a ring
+is over, and a bold line with a blue dot has something you have not read.
+A session waits on you while its agent has stopped for a reply you have
+not read yet; once you have read it, it is idle until you answer. Open one
+to read it as a chat, reply at the bottom, or end the session, which stops
+the agent and keeps its worktree. The world is paused while the inbox is
+open, and "Show in world" flies back to the airship. The header's Inbox
+badge and the tab title count the sessions waiting on you.
 
 Two agents are available. The built-in fake agent reads a few files and
 edits one, so you can see the loop without any API keys. Claude Code runs

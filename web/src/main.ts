@@ -11,14 +11,16 @@ import { CommandBar } from './bar'
 import { byId, el } from './dom'
 import { FetchCache } from './fetchcache'
 import { renderHeader, type NavActions } from './header'
-import { renderAgentPanel } from './panels/agent'
+import { renderAgentPanel, type AgentActions } from './panels/agent'
 import { renderFilePanel } from './panels/file'
 import { refreshTimes } from './panels/parts'
 import { renderIslandPanel } from './panels/island'
 import { renderTerracePanel } from './panels/terrace'
 import { renderWorldPanel } from './panels/world'
-import { citadelLabelStatus, clockText, durationText, islandStatus, isStale, secondsSince } from './status'
-import { islandList, level, reposOn, sessionsOn, Store, type State } from './store'
+import { agentLabel, citadelLabelStatus, clockText, durationText, islandStatus, isStale, secondsSince } from './status'
+import { islandList, isWaiting, level, reposOn, sessionsOn, Store, waitingCount, type State } from './store'
+import { renderInbox, type InboxActions } from './inbox'
+import { renderMarkdown } from './markdown'
 import { providerOf } from './world/airship'
 import type { AgentState } from './world/agents'
 import { World } from './world/world'
@@ -33,6 +35,10 @@ const connectedEl = byId<HTMLElement>('connected')
 const linkEl = byId<HTMLElement>('link')
 const veilEl = byId<HTMLElement>('veil')
 const veilMsgEl = byId<HTMLElement>('veilmsg')
+const inboxEl = byId<HTMLElement>('inbox')
+const modeWorld = byId<HTMLButtonElement>('modeWorld')
+const modeInbox = byId<HTMLButtonElement>('modeInbox')
+const inboxCount = byId<HTMLElement>('inboxCount')
 
 const store = new Store()
 const bar = new CommandBar()
@@ -54,6 +60,49 @@ const nav: NavActions & { selectFile(host: string, terrace: string, idx: number)
   land: (host, terrace) => (world ? world.land(host, terrace) : store.update({ selected: host, terrace, file: null, agent: null })),
   selectFile: (host, terrace, idx) => (world ? world.selectFile(host, terrace, idx) : store.update({ selected: host, terrace, file: idx, agent: null })),
   selectAgent: (host, terrace, agent) => (world ? world.selectAgent(host, terrace, agent) : store.update({ selected: host, terrace, file: null, agent })),
+}
+
+/** Posts a command for one session to the citadel and returns an error message, or empty. */
+async function sessionCommand(host: string, id: string, action: 'prompt' | 'stop', body: unknown): Promise<string> {
+  try {
+    const resp = await fetch(`/api/sessions/${encodeURIComponent(host)}/${encodeURIComponent(id)}/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (resp.ok) return ''
+    const out = (await resp.json().catch(() => ({}))) as { error?: string }
+    return out.error ?? `The citadel answered ${resp.status}.`
+  } catch (err) {
+    return `Could not reach the citadel: ${(err as Error).message}`
+  }
+}
+
+const inboxActions: InboxActions = {
+  open: (id) => store.update({ inbox: id }),
+  filter: (which) => store.setInboxFilter(which),
+  openInWorld: (x) => {
+    store.setView('world')
+    nav.selectAgent(x.host, x.repoId, x.id)
+  },
+  prompt: (x, text) => sessionCommand(x.host, x.id, 'prompt', { text }),
+  stop: (x) => sessionCommand(x.host, x.id, 'stop', {}),
+}
+
+/** Shows the world or the inbox, and updates the switch in the header. */
+function renderMode(s: State): void {
+  const inbox = s.view === 'inbox'
+  inboxEl.hidden = !inbox
+  stage.hidden = inbox
+  panelEl.hidden = inbox
+  crumbsEl.hidden = inbox
+  modeWorld.setAttribute('aria-pressed', inbox ? 'false' : 'true')
+  modeInbox.setAttribute('aria-pressed', inbox ? 'true' : 'false')
+  const waiting = waitingCount(s)
+  inboxCount.hidden = waiting === 0
+  inboxCount.textContent = String(waiting)
+  document.title = waiting ? `(${waiting}) Skylands` : 'Skylands'
+  world?.setPaused(inbox)
 }
 
 function renderVeil(s: State): void {
@@ -83,16 +132,13 @@ function panelDeps(s: State, stale: boolean): unknown[] {
   switch (level(s)) {
     case 'agent': {
       const ag = s.agent ? s.sessions[s.agent] : undefined
-      const fetched = (kind: 'transcript' | 'diff'): unknown[] => {
-        const f = island && ag ? cache.peek(kind, island.host, ag.id) : undefined
-        return [f?.at, f?.loading, f?.error, f?.text]
-      }
-      return ['agent', ag, repo, island, stale, ...fetched('transcript'), ...fetched('diff')]
+      const diff = island && ag ? cache.peek('diff', island.host, ag.id) : undefined
+      return ['agent', ag, repo, island, stale, s.viewed, diff?.at, diff?.loading, diff?.error, diff?.text]
     }
     case 'file':
       return ['file', repo, island, s.file]
     case 'terrace':
-      return ['terrace', repo, island, stale, world?.buildingCount(island?.host ?? '', repo?.id ?? ''), ...(repo ? sessionsOn(s, repo.id) : [])]
+      return ['terrace', repo, island, stale, s.viewed, world?.buildingCount(island?.host ?? '', repo?.id ?? ''), ...(repo ? sessionsOn(s, repo.id) : [])]
     case 'island':
       return ['island', island, stale, stale ? s.lastContact : 0, ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
     default:
@@ -129,7 +175,14 @@ function renderPanelContent(s: State, stale: boolean): void {
     case 'agent': {
       const ag = s.agent ? s.sessions[s.agent] : undefined
       if (island && repo && ag) {
-        renderAgentPanel(panelEl, ag, repo, island, stale, cache, () => nav.land(island.host, repo.id))
+        const actions: AgentActions = {
+          back: () => nav.land(island.host, repo.id),
+          conversation: () => {
+            store.update({ inbox: ag.id })
+            store.setView('inbox')
+          },
+        }
+        renderAgentPanel(panelEl, ag, repo, island, stale, isWaiting(s, ag), cache, actions)
         return
       }
       break
@@ -150,8 +203,8 @@ function renderPanelContent(s: State, stale: boolean): void {
           stale,
           shown,
           sessionsOn(s, repo.id),
+          (x) => isWaiting(s, x),
           (idx) => nav.selectFile(island.host, repo.id, idx),
-          (id) => nav.selectAgent(island.host, repo.id, id),
           () => nav.select(island.host),
         )
         return
@@ -168,11 +221,18 @@ function renderPanelContent(s: State, stale: boolean): void {
   renderWorldPanel(panelEl, s, nav.select)
 }
 
-store.subscribe((s) => {
+store.subscribe((s0) => {
+  // Reading a conversation in the inbox counts as having seen everything in
+  // it so far. Following its airship in the world does not: no message is
+  // shown there.
+  const open = s0.view === 'inbox' && s0.inbox ? s0.sessions[s0.inbox] : undefined
+  const s = open ? store.markViewed(open.id, Date.parse(open.updatedAt)) : s0
   const stale = isStale(s)
+  renderMode(s)
   renderHeader(crumbsEl, connectedEl, linkEl, s, nav)
   renderVeil(s)
   bar.update(s)
+  if (s.view === 'inbox') renderInbox(inboxEl, s, cache, inboxActions)
   if (world) {
     for (const i of islandList(s)) {
       world.upsertIsland(i.host, i.reachable)
@@ -187,9 +247,10 @@ store.subscribe((s) => {
               id: x.id,
               terrace: x.repoId,
               prov: providerOf(x.agent),
-              name: x.agentName ?? x.agent,
+              name: agentLabel(x.agent),
               action: x.currentAction ?? '',
               status: x.status,
+              waiting: isWaiting(s, x),
               file: x.currentFile ?? null,
               kind: x.currentFile && x.files[x.currentFile] === 'edit' ? 'edit' : 'read',
               atFile: !!x.recent?.length && !!x.recent[x.recent.length - 1]?.locations?.length,
@@ -207,7 +268,10 @@ store.subscribe((s) => {
 })
 
 // A handle for debugging and screenshots: skylands.world.rig.flyTo(...).
-;(window as unknown as { skylands: unknown }).skylands = { world, store }
+;(window as unknown as { skylands: unknown }).skylands = { world, store, renderMarkdown }
+
+modeWorld.addEventListener('click', () => store.setView('world'))
+modeInbox.addEventListener('click', () => store.setView('inbox'))
 
 if (world) {
   world.onNav = (n) => store.update(n)
@@ -220,17 +284,17 @@ if (world) {
 }
 
 // Times tick in place. Nothing is rebuilt for the clock. A running agent's
-// response and diff are re-fetched every couple of seconds while its panel
-// is open, which rebuilds only when they changed.
+// diff, and its conversation in the inbox, are re-fetched every couple of
+// seconds while open, which rebuilds only when they changed.
 setInterval(() => {
   const s = store.state
   refreshTimes(panelEl)
+  refreshTimes(inboxEl)
   if (s.link === 'lost') renderVeil(s)
   const ag = level(s) === 'agent' && s.agent ? s.sessions[s.agent] : undefined
-  if (ag && ag.status === 'running') {
-    cache.get('transcript', ag.host, ag.id, 2000)
-    cache.get('diff', ag.host, ag.id, 2000)
-  }
+  if (ag && ag.status === 'running') cache.get('diff', ag.host, ag.id, 2000)
+  const open = s.view === 'inbox' && s.inbox ? s.sessions[s.inbox] : undefined
+  if (open && open.status === 'running') cache.get('transcript', open.host, open.id, 2000)
 }, 1000)
 
 connectToCitadel(store)

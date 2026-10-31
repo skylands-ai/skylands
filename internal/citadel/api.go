@@ -30,9 +30,49 @@ type startSessionRequest struct {
 func (c *citadel) api() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/sessions", c.startSession)
+	mux.HandleFunc("POST /api/sessions/{host}/{id}/prompt", c.sendPrompt)
+	mux.HandleFunc("POST /api/sessions/{host}/{id}/stop", c.stopAgent)
 	mux.HandleFunc("GET /api/sessions/{host}/{id}/transcript", c.fetchText(v1.FetchTranscript))
 	mux.HandleFunc("GET /api/sessions/{host}/{id}/diff", c.fetchText(v1.FetchDiff))
 	return mux
+}
+
+// sendPrompt continues an idle session on its island.
+func (c *citadel) sendPrompt(w http.ResponseWriter, r *http.Request) {
+	host, id := r.PathValue("host"), r.PathValue("id")
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Text) == "" {
+		writeError(w, http.StatusBadRequest, "a prompt is required")
+		return
+	}
+	cmd := v1.SendPrompt{ID: nuid.Next(), SessionID: id, Text: strings.TrimSpace(body.Text)}
+	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandSendPrompt), cmd, http.StatusOK)
+}
+
+// stopAgent ends a session on its island.
+func (c *citadel) stopAgent(w http.ResponseWriter, r *http.Request) {
+	host, id := r.PathValue("host"), r.PathValue("id")
+	cmd := v1.StopAgent{ID: nuid.Next(), SessionID: id}
+	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandStopAgent), cmd, http.StatusOK)
+}
+
+// relay sends a command to a host and writes the daemon's result, or an
+// error with a status that says whose fault it was.
+func (c *citadel) relay(w http.ResponseWriter, host, subject string, cmd any, okStatus int) {
+	result, err := c.sendCommand(context.Background(), subject, cmd)
+	switch {
+	case errors.Is(err, nats.ErrNoResponders), errors.Is(err, nats.ErrTimeout):
+		writeError(w, http.StatusBadGateway, host+" did not answer")
+		return
+	case err != nil:
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(okStatus)
+	_, _ = w.Write(result)
 }
 
 // fetchText relays an on-demand read of one session's transcript or diff

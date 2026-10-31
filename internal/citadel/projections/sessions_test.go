@@ -57,8 +57,20 @@ func TestSessionsFollowSessionEvents(t *testing.T) {
 		t.Errorf("plan/usage = %+v %d/%d", s.Plan, s.Used, s.Size)
 	}
 
-	apply(v1.EventSessionEnded, v1.SessionEnded{SessionID: "s1", StopReason: "end_turn"})
-	if s := p.List()[0]; s.Status != "ended" || s.StopReason != "end_turn" || s.EndedAt.IsZero() {
+	apply(v1.EventSessionTitled, v1.SessionTitled{SessionID: "s1", Title: "Fix the tests"})
+	if s := p.List()[0]; s.Title != "Fix the tests" {
+		t.Errorf("titled session = %+v", s)
+	}
+	apply(v1.EventTurnEnded, v1.TurnEnded{SessionID: "s1", StopReason: "end_turn"})
+	if s := p.List()[0]; s.Status != "idle" || s.Turns != 1 || s.UpdatedAt.IsZero() {
+		t.Errorf("idle session = %+v", s)
+	}
+	apply(v1.EventPromptSent, v1.PromptSent{SessionID: "s1", Text: "more"})
+	if s := p.List()[0]; s.Status != "running" || s.Turns != 2 || s.Prompt != "fix the tests" {
+		t.Errorf("second turn = %+v", s)
+	}
+	apply(v1.EventSessionEnded, v1.SessionEnded{SessionID: "s1", StopReason: "stopped"})
+	if s := p.List()[0]; s.Status != "ended" || s.StopReason != "stopped" || s.EndedAt.IsZero() {
 		t.Errorf("ended session = %+v", s)
 	}
 	// An event for an unknown session changes nothing.

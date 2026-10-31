@@ -1,22 +1,12 @@
 import { el } from '../dom'
 import type { FetchCache, Fetched } from '../fetchcache'
 import type { Island, Repo, Session } from '../protocol'
-import { agentColor, clockText, sessionStatus } from '../status'
-import { backButton, factsBox, header, hint, note, section, timeNode } from './parts'
+import { agentLabel, clockText, sessionLabel, sessionStatus } from '../status'
+import { backButton, factsBox, header, hint, section, timeNode } from './parts'
 
 function pct(used?: number, size?: number): string {
   if (!used || !size) return 'not reported'
   return `${Math.round((used / size) * 100)}% of ${Math.round(size / 1000)}k tokens`
-}
-
-/** The agent's own words from a transcript: what follows the prompt, before the closing line. */
-function agentReply(transcript: string): string {
-  let text = transcript
-  const start = text.indexOf('# Agent\n\n')
-  if (start >= 0) text = text.slice(start + '# Agent\n\n'.length)
-  const end = text.lastIndexOf('\n\n---\n\n')
-  if (end >= 0) text = text.slice(0, end)
-  return text.trim()
 }
 
 function textBlock(f: Fetched, empty: string, name: string): HTMLElement {
@@ -30,28 +20,38 @@ function textBlock(f: Fetched, empty: string, name: string): HTMLElement {
   return el('div', {}, kids)
 }
 
-/** The agent-level panel: one session, with its plan, activity, response, and changes. */
+export interface AgentActions {
+  back(): void
+  /** Opens this session's conversation in the inbox. */
+  conversation(): void
+}
+
+/** The agent-level panel: one session's facts, plan, activity, and changes. The conversation itself is in the inbox. */
 export function renderAgentPanel(
   panel: HTMLElement,
   s: Session,
   repo: Repo,
   island: Island,
   stale: boolean,
+  waiting: boolean,
   cache: FetchCache,
-  back: () => void,
+  actions: AgentActions,
 ): void {
   panel.textContent = ''
-  const status = sessionStatus(s)
+  const status = sessionStatus(s, waiting)
   const running = s.status === 'running'
-  panel.appendChild(header(s.agentName ?? s.agent, `${s.model ?? 'default model'} \u00b7 ${repo.name} on ${island.host}`, stale ? ['Last state heard', 'var(--idle)'] : status))
+  const back = actions.back
+  panel.appendChild(header(sessionLabel(s, 60), `${agentLabel(s.agent)}${s.model ? `, ${s.model}` : ''} \u00b7 ${repo.name} on ${island.host}`, stale ? ['Last state heard', 'var(--idle)'] : status))
   panel.appendChild(backButton('repo', repo.name, back))
-  panel.appendChild(note(s.prompt))
+  panel.appendChild(el('button', { type: 'button', class: 'btn primary', style: 'align-self:flex-start', onclick: actions.conversation }, [chatIcon(), waiting ? 'Go to conversation, it is waiting for you' : 'Go to conversation']))
   panel.appendChild(
     factsBox([
       ['Status', status[0]],
+      ['Agent', s.agentName && s.agentName !== agentLabel(s.agent) ? `${agentLabel(s.agent)} (${s.agentName})` : agentLabel(s.agent)],
+      ['Turns', String(s.turns)],
       ['Branch', s.branch],
       ['Started', timeNode(s.startedAt)],
-      [running ? 'Working for' : 'Ended', running ? timeNode(s.startedAt, 'since') : s.endedAt ? timeNode(s.endedAt) : 'unknown'],
+      running ? ['Last activity', timeNode(s.updatedAt)] : s.status === 'idle' ? ['Idle since', timeNode(s.updatedAt)] : ['Ended', s.endedAt ? timeNode(s.endedAt) : 'unknown'],
       ['Context', pct(s.used, s.size)],
       ['Tool calls', String(s.recent.length)],
     ]),
@@ -74,22 +74,9 @@ export function renderAgentPanel(
     )
   }
 
-  // While the agent runs its answer grows, so keep fetching it. Afterwards once is enough.
+  // While the agent runs its changes grow, so keep fetching them. Afterwards each event is enough.
   const refresh = running ? 2000 : 0
-  const transcript = cache.get('transcript', island.host, s.id, refresh)
-  const copyBtn = el('button', { type: 'button', class: 'btn small', style: 'align-self:flex-start', text: 'Copy response' })
-  copyBtn.addEventListener('click', () => {
-    const reply = agentReply(transcript.text)
-    navigator.clipboard?.writeText(reply).then(
-      () => {
-        copyBtn.textContent = 'Copied'
-        setTimeout(() => (copyBtn.textContent = 'Copy response'), 1500)
-      },
-      () => (copyBtn.textContent = 'Copy failed, select the text instead'),
-    )
-  })
-  if (!transcript.text.trim()) copyBtn.hidden = true
-  panel.appendChild(section('Response', [textBlock(transcript, running ? 'Nothing said yet.' : 'The agent said nothing.', 'response'), copyBtn]))
+  const since = Date.parse(s.updatedAt)
 
   if (s.recent.length) {
     panel.appendChild(
@@ -108,7 +95,12 @@ export function renderAgentPanel(
     )
   }
 
-  panel.appendChild(section('Changes in the worktree', [textBlock(cache.get('diff', island.host, s.id, refresh), 'No changes yet.', 'diff')]))
-  panel.appendChild(hint(`The worktree is on branch ${s.branch} on ${island.host}. Transcripts and diffs stay there until you open this panel.`))
-  void agentColor
+  panel.appendChild(section('Changes in the worktree', [textBlock(cache.get('diff', island.host, s.id, refresh, since), 'No changes yet.', 'diff')]))
+  panel.appendChild(hint(`The worktree is on branch ${s.branch} on ${island.host}. The diff stays there until you open this panel.`))
+}
+
+function chatIcon(): HTMLElement {
+  const icon = el('span', { 'aria-hidden': 'true', style: 'display:inline-flex' })
+  icon.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg>'
+  return icon
 }

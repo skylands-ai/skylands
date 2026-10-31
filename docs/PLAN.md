@@ -55,12 +55,38 @@ agent panel, driven by session events. Buildings light blue or amber when a
 session reads or edits them, and red when two sessions overlap. The agent
 level in navigation follows one airship.
 
-### Milestone 7: approvals
+### Milestone 7: a working session
+
+What it takes to use the citadel to work on Skylands itself, from the
+user's side one feature: a conversation with an agent that lasts.
+
+- **Multi-turn sessions.** The agent process stays alive after a turn. The
+  session goes idle, waiting for a person, until SendPrompt continues it or
+  StopAgent ends it. Each turn records PromptSent, the tool calls, and
+  TurnEnded; SessionEnded marks the end of the whole session.
+- **Conversations anywhere.** An inbox lists every session on every island
+  in one table, selectable from anywhere, with the usual marks when
+  something new happens in one: a dot for unread activity, a color for
+  waiting on you, running, finished, or failed. The tab title carries the
+  count of sessions waiting on you.
+- **Reading the conversation.** An open conversation shows the whole
+  exchange by turns as a chat, with a reply box and a stop button.
+  Streaming follows.
+
+### Milestone 8: approvals
 
 The daemon records PermissionRequested instead of auto-allowing, rules settle
 what they can, the citadel's beacon lights, and `request list`, `approve`,
-and `deny` work locally over the socket. Signed approvals from a browser
-follow once passkeys exist.
+and `deny` work locally over the socket. A per-session "trust this session"
+switch is the stopgap. Signed approvals from a browser follow once passkeys
+exist.
+
+### Milestone 9: sessions that outlive the daemon, and landing the work
+
+The daemon resumes sessions through ACP session load after a restart, which
+matters most when the daemon under development is the one running the
+session. Sessions can run in the registered checkout or in a worktree, and
+`session` commands stop, remove, and prune worktrees and branches.
 
 ## What the MVP proves
 
@@ -85,6 +111,22 @@ value drives the crystal, the tether material, and the sparks.
 Two things it lacks for the MVP. Islands are built once from a fixed list, so
 there is no path for a host to appear or leave. And island positions are
 hand-placed rather than derived from the host.
+- Milestone 7 is under way: sessions are multi-turn. The agent process stays
+  up between turns, TurnEnded leaves the session idle and waiting for a
+  person, and SendPrompt and StopAgent continue or end it from the
+  conversation. The Inbox view replaces the world with a table of every
+  session on every island, newest activity first, with a mark for waiting,
+  working, finished, or failed, and a dot and bold line while something
+  happened since it was last looked at. The agent titles its conversation
+  in a side session as the first turn starts (SessionTitled), the first
+  prompt line standing in until then, and agents go by their display name,
+  with an Open or All filter. An open conversation reads as a
+  chat, with Markdown rendered safely as DOM, the reply box at the bottom,
+  and the transcript re-read after each session event rather than polled.
+  "Waiting on you" means idle with a last message you have not read, which
+  is what the tab title and the Inbox badge count; reading it in the inbox
+  makes the session idle. Approvals will join that count in milestone 8.
+  Streaming of the agent's words as they arrive remains.
 
 ## Milestones
 

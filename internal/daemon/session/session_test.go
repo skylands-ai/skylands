@@ -134,25 +134,63 @@ func TestStartRunsAnAgentAndRecordsItsEvents(t *testing.T) {
 		t.Errorf("repeat = %+v, %v", again, err)
 	}
 
-	done := waitStatus(t, m, "s1", StatusEnded)
-	if done.StopReason != "end_turn" || done.AgentName != "skylands-fakeagent" || done.Used == 0 || len(done.Plan) != 3 {
-		t.Errorf("ended session = %+v", done)
+	// The first turn ends and the session waits for a person.
+	idle := waitStatus(t, m, "s1", StatusIdle)
+	if idle.StopReason != "end_turn" || idle.AgentName != "skylands-fakeagent" || idle.Used == 0 || len(idle.Plan) != 3 || idle.Turns != 1 {
+		t.Errorf("idle session = %+v", idle)
 	}
 	var started, completed int
-	for _, tc := range done.ToolCalls {
+	for _, tc := range idle.ToolCalls {
 		if tc.Status == "completed" {
 			completed++
 		}
 		started++
 	}
 	if started != 3 || completed != 3 {
-		t.Errorf("tool calls = %+v", done.ToolCalls)
+		t.Errorf("tool calls = %+v", idle.ToolCalls)
 	}
-	if done.ToolCalls[0].Locations[0] != "a.go" || done.ToolCalls[0].Kind != "read" {
-		t.Errorf("first tool call = %+v, want a read of a.go", done.ToolCalls[0])
+	if idle.ToolCalls[0].Locations[0] != "a.go" || idle.ToolCalls[0].Kind != "read" {
+		t.Errorf("first tool call = %+v, want a read of a.go", idle.ToolCalls[0])
 	}
-	if b, err := os.ReadFile(filepath.Join(f.cfg.TranscriptsDir, "s1.md")); err != nil || !strings.Contains(string(b), "Done. I read 2 files and edited a.go. Every tracked file was counted") {
+
+	// The agent named the conversation in a side session, which the
+	// transcript and the tool calls never saw.
+	for titled := idle; titled.Title == ""; titled, _ = m.Get("s1") {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if titled, _ := m.Get("s1"); titled.Title != "Tidy up" {
+		t.Errorf("title = %q, want \"Tidy up\"", titled.Title)
+	}
+
+	// A second prompt runs another turn on the same agent.
+	if _, err := m.Prompt(f.ctx, v1.SendPrompt{ID: "cmd-p1", SessionID: "s1", Text: "and again"}); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	if _, err := m.Prompt(f.ctx, v1.SendPrompt{ID: "cmd-p2", SessionID: "s1", Text: "too soon"}); !errors.Is(err, ErrNotIdle) {
+		t.Errorf("prompt during a turn: err = %v, want ErrNotIdle", err)
+	}
+	second := waitStatus(t, m, "s1", StatusIdle)
+	for second.Turns < 2 {
+		time.Sleep(20 * time.Millisecond)
+		second = waitStatus(t, m, "s1", StatusIdle)
+	}
+	if second.Turns != 2 || len(second.ToolCalls) != 6 || second.Prompt != "tidy up" {
+		t.Errorf("after the second turn = turns %d, tool calls %d, prompt %q", second.Turns, len(second.ToolCalls), second.Prompt)
+	}
+	if b, err := os.ReadFile(filepath.Join(f.cfg.TranscriptsDir, "s1.md")); err != nil || !strings.Contains(string(b), "Done with \"tidy up\"") || !strings.Contains(string(b), "## You\n\nand again") || !strings.Contains(string(b), "Done with \"and again\"") {
 		t.Errorf("transcript = %q, %v", b, err)
+	}
+
+	// Stop ends the session; a repeated stop is harmless.
+	done, err := m.Stop(f.ctx, v1.StopAgent{ID: "cmd-s1", SessionID: "s1"})
+	if err != nil || done.Status != StatusEnded || done.StopReason != "stopped" {
+		t.Fatalf("Stop = %+v, %v", done, err)
+	}
+	if again, err := m.Stop(f.ctx, v1.StopAgent{ID: "cmd-s2", SessionID: "s1"}); err != nil || again.Status != StatusEnded {
+		t.Errorf("second Stop = %+v, %v", again, err)
+	}
+	if _, err := m.Prompt(f.ctx, v1.SendPrompt{ID: "cmd-p3", SessionID: "s1", Text: "x"}); !errors.Is(err, ErrOver) {
+		t.Errorf("prompt after stop: err = %v, want ErrOver", err)
 	}
 
 	var types []string
@@ -164,12 +202,12 @@ func TestStartRunsAnAgentAndRecordsItsEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(types, " ")
-	for _, want := range []string{"SessionStarted PromptSent AgentSpawned", "ToolCallStarted", "ToolCallCompleted", "PlanUpdated", "UsageReported", "SessionEnded"} {
+	for _, want := range []string{"SessionStarted PromptSent AgentSpawned", "ToolCallStarted", "ToolCallCompleted", "PlanUpdated", "UsageReported", "TurnEnded PromptSent", "TurnEnded SessionEnded"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("event types %q lack %q", got, want)
 		}
 	}
-	if !strings.HasSuffix(got, "SessionEnded") || strings.Count(got, "SessionStarted") != 1 {
+	if !strings.HasSuffix(got, "SessionEnded") || strings.Count(got, "SessionStarted") != 1 || strings.Count(got, "TurnEnded") != 2 {
 		t.Errorf("event types = %q", got)
 	}
 
@@ -178,7 +216,7 @@ func TestStartRunsAnAgentAndRecordsItsEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s2, ok := m2.Get("s1"); !ok || s2.Status != StatusEnded || len(s2.ToolCalls) != 3 {
+	if s2, ok := m2.Get("s1"); !ok || s2.Status != StatusEnded || len(s2.ToolCalls) != 6 || s2.Turns != 2 || s2.Title != "Tidy up" {
 		t.Errorf("reloaded session = %+v", s2)
 	}
 }
@@ -216,5 +254,8 @@ func TestLoadFailsSessionsLeftRunning(t *testing.T) {
 	s, ok := m.Get("left")
 	if !ok || s.Status != StatusFailed || !strings.Contains(s.Error, "restarted") {
 		t.Errorf("session left running after a restart = %+v", s)
+	}
+	if _, err := m.Prompt(f.ctx, v1.SendPrompt{ID: "c10", SessionID: "nope", Text: "x"}); !errors.Is(err, ErrUnknownSession) {
+		t.Errorf("prompt to an unknown session: err = %v", err)
 	}
 }

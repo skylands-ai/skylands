@@ -96,7 +96,7 @@ const (
 func IsSessionEvent(eventType string) bool {
 	switch eventType {
 	case EventSessionStarted, EventPromptSent, EventAgentSpawned, EventToolCallStarted, EventToolCallCompleted,
-		EventPlanUpdated, EventUsageReported, EventAgentFailed, EventSessionEnded:
+		EventPlanUpdated, EventUsageReported, EventAgentFailed, EventSessionEnded, EventTurnEnded, EventSessionTitled:
 		return true
 	}
 	return false
@@ -228,4 +228,42 @@ type FetchSessionRequest struct {
 type TextResult struct {
 	Text      string `json:"text"`
 	Truncated bool   `json:"truncated,omitempty"`
+}
+
+// EventTurnEnded records that the agent finished one turn and the session
+// now waits for a person. SessionEnded is the end of the whole session.
+const EventTurnEnded = "TurnEnded"
+
+// TurnEnded records the end of one turn.
+type TurnEnded struct {
+	SessionID  string `json:"sessionId"`
+	StopReason string `json:"stopReason"`
+}
+
+// EventSessionTitled records the name an agent gave its conversation.
+const EventSessionTitled = "SessionTitled"
+
+// SessionTitled carries a conversation's title.
+type SessionTitled struct {
+	SessionID string `json:"sessionId"`
+	Title     string `json:"title"`
+}
+
+// More session commands.
+const (
+	CommandSendPrompt = "SendPrompt"
+	CommandStopAgent  = "StopAgent"
+)
+
+// SendPrompt continues an idle session with another prompt.
+type SendPrompt struct {
+	ID        string `json:"id"`
+	SessionID string `json:"sessionId"`
+	Text      string `json:"text"`
+}
+
+// StopAgent ends a session, cancelling any turn in progress.
+type StopAgent struct {
+	ID        string `json:"id"`
+	SessionID string `json:"sessionId"`
 }

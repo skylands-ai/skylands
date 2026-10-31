@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nuid"
+	"github.com/skylands-ai/skylands/internal/titles"
 	"github.com/spachava753/acp-sdk/acp"
 )
 
@@ -59,6 +60,8 @@ func TestCommand() (command []string, env []string) {
 type session struct {
 	cwd       string
 	cancelled bool
+	// turns numbers the prompts so far, so each turn's tool calls get fresh ids.
+	turns int
 }
 
 type agent struct {
@@ -101,15 +104,37 @@ func (a *agent) cancelled(id acp.SessionId) bool {
 
 // Prompt plays the script: plan, read up to four files, edit the first,
 // report usage, say what it did, and end the turn.
+func promptText(req *acp.PromptRequest) string {
+	asked := ""
+	for _, c := range req.Prompt {
+		asked += c.Text
+	}
+	return asked
+}
+
 func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.PromptResponse, error) {
 	a.mu.Lock()
 	s, ok := a.sessions[req.SessionID]
+	if ok {
+		s.turns++
+	}
+	turn := 0
+	if ok {
+		turn = s.turns
+	}
 	a.mu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("unknown session %s", req.SessionID)
 	}
 	send := func(u acp.SessionUpdate) error {
 		return a.conn.SessionUpdate(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: u})
+	}
+	if asked := promptText(req); titles.IsRequest(asked) {
+		// A title request gets a title and nothing else, like a well-behaved agent.
+		if err := send(acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(titles.Fake(titles.RequestedFor(asked))))); err != nil {
+			return nil, err
+		}
+		return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
 	}
 	pause := func() bool {
 		select {
@@ -141,7 +166,7 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		if !pause() {
 			return done()
 		}
-		id := acp.ToolCallId(fmt.Sprintf("read-%d", i))
+		id := acp.ToolCallId(fmt.Sprintf("t%d-read-%d", turn, i))
 		if err := send(toolCall(id, "Read "+f, acp.ToolKindRead, filepath.Join(s.cwd, f), acp.ToolCallStatusInProgress)); err != nil {
 			return nil, err
 		}
@@ -168,7 +193,7 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 			return done()
 		}
 		edited = files[0]
-		id := acp.ToolCallId("edit-0")
+		id := acp.ToolCallId(fmt.Sprintf("t%d-edit-0", turn))
 		if err := send(toolCall(id, "Edit "+edited, acp.ToolKindEdit, filepath.Join(s.cwd, edited), acp.ToolCallStatusInProgress)); err != nil {
 			return nil, err
 		}
@@ -185,7 +210,7 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	if err := send(acp.PlanSessionUpdate(plan)); err != nil {
 		return nil, err
 	}
-	msg := fmt.Sprintf("Done. I read %d files", n)
+	msg := fmt.Sprintf("Done with %q. I read %d files", strings.TrimSpace(promptText(req)), n)
 	if edited != "" {
 		msg += " and edited " + edited
 	}

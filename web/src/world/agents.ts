@@ -13,7 +13,9 @@ export interface AgentState {
   name: string
   /** What the agent reports it is doing, for the name tag when it is not flying. */
   action: string
-  status: 'running' | 'ended' | 'failed'
+  status: 'running' | 'idle' | 'ended' | 'failed'
+  /** Idle with a last message nobody has seen yet. */
+  waiting: boolean
   /** The file it is on, repo-relative, or null before the first tool call. */
   file: string | null
   kind: 'read' | 'edit'
@@ -53,6 +55,7 @@ interface AgentView {
   name: string
   action: string
   status: AgentState['status']
+  waiting: boolean
   file: string | null
   kind: 'read' | 'edit'
   atFile: boolean
@@ -109,7 +112,7 @@ export class Agents {
       let v = this.views.get(s.id)
       if (!v) {
         // Finished sessions get no airship; a page opened later shows the terrace at rest.
-        if (s.status !== 'running') continue
+        if (s.status !== 'running' && s.status !== 'idle') continue
         const t = this.terraceOf(host, s.terrace)
         if (!t) continue
         v = this.create(host, s, t)
@@ -144,7 +147,7 @@ export class Agents {
     const pad = padSpot(t)
     const v: AgentView = {
       id: s.id, host, terrace: s.terrace, prov: s.prov, mesh: ship.group, mats: ship.mats, bags: ship.bags, tag,
-      name: s.name, action: s.action, status: s.status, file: s.file, kind: s.kind, atFile: s.atFile, ctx: s.ctx,
+      name: s.name, action: s.action, status: s.status, waiting: s.waiting, file: s.file, kind: s.kind, atFile: s.atFile, ctx: s.ctx,
       from: pad, to: pad, phase: 'dwell', t: 0, bob: Math.random() * 6.283, dwellIdx: null,
     }
     ship.group.position.set(pad.x, pad.top + altFor(s.ctx), pad.z)
@@ -156,11 +159,12 @@ export class Agents {
     v.name = s.name
     v.action = s.action
     v.status = s.status
+    v.waiting = s.waiting
     v.ctx = s.ctx
     v.kind = s.kind
     v.file = s.file
     v.atFile = s.atFile
-    if (s.status !== 'running') {
+    if (s.status !== 'running' && s.status !== 'idle') {
       if (v.phase !== 'leave') this.leave(v)
       return
     }
@@ -286,7 +290,7 @@ export class Agents {
         v.tag.appendChild(el('span', { text: now }))
         v.tag.setAttribute('aria-label', `${v.name}, ${now}`)
       }
-      const cls = `tag working${selectedAgent === v.id ? ' sel' : ''}`
+      const cls = `tag ${v.waiting ? 'waiting' : 'working'}${selectedAgent === v.id ? ' sel' : ''}`
       if (v.tag.className !== cls) v.tag.className = cls
       v.mesh.getWorldPosition(tmp)
       this.labels.placeAt(v.tag, tmp, 1.0)
@@ -313,6 +317,7 @@ export class Agents {
 
   /** What the tag says under the name: the flight, the file, or whatever else it is doing. */
   private now(v: AgentView): string {
+    if (v.status === 'idle' && v.phase !== 'move') return v.waiting ? 'Waiting for you' : 'Idle'
     const f = v.file ? base(v.file) : ''
     if (v.phase === 'move') {
       // A file without a building is worked on from the air over the terrace.
