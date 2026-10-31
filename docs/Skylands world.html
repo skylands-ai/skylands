@@ -1,0 +1,2391 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Skylands world</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Sora:wght@700&display=swap">
+<style>
+:root{
+  color-scheme: light;
+  --bg:#E6EDF4; --surface:#FFFFFF; --surface-2:#F0F4F8; --line:#D2DCE6; --text:#13202E; --muted:#4D6276;
+  --accent:#2D5BC7; --accent-bg:#E3EBFB; --chip:rgba(255,255,255,0.92); --chip-line:#C3D0DC;
+  --flare:#FFD54A; --flare-ink:#1A1708; --ok:#2E9E57; --bad:#D9483B; --warn:#8A6400; --idle:#6B7F92; --info:#2D5BC7;
+  --sky-top:#5C9BE0; --sky-horizon:#D6E9F7; --fog:#D6E9F7; --cloud:#FFFFFF; --hemi-sky:#D7EAFF; --hemi-ground:#7C8A66;
+  --hemi-int:0.95; --sun:#FFF3DF; --sun-int:0.95; --stars:0; --tether:#5C86B8; --spark:#1FA6C8; --spark-add:0;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme: dark;
+    --bg:#101B27; --surface:#172636; --surface-2:#1D3043; --line:#2E4459; --text:#E7EEF4; --muted:#9DB0C2;
+    --accent:#8DA9FF; --accent-bg:#22385A; --chip:rgba(16,27,39,0.9); --chip-line:#31475D;
+    --ok:#6FD08C; --bad:#FF7A6E; --warn:#FFD54A; --idle:#9DB0C2; --info:#8DA9FF;
+    --sky-top:#0A1424; --sky-horizon:#2A405E; --fog:#1E3049; --cloud:#40597C; --hemi-sky:#7D93BC; --hemi-ground:#262B36;
+    --hemi-int:0.62; --sun:#FFB98A; --sun-int:0.6; --stars:0.9; --tether:#6A8FB8; --spark:#A9E8F5; --spark-add:1;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#101B27; --surface:#172636; --surface-2:#1D3043; --line:#2E4459; --text:#E7EEF4; --muted:#9DB0C2;
+  --accent:#8DA9FF; --accent-bg:#22385A; --chip:rgba(16,27,39,0.9); --chip-line:#31475D;
+  --ok:#6FD08C; --bad:#FF7A6E; --warn:#FFD54A; --idle:#9DB0C2; --info:#8DA9FF;
+  --sky-top:#0A1424; --sky-horizon:#2A405E; --fog:#1E3049; --cloud:#40597C; --hemi-sky:#7D93BC; --hemi-ground:#262B36;
+  --hemi-int:0.62; --sun:#FFB98A; --sun-int:0.6; --stars:0.9; --tether:#6A8FB8; --spark:#A9E8F5; --spark-add:1;
+}
+:root{ box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px); }
+html{ height:100%; scroll-padding-top:env(safe-area-inset-top,0px); }
+body{ height:100%; margin:0; background:var(--bg); color:var(--text); font-family:Barlow,"Helvetica Neue",Arial,sans-serif; font-size:14px; line-height:1.4; }
+*,*::before,*::after{ box-sizing:border-box; }
+button{ font:inherit; color:inherit; cursor:pointer; }
+[hidden]{ display:none !important; }
+.cmdbar{ position:absolute; left:50%; bottom:12px; transform:translateX(-50%); width:min(880px, calc(100% - 24px)); display:flex; flex-direction:column; gap:8px; padding:10px; border-radius:12px; background:var(--chip); border:1px solid var(--chip-line); box-shadow:0 6px 24px rgba(0,0,0,0.18); }
+.cmdrow{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.scope{ display:inline-flex; align-items:center; gap:6px; min-height:44px; padding:0 6px 0 12px; border-radius:8px; border:2px solid var(--accent); background:var(--accent-bg); font-size:13px; font-weight:600; }
+.scope select{ min-height:40px; max-width:280px; border:none; background:transparent; color:var(--text); font:inherit; font-weight:600; }
+.scope-to{ padding-right:8px; }
+#cmdInput{ flex:1 1 260px; min-width:0; min-height:44px; padding:0 12px; border-radius:8px; border:1px solid var(--line); background:var(--surface); color:var(--text); font:inherit; font-size:15px; }
+#cmdInput:focus-visible{ outline:2px solid var(--accent); outline-offset:1px; }
+.why{ font-size:12px; color:var(--muted); margin-right:auto; }
+.chip{ display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); }
+.chip select{ min-height:32px; padding:0 6px; border-radius:6px; border:1px solid var(--line); background:var(--surface); color:var(--text); font:inherit; font-size:13px; }
+.chip.file{ padding:4px 10px; border-radius:999px; background:var(--surface-2); border:1px solid var(--line); color:var(--text); }
+.preview{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:8px 10px; border-radius:8px; background:var(--surface-2); border:1px solid var(--line); font-size:13px; }
+.preview .acts{ margin-left:auto; display:flex; gap:6px; }
+button:focus-visible,a:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+.app{ height:100%; display:flex; flex-direction:column; }
+.bar{ display:flex; flex-wrap:wrap; align-items:center; gap:10px 18px; padding:10px 16px; background:var(--surface); border-bottom:1px solid var(--line); }
+.brand{ display:flex; align-items:center; gap:8px; font-family:Sora,"Helvetica Neue",Arial,sans-serif; font-size:18px; font-weight:700; letter-spacing:-0.01em; }
+.crumbs{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.crumbs .sep{ color:var(--idle); }
+.btn{ display:inline-flex; align-items:center; gap:8px; min-height:44px; padding:0 14px; border-radius:8px; background:var(--surface-2); border:1px solid var(--line); font-weight:600; }
+.btn.small{ min-height:36px; padding:0 12px; font-size:13px; }
+.btn.primary{ background:var(--flare); border-color:var(--flare); color:var(--flare-ink); }
+.btn.ghost{ background:transparent; }
+.muted{ color:var(--muted); }
+.spacer{ flex:1 1 0; }
+.meter{ display:flex; flex-direction:column; gap:4px; min-width:160px; font-size:12px; }
+.meter .track{ height:6px; border-radius:3px; background:var(--surface-2); border:1px solid var(--line); overflow:hidden; }
+.meter .fill{ height:100%; width:59%; background:var(--accent); }
+.flarebtn{ display:inline-flex; align-items:center; gap:10px; min-height:44px; padding:0 12px; border-radius:8px; background:var(--surface-2); border:1px solid var(--flare); font-weight:600; }
+.badge{ display:inline-flex; align-items:center; justify-content:center; min-width:20px; height:20px; padding:0 6px; border-radius:10px; background:var(--flare); color:var(--flare-ink); font-size:12px; font-weight:700; }
+.kbd{ font-size:11px; padding:1px 6px; border-radius:4px; border:1px solid var(--line); color:var(--muted); }
+.main{ flex:1 1 auto; min-height:0; display:flex; }
+.stage{ position:relative; flex:1 1 auto; min-width:0; overflow:hidden; background:var(--sky-horizon); }
+#world{ display:block; width:100%; height:100%; touch-action:none; outline:none; }
+.labels{ position:absolute; inset:0; pointer-events:none; }
+.label{ position:absolute; left:0; top:0; pointer-events:auto; display:flex; flex-direction:column; align-items:flex-start; gap:2px; min-height:44px; padding:6px 10px; border-radius:8px; background:var(--chip); border:1px solid var(--chip-line); text-align:left; white-space:nowrap; transform:translate(-9999px,-9999px); }
+.label[aria-pressed="true"]{ border-color:var(--text); box-shadow:0 0 0 2px var(--chip-line); }
+.label .nm{ display:flex; align-items:center; gap:8px; font-size:14px; font-weight:700; }
+.label .st{ display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); }
+.dot{ display:inline-block; width:8px; height:8px; border-radius:50%; flex:none; }
+.hud{ position:absolute; top:12px; left:12px; max-width:calc(50% - 24px); display:flex; flex-wrap:wrap; gap:8px; align-items:center; pointer-events:none; }
+.hud > *{ pointer-events:auto; }
+.chipnote{ padding:8px 12px; border-radius:8px; background:var(--chip); border:1px solid var(--chip-line); font-size:12px; color:var(--muted); }
+.legend{ position:absolute; right:12px; top:12px; display:flex; flex-wrap:wrap; gap:6px 16px; align-items:center; max-width:min(460px, calc(50% - 24px)); padding:8px 12px; border-radius:10px; background:var(--chip); border:1px solid var(--chip-line); font-size:12px; color:var(--muted); }
+.legend span{ display:inline-flex; align-items:center; gap:6px; }
+.nogl{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:24px; text-align:center; color:var(--text); }
+.panel{ width:360px; flex:none; overflow-y:auto; background:var(--surface); border-left:1px solid var(--line); padding:16px 18px 24px; display:flex; flex-direction:column; gap:18px; }
+.ph{ display:flex; gap:12px; align-items:flex-start; }
+.ph h2{ margin:0; font-size:22px; line-height:1.1; }
+.pill{ display:inline-flex; align-items:center; gap:6px; padding:3px 9px; border-radius:999px; background:var(--surface-2); border:1px solid var(--line); font-size:12px; font-weight:600; }
+.note{ margin:0; padding:10px 12px; border-radius:8px; background:var(--surface-2); font-size:13px; }
+.facts{ display:flex; flex-direction:column; }
+.fact{ display:flex; justify-content:space-between; gap:12px; padding:7px 0; border-bottom:1px solid var(--line); font-size:13px; }
+.fact b{ font-weight:600; text-align:right; }
+.sec{ display:flex; flex-direction:column; gap:8px; }
+.sec h3{ margin:0; font-size:13px; font-weight:600; color:var(--muted); }
+.row{ display:flex; align-items:center; gap:10px; min-height:44px; padding:8px 10px; border-radius:8px; background:var(--surface-2); border:1px solid var(--line); }
+.row .grow{ display:flex; flex-direction:column; flex:1; min-width:0; }
+.row .sub{ font-size:12px; color:var(--muted); }
+.row .acts{ display:flex; gap:6px; flex-wrap:wrap; }
+.crew{ display:flex; flex-wrap:wrap; gap:8px; }
+.crew span{ display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:var(--surface-2); border:1px solid var(--line); font-size:13px; }
+.seg{ display:flex; flex-wrap:wrap; gap:6px; }
+.seg button{ min-height:36px; padding:0 12px; border-radius:8px; background:var(--surface-2); border:1px solid var(--line); font-size:13px; font-weight:600; }
+.seg button[aria-pressed="true"]{ background:var(--accent-bg); border-color:var(--accent); }
+code{ font-family:"JetBrains Mono",ui-monospace,monospace; font-size:12px; }
+.code{ display:block; padding:8px 10px; border-radius:6px; background:var(--surface-2); border:1px solid var(--line); word-break:break-all; }
+.tag{ position:absolute; left:0; top:0; pointer-events:auto; display:flex; flex-direction:column; align-items:flex-start; gap:1px; max-width:230px; min-height:36px; padding:4px 9px; border-radius:7px; background:var(--chip); border:1px solid var(--chip-line); font-size:11px; line-height:1.3; text-align:left; white-space:nowrap; transform:translate(-9999px,-9999px); }
+.tag b{ font-size:12px; }
+.tag span{ max-width:210px; overflow:hidden; text-overflow:ellipsis; color:var(--muted); }
+.tag.waiting{ border:2px solid #E0B000; }
+.tag.error{ border:2px solid var(--bad); }
+.tag.sel{ box-shadow:0 0 0 2px var(--text); }
+.ftag{ position:absolute; left:0; top:0; pointer-events:none; padding:2px 6px; border-radius:4px; background:var(--chip); border:1px solid var(--chip-line); font-family:"JetBrains Mono",ui-monospace,monospace; font-size:10.5px; white-space:nowrap; transform:translate(-9999px,-9999px); }
+.ftag.edit{ border-color:#C98A1E; }
+.ftag.read{ border-color:var(--info); }
+.ftag.conflict{ border-color:var(--bad); color:var(--bad); font-weight:600; }
+.feed{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; font-size:12.5px; }
+.feed li{ display:flex; gap:10px; align-items:baseline; }
+.feed time{ flex:none; font-family:"JetBrains Mono",ui-monospace,monospace; font-size:11px; color:var(--muted); }
+.feed li span{ min-width:0; overflow-wrap:anywhere; }
+.feed li.bad span{ color:var(--bad); }
+.feed li.warn span{ color:var(--warn); }
+.feed li.info span{ color:var(--info); }
+.plan{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; font-size:13px; }
+.plan li{ display:flex; gap:8px; }
+.plan li.done{ color:var(--muted); }
+.gauge{ height:8px; border-radius:4px; background:var(--surface-2); border:1px solid var(--line); overflow:hidden; }
+button.row{ color:inherit; font:inherit; }
+@media (max-width: 860px){
+  .legend{ display:none; }
+  .hud{ max-width:calc(100% - 24px); }
+  .main{ flex-direction:column; overflow-y:auto; }
+  .stage{ flex:none; height:440px; }
+  .panel{ width:auto; overflow:visible; border-left:none; border-top:1px solid var(--line); }
+  .hint{ display:none; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <div class="brand">
+      <svg width="34" height="34" viewBox="10 4 200 200" aria-hidden="true"><polygon points="36,95 60,105 66,142 54,128 44,112" fill="#9A7656"/><polygon points="60,105 100,110 102,176 92,166 80,156 66,142" fill="#7C5D44"/><polygon points="100,110 136,107 124,152 112,164 102,176" fill="#614836"/><polygon points="136,107 164,93 158,108 148,124 136,138 124,152" fill="#4B382B"/><path d="M36,86 C34,96 64,101 100,101 C136,101 166,94 164,84 L164,93 C164,103 136,110 100,110 C64,110 36,104 36,95 Z" fill="#8A6542"/><path d="M36,86 C40,74 70,68 100,69 C130,68 160,73 164,84 C166,94 136,101 100,101 C64,101 34,96 36,86 Z" fill="#6CB35A"/><path d="M50,82 C60,75 84,72 100,72 C120,72 144,75 152,82 C130,78 70,78 50,82 Z" fill="#86C76F"/><polygon points="54,80 61,92 47,92" fill="#2F6B3A"/><polygon points="66,74 72,86 60,86" fill="#3C7D43"/><rect x="110" y="74" width="9" height="12" fill="#EFE9D8"/><rect x="121" y="68" width="8" height="18" fill="#E2DBC7"/><rect x="131" y="77" width="8" height="9" fill="#EFE9D8"/><circle cx="102" cy="187" r="12" fill="#7FE0F0" opacity="0.35"/><polygon points="102,179 108,187 102,197 96,187" fill="#5FD3E6"/><polygon points="102,179 108,187 102,187" fill="#BDF3FA"/><path d="M150 14 Q153 31 170 34 Q153 37 150 54 Q147 37 130 34 Q147 31 150 14 Z" fill="#F5B014"/><path d="M175 51 Q176.4 58.6 184 60 Q176.4 61.4 175 69 Q173.6 61.4 166 60 Q173.6 58.6 175 51 Z" fill="#F5B014"/><path d="M124 11 Q124.8 15.2 129 16 Q124.8 16.8 124 21 Q123.2 16.8 119 16 Q123.2 15.2 124 11 Z" fill="#F5B014"/></svg>
+      <span>Skylands</span>
+    </div>
+    <nav class="crumbs" aria-label="Breadcrumb" id="crumbs"></nav>
+    <span class="muted" id="connected"></span>
+    <div class="spacer"></div>
+    <div class="muted" style="font-size:12px">Spend rate <span style="font-size:15px;font-weight:600;color:var(--text)">$5.48/hr</span></div>
+    <div class="meter">
+      <div style="display:flex;justify-content:space-between;gap:8px"><span class="muted">Today</span><span><b>$23.60</b> of $40.00</span></div>
+      <div class="track"><div class="fill"></div></div>
+    </div>
+    <button type="button" class="flarebtn" id="nextFlare"><span class="badge" id="flareCount">4</span><span>Next flare</span><span class="kbd">Space</span></button>
+  </header>
+  <main class="main">
+    <section class="stage" id="stage" aria-label="3D world of every island">
+      <canvas id="world" tabindex="0" role="img" aria-label="A 3D sky. The citadel floats at the center of the world, tethered to four host islands. Each island carries terraces for its repositories and airships for its agents."></canvas>
+      <div class="labels" id="labels"></div>
+      <div class="hud">
+        <button type="button" class="btn" id="overview">Whole world</button>
+        <span class="chipnote hint">Drag to orbit, scroll to zoom. Click to go deeper, double-click to jump in, Esc to go back up.</span>
+      </div>
+      <div class="cmdbar" id="cmdbar" role="group" aria-label="Command bar">
+        <div class="cmdrow">
+          <div class="scope"><span id="scopeLabel">Scope</span><select id="scopeSel" aria-label="Scope"></select><span class="scope-to" id="scopeTo" hidden></span></div>
+          <input id="cmdInput" type="text" autocomplete="off" aria-label="Work order" placeholder="Describe work for any repo">
+          <button type="button" class="btn primary" id="cmdGo">Preview</button>
+        </div>
+        <div class="cmdrow" id="chipRow">
+          <span class="why" id="scopeWhy"></span>
+          <span class="chip file" id="fileChip" hidden></span>
+          <label class="chip">Model <select id="modelSel"></select></label>
+          <label class="chip">Attempts <select id="attemptSel"><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
+          <label class="chip">Budget <select id="budgetSel"><option value="2">$2</option><option value="5" selected>$5</option><option value="10">$10</option><option value="20">$20</option></select></label>
+        </div>
+        <div class="preview" id="preview" hidden>
+          <span id="previewText"></span>
+          <span class="acts"><button type="button" class="btn small primary" id="launchBtn">Launch</button><button type="button" class="btn small ghost" id="editBtn">Edit</button></span>
+        </div>
+      </div>
+      <div class="legend" aria-label="Legend">
+        <span><svg width="26" height="8" viewBox="0 0 26 8" aria-hidden="true"><line x1="1" y1="4" x2="25" y2="4" stroke="var(--tether)" stroke-width="2.5"/><circle cx="8" cy="4" r="2" fill="var(--spark)"/><circle cx="18" cy="4" r="2" fill="var(--spark)"/></svg>Connected</span>
+        <span><svg width="26" height="12" viewBox="0 0 26 12" aria-hidden="true"><path d="M1 2 Q13 18 25 2" fill="none" stroke="var(--idle)" stroke-width="2" stroke-dasharray="3 3"/></svg>Unreachable</span>
+        <span><svg width="10" height="14" viewBox="0 0 10 14" aria-hidden="true"><line x1="5" y1="5" x2="5" y2="13" stroke="#E0B000" stroke-width="2.5" stroke-linecap="round"/><circle cx="5" cy="4" r="3" fill="#FFD54A"/></svg>Waiting on you</span>
+        <span><svg width="22" height="14" viewBox="0 0 22 14" aria-hidden="true"><ellipse cx="11" cy="5" rx="9" ry="4" fill="var(--idle)"/><circle cx="7" cy="11" r="2" fill="#C8B48A"/><circle cx="11" cy="11.5" r="2" fill="#C8B48A"/><circle cx="15" cy="11" r="2" fill="#C8B48A"/></svg>Sandbags and low flight: fuller context</span>
+        <span><span class="dot" style="background:#F2995E"></span>Claude <span class="dot" style="background:#3FBF9C"></span>Codex <span class="dot" style="background:#7C9BFF"></span>Gemini <span class="dot" style="background:#B58BEB"></span>Local</span>
+      </div>
+    </section>
+    <aside class="panel" id="panel" aria-label="Selected island"></aside>
+  </main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  function css(name, fallback) {
+    var v = '';
+    try { v = getComputedStyle(document.documentElement).getPropertyValue(name).trim(); } catch (e) { v = ''; }
+    return v || fallback;
+  }
+  function el(tag, attrs, kids) {
+    var n = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) {
+      if (attrs[k] === null || attrs[k] === undefined) return;
+      if (k === 'text') n.textContent = attrs[k];
+      else if (k === 'class') n.className = attrs[k];
+      else if (k === 'style') n.setAttribute('style', attrs[k]);
+      else if (k.indexOf('on') === 0) n.addEventListener(k.slice(2), attrs[k]);
+      else n.setAttribute(k, attrs[k]);
+    });
+    (kids || []).forEach(function (c) { if (c) n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+    return n;
+  }
+  function fmt(n) { return Number(n).toLocaleString('en-US'); }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  var T0 = 14 * 3600 + 6 * 60;
+  function clockStr(sec) {
+    var s = Math.floor(T0 + sec);
+    return pad(Math.floor(s / 3600) % 24) + ':' + pad(Math.floor(s / 60) % 60) + ':' + pad(((s % 60) + 60) % 60);
+  }
+  function base(path) { var i = path.lastIndexOf('/'); return i < 0 ? path : path.slice(i + 1); }
+  function hash3(x, y, z) {
+    var h = Math.imul(Math.round(x * 97) | 0, 73856093) ^ Math.imul(Math.round(y * 97) | 0, 19349663) ^ Math.imul(Math.round(z * 97) | 0, 83492791);
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+  }
+  function rng(seed) {
+    var s = seed >>> 0;
+    return function () { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+  }
+  function ringNoise(seed) {
+    var r = rng(seed); var a = r() * 6.283, b = r() * 6.283, c = r() * 6.283;
+    return function (t) { return 1 + 0.09 * Math.sin(3 * t + a) + 0.06 * Math.sin(5 * t + b) + 0.035 * Math.sin(9 * t + c); };
+  }
+
+  // ---------------------------------------------------------------- data
+  var PROV = {
+    claude: { name: 'Claude', color: 0xF2995E },
+    codex: { name: 'Codex', color: 0x3FBF9C },
+    gemini: { name: 'Gemini', color: 0x7C9BFF },
+    local: { name: 'Local', color: 0xB58BEB }
+  };
+  var STOREFRONT_FILES = [
+    'crates/cart/src/lib.rs', 'crates/cart/src/session.rs', 'crates/cart/src/handler.rs', 'crates/cart/src/config.rs',
+    'crates/cart/src/reservations.rs', 'crates/cart/src/auth.rs', 'crates/cart/Cargo.toml',
+    'crates/catalog/src/lib.rs', 'crates/catalog/src/search.rs', 'crates/catalog/src/variants.rs', 'crates/catalog/src/filters.rs', 'crates/catalog/src/images.rs',
+    'crates/pricing/src/engine.rs', 'crates/pricing/src/rules.rs', 'crates/pricing/src/discounts.rs', 'crates/pricing/src/tax.rs', 'crates/pricing/tests/engine.rs',
+    'crates/payments/src/lib.rs', 'crates/payments/src/processor.rs', 'crates/payments/src/refunds.rs', 'crates/payments/src/webhooks.rs', 'crates/payments/README.md'
+  ];
+  var HOSTS = {
+    ws: { name: 'workstation', kind: 'Linux desktop with a GPU for local models', angle: 3.6, dist: 36, y: 10, R: 11, depth: 13, seed: 11, phase: 0, waterfall: true,
+      terraces: [
+        { id: 'storefront', name: 'storefront', x: -3.2, z: -1.5, sx: 7, sz: 5.5, hmax: 2.6, files: STOREFRONT_FILES },
+        { id: 'web', name: 'web-console', x: 4.2, z: 2.8, sx: 4.4, sz: 3.6, hmax: 1.4, files: ['src/app.tsx', 'src/routes/sessions.tsx', 'src/routes/approvals.tsx', 'src/components/Timeline.tsx', 'src/components/IslandMap.tsx', 'src/api/client.ts', 'src/api/events.ts', 'package.json', 'vite.config.ts'] }
+      ] },
+    bd: { name: 'build-01', kind: 'Cloud VM, 16 vCPU', angle: 5.6, dist: 38, y: 15, R: 7.5, depth: 10, seed: 23, phase: 1.7,
+      terraces: [{ id: 'infra', name: 'infra', x: 0, z: 0, sx: 5.4, sz: 4.4, hmax: 2, files: ['modules/vpc/main.tf', 'modules/vpc/variables.tf', 'modules/nats/main.tf', 'modules/nats/outputs.tf', 'envs/staging/main.tf', 'envs/staging/terraform.tfvars', 'envs/prod/main.tf', 'envs/prod/terraform.tfvars', 'modules/iam/main.tf', 'modules/iam/policies.tf', 'versions.tf', 'README.md'] }] },
+    tr: { name: 'travel-mbp', kind: 'MacBook, travelling', angle: 1.0, dist: 38, y: 8, R: 6.5, depth: 9, seed: 31, phase: 3.1,
+      terraces: [{ id: 'docs', name: 'docs-site', x: 0.4, z: 0.3, sx: 4, sz: 3.4, hmax: 1.2, files: ['docs/index.md', 'docs/quickstart.md', 'docs/daemon.md', 'docs/approvals.md', 'docs/tethers.md', 'docs/faq.md', 'mkdocs.yml', 'README.md'] }] },
+    nc: { name: 'nuc', kind: 'Intel NUC in the closet', angle: 2.2, dist: 33, y: 5, R: 6.5, depth: 9, seed: 41, phase: 4.4,
+      terraces: [{ id: 'home', name: 'home-lab', x: 0, z: 0, sx: 4, sz: 4, hmax: 1.2, files: ['ha/configuration.yaml', 'ha/automations.yaml', 'ha/scripts.yaml', 'nas/compose.yaml', 'nas/backup.sh', 'dns/zones.conf', 'mqtt/mosquitto.conf', 'grafana/dashboards.json', 'README.md'] }] }
+  };
+  var HOST_IDS = ['ws', 'bd', 'tr', 'nc'];
+  var AGENTS = [
+    { id: 'opus', host: 'ws', terrace: 'storefront', prov: 'claude', name: 'Opus', model: 'Claude Opus', session: 'Pricing rewrite', role: 'Lead', ctx: 71, q: 'q1', hold: 'crates/pricing/tests/engine.rs', prefer: ['crates/pricing'],
+      plan: [['Map how prices are computed today', 1], ['Move discount rules into rules.rs', 1], ['Add multi-currency support to the engine', 1], ['Run the pricing test suite', 0], ['Summarize API changes for the cart', 0]] },
+    { id: 'sonnet1', host: 'ws', terrace: 'storefront', prov: 'claude', name: 'Sonnet 1', model: 'Claude Sonnet', session: 'Pricing rewrite', role: 'Subagent of Opus', parent: 'opus', ctx: 38, prefer: ['crates/catalog', 'crates/catalog/src/search.rs'],
+      plan: [['Find catalog call sites of the pricing engine', 1], ['Update search.rs to the new Price type', 0], ['Report changes back to Opus', 0]] },
+    { id: 'haiku2', host: 'ws', terrace: 'storefront', prov: 'claude', name: 'Haiku 2', model: 'Claude Haiku', session: 'Pricing rewrite', role: 'Subagent of Opus', parent: 'opus', ctx: 22, prefer: ['crates/payments', 'crates/pricing/tests'],
+      plan: [['List payment webhooks that read prices', 0], ['Report webhook names to Opus', 0]] },
+    { id: 'codex', host: 'ws', terrace: 'storefront', prov: 'codex', name: 'Codex', model: 'GPT-5 Codex', session: 'Stock reservations race', role: 'Lead', ctx: 64, prefer: ['crates/cart', 'crates/catalog/src/search.rs', 'crates/catalog/src/search.rs'],
+      plan: [['Read the checkout path', 1], ['Add stock reservations in reservations.rs', 0], ['Wire reservations into handler.rs', 0], ['Run the cart tests', 0]] },
+    { id: 'fork', host: 'ws', terrace: 'storefront', prov: 'claude', name: 'Sonnet fork', model: 'Claude Sonnet', session: 'Stock reservations race', role: 'Fork of Codex, racing in its own worktree', ctx: 41, prefer: ['crates/cart'],
+      plan: [['Read the checkout path', 1], ['Add optimistic stock holds in reservations.rs', 0], ['Wire the holds into handler.rs', 0]] },
+    { id: 'gemini', host: 'ws', terrace: 'storefront', prov: 'gemini', name: 'Gemini', model: 'Gemini Pro', session: 'Payments docs', role: 'Lead', ctx: 29, q: 'q2', hold: 'crates/payments/README.md', prefer: ['crates/payments'],
+      plan: [['Inventory the payment webhooks', 1], ['Check webhook names against the processor’s event list', 0], ['Write the README section', 0]] },
+    { id: 'qwen', host: 'ws', terrace: 'storefront', prov: 'local', name: 'Qwen', model: 'Qwen3 Coder on Ollama', session: 'Clippy sweep', role: 'Lead', ctx: 83, q: 'q3', hold: 'crates/catalog/src/images.rs', prefer: ['crates/cart/src/auth.rs', 'crates/catalog/src/images.rs'],
+      plan: [['Run cargo clippy on the workspace', 1], ['Fix needless_borrow warnings', 0]] },
+    { id: 'wc1', host: 'ws', terrace: 'web', prov: 'claude', name: 'Sonnet', model: 'Claude Sonnet', session: 'Approvals inbox', role: 'Lead', ctx: 33, prefer: ['src/routes', 'src/api'],
+      plan: [['Sketch the approvals route', 1], ['Wire it to the events API', 0]] },
+    { id: 'wc2', host: 'ws', terrace: 'web', prov: 'codex', name: 'Codex', model: 'GPT-5 Codex', session: 'Timeline performance', role: 'Lead', ctx: 47, prefer: ['src/components', 'src/api'],
+      plan: [['Profile Timeline rendering', 1], ['Virtualize the event list', 0]] },
+    { id: 'bdx', host: 'bd', terrace: 'infra', prov: 'codex', name: 'Codex', model: 'GPT-5 Codex', session: 'Staging NATS cluster', role: 'Lead', ctx: 52, q: 'q4', hold: 'envs/staging/main.tf', prefer: ['modules/nats', 'envs/staging'],
+      plan: [['Add the NATS module', 1], ['Plan the staging change', 1], ['Apply to staging', 0]] },
+    { id: 'bd2', host: 'bd', terrace: 'infra', prov: 'claude', name: 'Sonnet', model: 'Claude Sonnet', session: 'IAM cleanup', role: 'Lead', ctx: 36, prefer: ['modules/iam', 'envs/prod'],
+      plan: [['Find unused roles', 1], ['Draft the removal plan', 0]] },
+    { id: 'tr1', host: 'tr', terrace: 'docs', prov: 'claude', name: 'Sonnet', model: 'Claude Sonnet', session: 'Daemon docs', role: 'Lead', ctx: 44, prefer: ['docs/'],
+      plan: [['Outline the daemon page', 1], ['Write the approvals section', 0]] }
+  ];
+  var QUEUE = [
+    { id: 'q1', host: 'ws', agent: 'opus', who: 'Opus', where: 'storefront', text: 'Run cargo test -p storefront-pricing', kind: 'approve' },
+    { id: 'q2', host: 'ws', agent: 'gemini', who: 'Gemini', where: 'storefront', text: 'Fetch the payment processor’s webhook event list', kind: 'approve' },
+    { id: 'q3', host: 'ws', agent: 'qwen', who: 'Qwen', where: 'storefront', text: 'Three failed edits in images.rs', kind: 'error' },
+    { id: 'q4', host: 'bd', agent: 'bdx', who: 'Codex', where: 'infra', text: 'Run terraform apply on staging', kind: 'approve' }
+  ];
+  var QBYID = {};
+  QUEUE.forEach(function (q) { QBYID[q.id] = q; });
+
+  var S = { nav: 0, selected: 'cit', landed: null, agent: null, file: null, resolved: {}, paused: {}, laptop: 'auto', nucRunning: false, drift: { tr: 1, nc: 1 }, lostAt: { tr: -40, nc: -7200 }, nucBack: 0, mode: 'offline', flareIdx: -1 };
+  // repo choices block an order from starting at all, so they lead the list
+  function pending() {
+    var open = QUEUE.filter(function (q) { return !S.resolved[q.id]; });
+    return open.filter(function (q) { return q.kind === 'choose'; }).concat(open.filter(function (q) { return q.kind !== 'choose'; }));
+  }
+  function pendingFor(host) { return pending().filter(function (q) { return q.host === host; }); }
+  function level() {
+    if (S.agent) return 'agent';
+    if (S.file) return 'file';
+    if (S.landed) return 'terrace';
+    if (S.selected !== 'cit') return 'island';
+    return 'world';
+  }
+
+  // ---------------------------------------------------------------- renderer
+  var stage = document.getElementById('stage');
+  var canvas = document.getElementById('world');
+  var renderer;
+  try {
+    if (!window.THREE) throw new Error('three.js did not load');
+    renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+  } catch (err) {
+    stage.appendChild(el('div', { class: 'nogl', text: 'This view needs WebGL and the three.js library, and one of them isn’t available in this browser right now.' }));
+    return;
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  var scene = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1400);
+  function resize() {
+    var w = Math.max(1, stage.clientWidth), h = Math.max(1, stage.clientHeight);
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(stage);
+  window.addEventListener('resize', resize);
+  resize();
+
+  var skyMat = new THREE.ShaderMaterial({
+    uniforms: { top: { value: new THREE.Color() }, horizon: { value: new THREE.Color() } },
+    vertexShader: 'varying vec3 vP; void main(){ vP = (modelMatrix * vec4(position, 1.0)).xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: 'uniform vec3 top; uniform vec3 horizon; varying vec3 vP; void main(){ float h = normalize(vP).y; float t = clamp(h * 1.7 + 0.1, 0.0, 1.0); gl_FragColor = vec4(mix(horizon, top, t), 1.0); }',
+    side: THREE.BackSide, depthWrite: false, fog: false
+  });
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(700, 32, 16), skyMat));
+  scene.fog = new THREE.Fog(0xffffff, 120, 330);
+  var starGeo = new THREE.BufferGeometry();
+  (function () {
+    var r = rng(5), p = [];
+    for (var i = 0; i < 500; i++) {
+      var u = r() * 6.283, y = 0.08 + r() * 0.9, s = Math.sqrt(1 - y * y);
+      p.push(Math.cos(u) * s * 650, y * 650, Math.sin(u) * s * 650);
+    }
+    starGeo.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+  })();
+  var starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 1.6, sizeAttenuation: false, transparent: true, opacity: 0, fog: false, depthWrite: false });
+  scene.add(new THREE.Points(starGeo, starMat));
+  var hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.9);
+  scene.add(hemi);
+  var sun = new THREE.DirectionalLight(0xffffff, 0.9);
+  sun.position.set(70, 90, 30);
+  scene.add(sun);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.12));
+
+  function std(color, extra) {
+    var o = { color: color, flatShading: true, roughness: 0.92, metalness: 0 };
+    if (extra) Object.keys(extra).forEach(function (k) { o[k] = extra[k]; });
+    return new THREE.MeshStandardMaterial(o);
+  }
+  var M = {
+    grass: std(0x5E8F4E), soil: std(0x7A5A3E), rock: std(0xffffff, { vertexColors: true }),
+    plaza: std(0x3A3531), bld: std(0xE2DCCB, { emissive: 0x34302A, emissiveIntensity: 1 }),
+    bldEdit: std(0xF4E7C2, { emissive: 0x8A6A20, emissiveIntensity: 0.6 }),
+    bldRead: std(0xDCE8F4, { emissive: 0x2F5F95, emissiveIntensity: 0.45 }),
+    bldConflict: std(0xF3C6BE, { emissive: 0xA8352A, emissiveIntensity: 0.7 }),
+    bldFocus: std(0xFFFFFF, { emissive: 0x555555, emissiveIntensity: 0.5 }),
+    trunk: std(0x6B4A30), leafA: std(0x3F7A3A), leafB: std(0x4F8F45), leafC: std(0x2F6A33), hill: std(0x6A9A55),
+    stoneTop: std(0xD3D8DF), stoneWall: std(0x9AA6B4), stoneDark: std(0x7F8CA0), window: new THREE.MeshBasicMaterial({ color: 0xFFE3A3 }),
+    water: new THREE.MeshBasicMaterial({ color: 0x9FD3F5, transparent: true, opacity: 0.75, side: THREE.DoubleSide }),
+    pond: std(0x5FA9D6, { roughness: 0.3 }),
+    ring: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 }),
+    gondola: std(0x3A3F4A),
+    sand: std(0xC8B48A),
+    door: std(0x4A3A2A),
+    stoneKeep: std(0xA9B3BF),
+    beam: new THREE.MeshBasicMaterial({ color: 0xFFD54A, transparent: true, opacity: 0.85 }),
+    beamBad: new THREE.MeshBasicMaterial({ color: 0xFF7A6E, transparent: true, opacity: 0.85 }),
+    beamTop: new THREE.MeshBasicMaterial({ color: 0xFFE27A }),
+    beamTopBad: new THREE.MeshBasicMaterial({ color: 0xFF9C92 }),
+    leash: new THREE.LineBasicMaterial({ color: 0xF2995E, transparent: true, opacity: 0.8 })
+  };
+  var G = {
+    box: new THREE.BoxGeometry(1, 1, 1),
+    trunk: new THREE.CylinderGeometry(0.08, 0.12, 0.6, 5),
+    pine: new THREE.ConeGeometry(0.5, 1.3, 6),
+    round: new THREE.IcosahedronGeometry(0.55, 0),
+    hill: new THREE.IcosahedronGeometry(1, 0),
+    crystal: new THREE.OctahedronGeometry(0.9, 0),
+    beam: new THREE.CylinderGeometry(0.09, 0.09, 1, 6),
+    ball: new THREE.SphereGeometry(0.35, 10, 8),
+    bag: new THREE.SphereGeometry(0.13, 6, 5)
+  };
+  G.trunk.translate(0, 0.3, 0);
+  G.pine.translate(0, 1.1, 0);
+  G.round.translate(0, 0.95, 0);
+
+  // ---------------------------------------------------------------- builders
+  var SLAB = 1.4;
+  function underside(R, depth, noise, seed, cols) {
+    var geo = new THREE.ConeGeometry(R, depth, 22, 6);
+    var pos = geo.attributes.position, colors = [];
+    var c0 = new THREE.Color(cols[0]), c1 = new THREE.Color(cols[1]), c2 = new THREE.Color(cols[2]), tmp = new THREE.Color();
+    for (var i = 0; i < pos.count; i++) {
+      var x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      var t = (y + depth / 2) / depth;
+      var n = noise(Math.atan2(z, x));
+      var j = hash3(x, y + seed, z);
+      var mid = t > 0.02 && t < 0.98;
+      var radial = mid ? 1 + (j - 0.5) * 0.45 : 1;
+      var yj = mid ? (hash3(z, x, y + seed * 2) - 0.5) * depth * 0.08 : 0;
+      pos.setXYZ(i, x * n * radial, y + yj, z * n * radial);
+      if (t < 0.5) tmp.copy(c0).lerp(c1, t / 0.5); else tmp.copy(c1).lerp(c2, (t - 0.5) / 0.5);
+      var v = 0.88 + j * 0.24;
+      colors.push(tmp.r * v, tmp.g * v, tmp.b * v);
+    }
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geo.rotateX(Math.PI);
+    geo.computeVertexNormals();
+    return geo;
+  }
+  function slabGeo(R, noise) {
+    var geo = new THREE.CylinderGeometry(R, R * 0.97, SLAB, 22, 1);
+    var p = geo.attributes.position;
+    for (var i = 0; i < p.count; i++) {
+      var x = p.getX(i), z = p.getZ(i), n = noise(Math.atan2(z, x));
+      p.setXYZ(i, x * n, p.getY(i), z * n);
+    }
+    geo.computeVertexNormals();
+    return geo;
+  }
+  function crystalAt(group, y, size) {
+    var mat = std(0x7FE0F0, { emissive: 0x3FC9E0, emissiveIntensity: 1.1 });
+    var m = new THREE.Mesh(G.crystal, mat);
+    m.scale.setScalar(size);
+    m.position.set(0, y, 0);
+    group.add(m);
+    var light = new THREE.PointLight(0x7FE0F0, 1.3, 16, 2);
+    light.position.set(0, y, 0);
+    group.add(light);
+    return { mesh: m, mat: mat, light: light, local: new THREE.Vector3(0, y, 0) };
+  }
+
+  var islands = {};
+  var pickRoots = [];
+  function inTerrace(h, x, z, pad) {
+    return h.terraces.some(function (t) { return Math.abs(x - t.x) < t.sx / 2 + pad && Math.abs(z - t.z) < t.sz / 2 + pad; });
+  }
+
+  // stanchions with a colored rope around each terrace; one rope color per repo
+  var ROPE_COLORS = { storefront: 0xC8553D, web: 0x3F7CC4, infra: 0x3FA37C, docs: 0x9B6BC8, home: 0xD9A23B };
+  var POST_MAT = std(0xB8954A, { metalness: 0.45, roughness: 0.45 });
+  var POST_GEO = new THREE.CylinderGeometry(0.045, 0.06, 0.6, 6);
+  var KNOB_GEO = new THREE.SphereGeometry(0.08, 8, 6);
+  var FOOT_GEO = new THREE.CylinderGeometry(0.12, 0.14, 0.05, 8);
+  function addStanchions(g, t) {
+    var col = ROPE_COLORS[t.id] || 0xC8553D;
+    var ropeMat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.25, roughness: 0.8 });
+    var hx = t.sx / 2 + 0.14, hz = t.sz / 2 + 0.14, base = 0.35, top = base + 0.6, anchor = top - 0.07;
+    var corners = [[-hx, -hz], [hx, -hz], [hx, hz], [-hx, hz]];
+    var pts = [];
+    for (var c = 0; c < 4; c++) {
+      var a = corners[c], b = corners[(c + 1) % 4];
+      var n = Math.max(1, Math.round(Math.hypot(b[0] - a[0], b[1] - a[1]) / 1.1));
+      for (var i = 0; i < n; i++) pts.push([t.x + a[0] + (b[0] - a[0]) * i / n, t.z + a[1] + (b[1] - a[1]) * i / n]);
+    }
+    pts.forEach(function (p, i) {
+      var foot = new THREE.Mesh(FOOT_GEO, POST_MAT);
+      foot.position.set(p[0], base + 0.025, p[1]);
+      var post = new THREE.Mesh(POST_GEO, POST_MAT);
+      post.position.set(p[0], base + 0.3, p[1]);
+      var knob = new THREE.Mesh(KNOB_GEO, POST_MAT);
+      knob.position.set(p[0], top + 0.04, p[1]);
+      var q = pts[(i + 1) % pts.length];
+      var curve = new THREE.QuadraticBezierCurve3(
+        new THREE.Vector3(p[0], anchor, p[1]),
+        new THREE.Vector3((p[0] + q[0]) / 2, anchor - 0.32, (p[1] + q[1]) / 2),
+        new THREE.Vector3(q[0], anchor, q[1]));
+      var rope = new THREE.Mesh(new THREE.TubeGeometry(curve, 10, 0.035, 5, false), ropeMat);
+      [foot, post, knob, rope].forEach(function (m) { m.userData.terraceId = t.id; g.add(m); });
+    });
+  }
+
+  function buildIsland(id) {
+    var h = HOSTS[id];
+    var g = new THREE.Group();
+    g.userData.host = id;
+    var noise = ringNoise(h.seed);
+    var r = rng(h.seed * 7 + 3);
+    var slab = new THREE.Mesh(slabGeo(h.R, noise), [M.soil, M.grass, M.soil]);
+    slab.position.y = -SLAB / 2;
+    g.add(slab);
+    var under = new THREE.Mesh(underside(h.R * 0.97, h.depth, noise, h.seed, [0x7A5E46, 0x5A4636, 0x3E3129]), M.rock);
+    under.position.y = -SLAB - h.depth / 2;
+    g.add(under);
+    var core = crystalAt(g, -SLAB - h.depth - 1.2, 1);
+
+    for (var k = 0; k < 3; k++) {
+      var a = r() * 6.283, d = (0.35 + r() * 0.45) * h.R;
+      var hx = Math.cos(a) * d, hz = Math.sin(a) * d;
+      if (inTerrace(h, hx, hz, 1.6)) continue;
+      var hill = new THREE.Mesh(G.hill, M.hill);
+      hill.scale.set(1.3 + r(), 0.45 + r() * 0.3, 1.2 + r());
+      hill.position.set(hx, 0, hz);
+      g.add(hill);
+    }
+    var WA = 1.5, pondR = h.R * noise(WA) * 0.62;
+    var pondX = Math.cos(WA) * pondR, pondZ = Math.sin(WA) * pondR;
+    var trees = Math.round(h.R * 1.8), tries = trees * 4;
+    for (var i = 0; i < tries && trees > 0; i++) {
+      var ta = r() * 6.283, td = Math.sqrt(r()) * 0.84 * h.R * noise(ta);
+      var tx = Math.cos(ta) * td, tz = Math.sin(ta) * td;
+      if (inTerrace(h, tx, tz, 0.7)) continue;
+      if (h.waterfall && (Math.hypot(tx - pondX, tz - pondZ) < 2.3 || (Math.abs(ta - WA) < 0.3 && td > pondR * 0.8))) continue;
+      var tree = new THREE.Group();
+      tree.add(new THREE.Mesh(G.trunk, M.trunk));
+      var pine = r() < 0.55;
+      tree.add(new THREE.Mesh(pine ? G.pine : G.round, [M.leafA, M.leafB, M.leafC][Math.floor(r() * 3)]));
+      tree.scale.setScalar(0.8 + r() * 0.6);
+      tree.position.set(tx, 0, tz);
+      tree.rotation.y = r() * 6.283;
+      g.add(tree);
+      trees--;
+    }
+    if (h.waterfall) {
+      var pond = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 0.12, 14), M.pond);
+      pond.position.set(pondX, 0.04, pondZ);
+      g.add(pond);
+      var edge = h.R * noise(WA) * 0.99;
+      var fall = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 10), M.water);
+      fall.position.set(Math.cos(WA) * (edge + 0.15), -5, Math.sin(WA) * (edge + 0.15));
+      fall.rotation.y = -WA + Math.PI / 2;
+      g.add(fall);
+      var stream = new THREE.Mesh(new THREE.BoxGeometry(edge - pondR, 0.08, 0.7), M.pond);
+      stream.position.set(Math.cos(WA) * (pondR + edge) / 2, 0.03, Math.sin(WA) * (pondR + edge) / 2);
+      stream.rotation.y = -WA;
+      g.add(stream);
+    }
+
+    var terr = {};
+    h.terraces.forEach(function (t) {
+      var plaza = new THREE.Mesh(G.box, M.plaza);
+      plaza.scale.set(t.sx, 0.35, t.sz);
+      plaza.position.set(t.x, 0.17, t.z);
+      plaza.userData.terraceId = t.id;
+      g.add(plaza);
+      addStanchions(g, t);
+      var cols = Math.max(1, Math.floor((t.sx - 0.5) / 0.95)), rows = Math.max(1, Math.floor((t.sz - 0.5) / 0.95));
+      var cells = [];
+      for (var cx = 0; cx < cols; cx++) for (var cz = 0; cz < rows; cz++) cells.push([cx, cz]);
+      for (var s = cells.length - 1; s > 0; s--) { var q = Math.floor(r() * (s + 1)); var tmp = cells[s]; cells[s] = cells[q]; cells[q] = tmp; }
+      var blds = [];
+      cells.slice(0, Math.min(t.files.length, cells.length)).forEach(function (c, idx) {
+        var bh = 0.4 + Math.pow(r(), 2) * t.hmax;
+        var b = new THREE.Mesh(G.box, M.bld);
+        b.scale.set(0.7, bh, 0.7);
+        var bx = t.x - t.sx / 2 + 0.25 + (c[0] + 0.5) * ((t.sx - 0.5) / cols);
+        var bz = t.z - t.sz / 2 + 0.25 + (c[1] + 0.5) * ((t.sz - 0.5) / rows);
+        b.position.set(bx, 0.35 + bh / 2, bz);
+        b.userData = { top: 0.35 + bh, file: t.files[idx], terraceId: t.id, bldIdx: idx, dwell: {} };
+        g.add(b);
+        blds.push(b);
+      });
+      terr[t.id] = { def: t, blds: blds, plaza: plaza, log: [] };
+    });
+
+    var ring = new THREE.Mesh(new THREE.TorusGeometry(h.R * 1.18, 0.09, 6, 96), M.ring);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.15;
+    ring.visible = false;
+    g.add(ring);
+
+    scene.add(g);
+    pickRoots.push(g);
+    islands[id] = { def: h, group: g, core: core, terr: terr, ring: ring, pos: new THREE.Vector3() };
+  }
+
+  function crenelRing(g, r, y, count, size) {
+    for (var i = 0; i < count; i++) {
+      var a = (i / count) * Math.PI * 2;
+      var m = new THREE.Mesh(G.box, M.stoneTop);
+      m.scale.set(size[0], size[1], size[2]);
+      m.position.set(Math.cos(a) * r, y + size[1] / 2, Math.sin(a) * r);
+      m.rotation.y = -a + Math.PI / 2;
+      g.add(m);
+    }
+  }
+  function crenelSquare(g, half, y, perSide, size) {
+    for (var side = 0; side < 4; side++) {
+      for (var i = 0; i < perSide; i++) {
+        var t = -half + (i + 0.5) * (2 * half / perSide);
+        var m = new THREE.Mesh(G.box, M.stoneTop);
+        m.scale.set(size[0], size[1], size[2]);
+        var x = side === 0 ? t : (side === 1 ? half : (side === 2 ? -t : -half));
+        var z = side === 0 ? -half : (side === 1 ? t : (side === 2 ? half : -t));
+        m.position.set(x, y + size[1] / 2, z);
+        m.rotation.y = side % 2 ? Math.PI / 2 : 0;
+        g.add(m);
+      }
+    }
+  }
+  function slit(g, x, y, z, rotY) {
+    var w = new THREE.Mesh(G.box, M.window);
+    w.scale.set(0.22, 0.6, 0.08);
+    w.position.set(x, y, z);
+    w.rotation.y = rotY;
+    g.add(w);
+  }
+  function buildCitadel() {
+    var g = new THREE.Group();
+    g.userData.host = 'cit';
+    g.position.set(0, 8, 0);
+    var noise = ringNoise(77);
+    var baseMesh = new THREE.Mesh(new THREE.CylinderGeometry(9, 8.7, 1.6, 24), [M.stoneWall, M.stoneTop, M.stoneWall]);
+    baseMesh.position.y = -0.8;
+    g.add(baseMesh);
+    var under = new THREE.Mesh(underside(8.7, 12, noise, 77, [0x6E6A66, 0x55504B, 0x3B3734]), M.rock);
+    under.position.y = -1.6 - 6;
+    g.add(under);
+
+    // curtain wall: 18 straight segments with a walkway and merlons
+    var WR = 7.4, WH = 2.4, SEG = 18;
+    for (var s = 0; s < SEG; s++) {
+      var a = ((s + 0.5) / SEG) * Math.PI * 2;
+      var seg = new THREE.Mesh(G.box, M.stoneWall);
+      seg.scale.set(2 * WR * Math.sin(Math.PI / SEG) + 0.05, WH, 0.8);
+      seg.position.set(Math.cos(a) * WR, WH / 2, Math.sin(a) * WR);
+      seg.rotation.y = -a + Math.PI / 2;
+      g.add(seg);
+    }
+    crenelRing(g, WR + 0.25, WH, 40, [0.5, 0.55, 0.3]);
+    // gate facing the opening camera
+    var gate = new THREE.Mesh(G.box, M.door);
+    gate.scale.set(1.5, 1.7, 0.2);
+    var ga = 1.55;
+    gate.position.set(Math.cos(ga) * (WR + 0.42), 0.85, Math.sin(ga) * (WR + 0.42));
+    gate.rotation.y = -ga + Math.PI / 2;
+    g.add(gate);
+
+    // six flanking towers on the wall
+    for (var k = 0; k < 6; k++) {
+      var ta = (k / 6) * Math.PI * 2 + 0.26;
+      var tw = new THREE.Group();
+      tw.position.set(Math.cos(ta) * WR, 0, Math.sin(ta) * WR);
+      var body = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.25, 3.8, 10), [M.stoneKeep, M.stoneTop, M.stoneKeep]);
+      body.position.y = 1.9;
+      tw.add(body);
+      crenelRing(tw, 1.12, 3.8, 8, [0.38, 0.5, 0.26]);
+      slit(tw, Math.cos(ta) * 1.22, 2.4, Math.sin(ta) * 1.22, -ta + Math.PI / 2);
+      g.add(tw);
+    }
+
+    // square keep with corner turrets
+    var KH = 7, KHALF = 3;
+    var keep = new THREE.Mesh(G.box, M.stoneKeep);
+    keep.scale.set(KHALF * 2, KH, KHALF * 2);
+    keep.position.y = KH / 2;
+    g.add(keep);
+    crenelSquare(g, KHALF, KH, 5, [0.55, 0.6, 0.35]);
+    [[1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(function (c) {
+      var tur = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.5, 1.8, 8), [M.stoneKeep, M.stoneTop, M.stoneKeep]);
+      tur.position.set(c[0] * KHALF, KH - 0.2, c[1] * KHALF);
+      g.add(tur);
+      var tg = new THREE.Group();
+      tg.position.set(c[0] * KHALF, KH + 0.7, c[1] * KHALF);
+      crenelRing(tg, 0.6, 0, 6, [0.24, 0.32, 0.18]);
+      g.add(tg);
+    });
+    for (var f = 0; f < 4; f++) {
+      var fa = f * Math.PI / 2;
+      var nx = Math.sin(fa), nz = Math.cos(fa);
+      for (var row = 0; row < 2; row++) {
+        for (var col = -1; col <= 1; col++) {
+          var ox = Math.cos(fa) * col * 1.5, oz = -Math.sin(fa) * col * 1.5;
+          slit(g, nx * (KHALF + 0.03) + ox, 2.6 + row * 2.2, nz * (KHALF + 0.03) + oz, fa);
+        }
+      }
+    }
+
+    // the top tower, with a parapet and the beacon in a brazier
+    var TH = 4.6, THALF = 1.4;
+    var topT = new THREE.Mesh(G.box, M.stoneKeep);
+    topT.scale.set(THALF * 2, TH, THALF * 2);
+    topT.position.y = KH + TH / 2;
+    g.add(topT);
+    crenelSquare(g, THALF, KH + TH, 3, [0.45, 0.55, 0.3]);
+    for (var tf = 0; tf < 4; tf++) {
+      var tfa = tf * Math.PI / 2;
+      slit(g, Math.sin(tfa) * (THALF + 0.03), KH + TH * 0.6, Math.cos(tfa) * (THALF + 0.03), tfa);
+    }
+    var top = KH + TH;
+    var brazier = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.35, 0.5, 8), M.stoneDark);
+    brazier.position.y = top + 0.25;
+    g.add(brazier);
+    var beacon = new THREE.Mesh(new THREE.SphereGeometry(0.6, 14, 10), new THREE.MeshBasicMaterial({ color: 0xFFD54A }));
+    beacon.position.y = top + 0.85;
+    g.add(beacon);
+    var halo = new THREE.Mesh(new THREE.SphereGeometry(0.6, 14, 10), new THREE.MeshBasicMaterial({ color: 0xFFD54A, transparent: true, opacity: 0.4, depthWrite: false }));
+    halo.position.copy(beacon.position);
+    g.add(halo);
+    var bl = new THREE.PointLight(0xFFD54A, 1.1, 30, 2);
+    bl.position.copy(beacon.position);
+    g.add(bl);
+
+    var core = crystalAt(g, -1.6 - 12 - 1.8, 1.7);
+    var ring = new THREE.Mesh(new THREE.TorusGeometry(10, 0.1, 6, 96), M.ring);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.1;
+    ring.visible = false;
+    g.add(ring);
+    scene.add(g);
+    pickRoots.push(g);
+    return { group: g, core: core, beacon: beacon, halo: halo, light: bl, ring: ring, labelY: top + 3 };
+  }
+
+  function airshipMesh(prov) {
+    var g = new THREE.Group();
+    var col = PROV[prov].color;
+    var mat = std(col, { emissive: col, emissiveIntensity: 0.12 });
+    var hull;
+    if (prov === 'claude') { hull = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8), mat); hull.scale.set(1.8, 0.75, 0.75); }
+    else if (prov === 'codex') { hull = new THREE.Mesh(G.box, mat); hull.scale.set(1.3, 0.55, 0.62); }
+    else if (prov === 'gemini') { hull = new THREE.Mesh(new THREE.SphereGeometry(0.58, 10, 8), mat); }
+    else { hull = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.3, 4), mat); hull.rotation.z = -Math.PI / 2; }
+    g.add(hull);
+    var gond = new THREE.Mesh(G.box, M.gondola);
+    gond.scale.set(0.45, 0.2, 0.28);
+    gond.position.y = -0.55;
+    g.add(gond);
+    var fin = new THREE.Mesh(G.box, mat);
+    fin.scale.set(0.3, 0.4, 0.06);
+    fin.position.set(-0.75, 0.15, 0);
+    g.add(fin);
+    // ballast: one sandbag per quarter of context used, hung off the gondola
+    var bags = [];
+    [[-0.32, 0.2], [0.32, 0.2], [-0.32, -0.2], [0.32, -0.2]].forEach(function (o) {
+      var bag = new THREE.Mesh(G.bag, M.sand);
+      bag.position.set(o[0], -0.6, o[1]);
+      g.add(bag);
+      bags.push(bag);
+    });
+    g.userData.bags = bags;
+    return g;
+  }
+
+  // ---------------------------------------------------------------- world
+  HOST_IDS.forEach(buildIsland);
+  var cit = buildCitadel();
+
+  var agentById = {};
+  var agentLogs = {};
+  var fileLogs = {};
+  function terrKey(host, terrace) { return host + '/' + terrace; }
+  function logEvent(ag, text, file, kind, t) {
+    var ev = { t: t === undefined ? time : t, who: ag.def.name, agent: ag.def.id, text: text, file: file || null, kind: kind };
+    var tl = ag.terr.log;
+    tl.unshift(ev); if (tl.length > 16) tl.pop();
+    var al = agentLogs[ag.def.id]; al.unshift(ev); if (al.length > 12) al.pop();
+    if (file) {
+      var fk = terrKey(ag.def.host, ag.def.terrace) + ':' + file;
+      var fl = fileLogs[fk] || (fileLogs[fk] = []);
+      fl.unshift(ev); if (fl.length > 8) fl.pop();
+    }
+  }
+  function refreshBuilding(b) {
+    var ids = Object.keys(b.userData.dwell);
+    if (!ids.length) { b.material = M.bld; return; }
+    var sessions = {}, edit = false;
+    ids.forEach(function (id) { sessions[agentById[id].def.session] = true; if (b.userData.dwell[id] === 'edit') edit = true; });
+    b.material = Object.keys(sessions).length > 1 ? M.bldConflict : (edit ? M.bldEdit : M.bldRead);
+  }
+  function setDwell(ag, idx, on) {
+    var b = ag.terr.blds[idx];
+    if (!b) return;
+    if (on) b.userData.dwell[ag.def.id] = ag.act; else delete b.userData.dwell[ag.def.id];
+    refreshBuilding(b);
+  }
+
+  var time = 0;
+  function makeAgent(a, i) {
+    var isl = islands[a.host];
+    var t = isl.terr[a.terrace];
+    var mesh = airshipMesh(a.prov);
+    mesh.userData.agentId = a.id;
+    isl.group.add(mesh);
+    var beam = new THREE.Mesh(G.beam, M.beam);
+    beam.scale.set(1, 9, 1);
+    beam.visible = false;
+    beam.userData.agentId = a.id;
+    isl.group.add(beam);
+    var top = new THREE.Mesh(G.ball, M.beamTop);
+    top.visible = false;
+    top.userData.agentId = a.id;
+    isl.group.add(top);
+    var cands = [];
+    (a.prefer || ['']).forEach(function (pre) {
+      t.blds.forEach(function (b, bi) { if (b.userData.file.indexOf(pre) === 0) cands.push(bi); });
+    });
+    if (!cands.length) cands = t.blds.map(function (b, bi) { return bi; });
+    var r = rng(100 + i * 13);
+    var start = cands[Math.floor(r() * cands.length)];
+    var hold = start;
+    if (a.hold) t.blds.forEach(function (b, bi) { if (b.userData.file === a.hold) hold = bi; });
+    var ag = { def: a, isl: isl, terr: t, mesh: mesh, beam: beam, top: top, r: r, cands: cands, from: start, to: start, phase: 'dwell', t: r() * 1.5, dwellFor: 2.5, act: 'read', dwellIdx: null, hold: hold, bob: r() * 6.283, leash: null, ctx: a.ctx, needsCompact: false };
+    agentById[a.id] = ag;
+    agentLogs[a.id] = [];
+    return ag;
+  }
+  var agents = AGENTS.map(makeAgent);
+  agents.forEach(function (ag) {
+    if (ag.def.parent) {
+      var lg = new THREE.BufferGeometry();
+      lg.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(6), 3));
+      ag.leash = new THREE.Line(lg, M.leash);
+      ag.leash.frustumCulled = false;
+      ag.leash.visible = false;
+      ag.isl.group.add(ag.leash);
+    }
+    // a little history so the logs aren't empty when you land
+    for (var k = 0; k < 3; k++) {
+      var bi = ag.cands[Math.floor(ag.r() * ag.cands.length)];
+      var f = ag.terr.blds[bi].userData.file;
+      var edit = k === 1;
+      logEvent(ag, (edit ? 'Edit ' : 'Read ') + f, f, edit ? 'edit' : 'read', -150 + k * 40 + ag.r() * 20);
+    }
+    var q = ag.def.q ? QBYID[ag.def.q] : null;
+    if (q) logEvent(ag, (q.kind === 'error' ? 'Stopped: ' : 'Asked to ') + (q.kind === 'error' ? q.text : q.text.charAt(0).toLowerCase() + q.text.slice(1)), ag.terr.blds[ag.hold].userData.file, q.kind === 'error' ? 'error' : 'ask', -12);
+    else { ag.dwellIdx = ag.to; setDwell(ag, ag.to, true); }
+  });
+  Object.keys(islands).forEach(function (id) {
+    Object.keys(islands[id].terr).forEach(function (tid) { islands[id].terr[tid].log.sort(function (a, b) { return b.t - a.t; }); });
+  });
+  Object.keys(agentLogs).forEach(function (id) { agentLogs[id].sort(function (a, b) { return b.t - a.t; }); });
+
+  // clouds: sparse banks with open sky between them; the first bank sits under nuc
+  var cloudMat = std(0xffffff, { roughness: 1 });
+  var cloudGeo = new THREE.IcosahedronGeometry(1, 1);
+  var BANKS = [[2.2, 33, -22]];
+  (function () {
+    var r = rng(9);
+    for (var c = 0; c < 13; c++) BANKS.push([r() * 6.283, 45 + Math.sqrt(r()) * 160, -30 + r() * 8]);
+  })();
+  var PER_BANK = 4;
+  var clouds = new THREE.InstancedMesh(cloudGeo, cloudMat, BANKS.length * PER_BANK);
+  (function () {
+    var r = rng(19), m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+    for (var c = 0; c < BANKS.length; c++) {
+      var cx = Math.cos(BANKS[c][0]) * BANKS[c][1], cz = Math.sin(BANKS[c][0]) * BANKS[c][1], cy = BANKS[c][2];
+      for (var k = 0; k < PER_BANK; k++) {
+        var sc = 2.2 + r() * 3.2;
+        p.set(cx + (r() - 0.5) * 9, cy + (r() - 0.5) * 1.6, cz + (r() - 0.5) * 7);
+        s.set(sc * (1.2 + r() * 0.6), sc * 0.55, sc);
+        q.setFromAxisAngle(up, r() * 6.283);
+        m.compose(p, q, s);
+        clouds.setMatrixAt(c * PER_BANK + k, m);
+      }
+    }
+    clouds.instanceMatrix.needsUpdate = true;
+  })();
+  scene.add(clouds);
+  var puffs = new THREE.Group();
+  (function () {
+    var r = rng(17);
+    for (var c = 0; c < 4; c++) {
+      var a = r() * 6.283, d = 60 + r() * 70, y = 2 + r() * 16;
+      for (var k = 0; k < 3; k++) {
+        var puff = new THREE.Mesh(cloudGeo, cloudMat);
+        var sc = 1.6 + r() * 2.2;
+        puff.scale.set(sc * 1.4, sc * 0.6, sc);
+        puff.position.set(Math.cos(a) * d + (r() - 0.5) * 7, y + (r() - 0.5) * 1.5, Math.sin(a) * d + (r() - 0.5) * 5);
+        puffs.add(puff);
+      }
+    }
+  })();
+  scene.add(puffs);
+
+  // tethers
+  var sparkTex = (function () {
+    var c = document.createElement('canvas');
+    c.width = c.height = 64;
+    var ctx = c.getContext && c.getContext('2d');
+    if (!ctx) return null;
+    var gr = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, 'rgba(255,255,255,1)');
+    gr.addColorStop(0.4, 'rgba(255,255,255,0.8)');
+    gr.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gr;
+    ctx.fillRect(0, 0, 64, 64);
+    return new THREE.CanvasTexture(c);
+  })();
+  var tetherMat = new THREE.MeshBasicMaterial({ color: 0x6A8FB8, transparent: true, opacity: 0.85 });
+  var slackMat = new THREE.MeshBasicMaterial({ color: 0x8A9BB0, transparent: true, opacity: 0.45 });
+  var deadMat = new THREE.MeshBasicMaterial({ color: 0x7A8594, transparent: true, opacity: 0.8 });
+  var SPARKS = 26;
+  var tethers = {};
+  HOST_IDS.forEach(function (id) {
+    var tube = new THREE.Mesh(new THREE.BufferGeometry(), tetherMat);
+    scene.add(tube);
+    var pg = new THREE.BufferGeometry();
+    pg.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(SPARKS * 3), 3));
+    var pm = new THREE.PointsMaterial({ color: 0xA9E8F5, size: 0.9, transparent: true, depthWrite: false, map: sparkTex || null });
+    var pts = new THREE.Points(pg, pm);
+    pts.frustumCulled = false;
+    scene.add(pts);
+    tethers[id] = { tube: tube, pts: pts, curve: null, key: '' };
+  });
+  var deadA = new THREE.Mesh(new THREE.BufferGeometry(), deadMat);
+  var deadB = new THREE.Mesh(new THREE.BufferGeometry(), deadMat);
+  scene.add(deadA);
+  scene.add(deadB);
+
+  // ---------------------------------------------------------------- theme
+  function applyTheme() {
+    skyMat.uniforms.top.value.set(css('--sky-top', '#5C9BE0'));
+    skyMat.uniforms.horizon.value.set(css('--sky-horizon', '#D6E9F7'));
+    scene.fog.color.set(css('--fog', '#D6E9F7'));
+    cloudMat.color.set(css('--cloud', '#FFFFFF'));
+    hemi.color.set(css('--hemi-sky', '#D7EAFF'));
+    hemi.groundColor.set(css('--hemi-ground', '#7C8A66'));
+    hemi.intensity = parseFloat(css('--hemi-int', '0.95'));
+    sun.color.set(css('--sun', '#FFF3DF'));
+    sun.intensity = parseFloat(css('--sun-int', '0.95'));
+    starMat.opacity = parseFloat(css('--stars', '0'));
+    tetherMat.color.set(css('--tether', '#5C86B8'));
+    var additive = css('--spark-add', '0') === '1';
+    HOST_IDS.forEach(function (id) {
+      var m = tethers[id].pts.material;
+      m.color.set(css('--spark', '#1FA6C8'));
+      m.blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
+      m.needsUpdate = true;
+    });
+  }
+  applyTheme();
+  if (window.matchMedia) {
+    var mq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq.addEventListener) mq.addEventListener('change', applyTheme); else if (mq.addListener) mq.addListener(applyTheme);
+  }
+  if (window.MutationObserver) new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
+
+  // ---------------------------------------------------------------- camera
+  var HOME = { target: new THREE.Vector3(0, 0, 0), radius: 125, theta: 1.55, phi: 1.12 };
+  var cam = { target: HOME.target.clone(), radius: HOME.radius, theta: HOME.theta, phi: HOME.phi };
+  var want = { target: cam.target.clone(), radius: cam.radius, theta: cam.theta, phi: cam.phi };
+  function nearestAngle(from, to) {
+    var d = to - from;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    return from + d;
+  }
+  function flyTo(target, radius, theta, phi) {
+    want.target.copy(target);
+    want.radius = radius;
+    if (theta !== null) want.theta = nearestAngle(cam.theta, theta);
+    want.phi = phi;
+  }
+  function updateCamera(k) {
+    cam.target.lerp(want.target, k);
+    cam.radius += (want.radius - cam.radius) * k;
+    cam.theta += (want.theta - cam.theta) * k;
+    cam.phi += (want.phi - cam.phi) * k;
+    var sp = Math.sin(cam.phi);
+    camera.position.set(cam.target.x + cam.radius * sp * Math.cos(cam.theta), cam.target.y + cam.radius * Math.cos(cam.phi), cam.target.z + cam.radius * sp * Math.sin(cam.theta));
+    camera.lookAt(cam.target);
+  }
+
+  // ---------------------------------------------------------------- navigation
+  function clearDeep() { S.agent = null; S.file = null; }
+  function overview() {
+    S.nav++;
+    S.selected = 'cit';
+    S.landed = null;
+    clearDeep();
+    flyTo(HOME.target, HOME.radius, HOME.theta, HOME.phi);
+    refreshAll();
+  }
+  function select(id) {
+    S.nav++;
+    S.selected = id;
+    S.landed = null;
+    clearDeep();
+    if (id === 'cit') flyTo(new THREE.Vector3(0, 10, 0), 52, null, 0.95);
+    else {
+      var h = HOSTS[id], p = islands[id].pos;
+      flyTo(new THREE.Vector3(p.x, p.y + 1.5, p.z), h.R * 2.6 + 16, h.angle, 1.0);
+    }
+    refreshAll();
+  }
+  function terraceWorld(hostId, terraceId) {
+    var t = islands[hostId].terr[terraceId].def;
+    return islands[hostId].group.localToWorld(new THREE.Vector3(t.x, 0.6, t.z));
+  }
+  function land(hostId, terraceId) {
+    S.nav++;
+    S.selected = hostId;
+    S.landed = terraceId;
+    clearDeep();
+    var t = islands[hostId].terr[terraceId].def;
+    flyTo(terraceWorld(hostId, terraceId), Math.max(t.sx, t.sz) * 1.6 + 6, HOSTS[hostId].angle, 0.92);
+    refreshAll();
+  }
+  function selectAgent(id) {
+    S.nav++;
+    var ag = agentById[id];
+    S.selected = ag.def.host;
+    S.landed = ag.def.terrace;
+    S.agent = id;
+    S.file = null;
+    want.radius = 9;
+    want.phi = 0.95;
+    refreshAll();
+  }
+  function bldWorld(b) {
+    return b.parent.localToWorld(new THREE.Vector3(b.position.x, b.userData.top, b.position.z));
+  }
+  function selectFile(hostId, terraceId, idx) {
+    S.nav++;
+    S.selected = hostId;
+    S.landed = terraceId;
+    S.agent = null;
+    S.file = { host: hostId, terrace: terraceId, idx: idx };
+    flyTo(bldWorld(islands[hostId].terr[terraceId].blds[idx]), 8, null, 0.95);
+    refreshAll();
+  }
+  function up() {
+    var l = level();
+    if (l === 'agent' || l === 'file') land(S.selected, S.landed);
+    else if (l === 'terrace') select(S.selected);
+    else if (l === 'island') overview();
+  }
+  function nearestTerrace(hostId, point) {
+    var isl = islands[hostId];
+    var local = isl.group.worldToLocal(point.clone());
+    var best = null, bd = Infinity;
+    isl.def.terraces.forEach(function (t) {
+      var d = Math.hypot(local.x - t.x, local.z - t.z);
+      if (d < bd) { bd = d; best = t.id; }
+    });
+    return best;
+  }
+  function act(p, deep) {
+    if (!p) return;
+    if (p.host === 'cit') { select('cit'); return; }
+    if (p.agent) { selectAgent(p.agent); return; }
+    var sameHost = S.selected === p.host;
+    var hasBld = p.bld !== null;
+    if (hasBld && (deep || (sameHost && S.landed === p.terrace))) { selectFile(p.host, p.terrace, p.bld); return; }
+    var tid = p.terrace || (deep ? nearestTerrace(p.host, p.point) : null);
+    if (tid && (deep || sameHost)) { land(p.host, tid); return; }
+    select(p.host);
+  }
+  function nextFlare() {
+    var list = pending();
+    if (!list.length) return;
+    S.flareIdx = (S.flareIdx + 1) % list.length;
+    var q = list[S.flareIdx];
+    if (q.agent) selectAgent(q.agent); else select(q.host);
+  }
+  function resolve(qid, decision) {
+    S.resolved[qid] = decision;
+    var q = QBYID[qid];
+    var ag = agentById[q.agent];
+    var verb = decision === 'approved' ? 'You approved: ' : (decision === 'denied' ? 'You denied: ' : 'You asked for a retry: ');
+    logEvent(ag, verb + q.text, ag.terr.blds[ag.hold].userData.file, 'decision');
+    ag.from = ag.hold; ag.to = ag.hold; ag.phase = 'move'; ag.t = MOVE * 0.75;
+    refreshAll();
+  }
+
+  // ---------------------------------------------------------------- pointer input
+  var pointers = {};
+  var drag = null;
+  var raycaster = new THREE.Raycaster();
+  var ndc = new THREE.Vector2();
+  function pickAt(clientX, clientY) {
+    var rect = canvas.getBoundingClientRect();
+    ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    var hits = raycaster.intersectObjects(pickRoots, true);
+    for (var i = 0; i < hits.length; i++) {
+      var o = hits[i].object;
+      var res = { host: null, agent: null, terrace: null, bld: null, point: hits[i].point };
+      while (o) {
+        var u = o.userData || {};
+        if (u.agentId && !res.agent) res.agent = u.agentId;
+        if (u.bldIdx !== undefined && res.bld === null) { res.bld = u.bldIdx; res.terrace = u.terraceId; }
+        if (u.terraceId && !res.terrace) res.terrace = u.terraceId;
+        if (u.host) { res.host = u.host; break; }
+        o = o.parent;
+      }
+      if (res.host) {
+        if (res.agent && res.host !== 'cit') {
+          var ag = agentById[res.agent];
+          if (!ag.mesh.visible) continue;
+        }
+        return res;
+      }
+    }
+    return null;
+  }
+  canvas.addEventListener('pointerdown', function (e) {
+    pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
+    var ids = Object.keys(pointers);
+    if (ids.length === 1) drag = { x: e.clientX, y: e.clientY, moved: 0 };
+    else if (ids.length === 2) {
+      var a = pointers[ids[0]], b = pointers[ids[1]];
+      drag = { pinch: Math.hypot(a.x - b.x, a.y - b.y), radius: want.radius, moved: 99 };
+    }
+  });
+  canvas.addEventListener('pointermove', function (e) {
+    if (pointers[e.pointerId]) pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    var ids = Object.keys(pointers);
+    if (drag && ids.length === 2 && drag.pinch) {
+      var a = pointers[ids[0]], b = pointers[ids[1]];
+      var d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (d > 0) want.radius = Math.min(220, Math.max(5, drag.radius * drag.pinch / d));
+      return;
+    }
+    if (drag && ids.length === 1) {
+      var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      drag.moved += Math.abs(dx) + Math.abs(dy);
+      drag.x = e.clientX; drag.y = e.clientY;
+      want.theta += dx * 0.006;
+      want.phi = Math.min(1.45, Math.max(0.3, want.phi - dy * 0.005));
+      return;
+    }
+    if (e.pointerType === 'mouse') canvas.style.cursor = pickAt(e.clientX, e.clientY) ? 'pointer' : 'grab';
+  });
+  function endPointer(e) {
+    var wasClick = drag && !drag.pinch && drag.moved < 6 && Object.keys(pointers).length === 1;
+    delete pointers[e.pointerId];
+    if (wasClick && e.type === 'pointerup') act(pickAt(e.clientX, e.clientY), false);
+    if (Object.keys(pointers).length === 0) drag = null;
+  }
+  canvas.addEventListener('pointerup', endPointer);
+  canvas.addEventListener('pointercancel', endPointer);
+  canvas.addEventListener('dblclick', function (e) { e.preventDefault(); act(pickAt(e.clientX, e.clientY), true); });
+  canvas.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    want.radius = Math.min(220, Math.max(5, want.radius * Math.exp(e.deltaY * 0.0012)));
+  }, { passive: false });
+
+  // ---------------------------------------------------------------- status helpers
+  function laptopMode(t) {
+    if (S.laptop === 'offline') return 'offline';
+    if (S.laptop === 'online') return 'online';
+    var c = t % 50;
+    return c < 30 ? 'offline' : (c < 38 ? 'syncing' : 'online');
+  }
+  function bufferCount(t) {
+    if (S.laptop === 'online') return 0;
+    if (S.laptop === 'offline') return 212 + Math.floor(t * 2);
+    var c = t % 50;
+    if (c < 30) return Math.round(40 + c * 7);
+    if (c < 38) return Math.round(250 * (1 - (c - 30) / 8));
+    return 0;
+  }
+  // The citadel sees only whether a host's leaf connection is up. A dropped network and a stopped
+  // daemon look the same from here, so the world shows one state for both and learns why only
+  // after the host comes back. The simulation still knows the cause; the display never uses it.
+  function reachable(h) {
+    if (h === 'tr') return S.mode !== 'offline';
+    if (h === 'nc') return S.nucRunning;
+    return true;
+  }
+  function agoText(sec) {
+    sec = Math.max(0, Math.floor(sec));
+    if (sec < 60) return sec + ' s ago';
+    if (sec < 3600) return Math.floor(sec / 60) + ' min ago';
+    var hrs = Math.floor(sec / 3600);
+    return hrs + (hrs === 1 ? ' hour ago' : ' hours ago');
+  }
+  function connectedCount() { return HOST_IDS.filter(reachable).length; }
+  function statusOf(id) {
+    if (id === 'cit') return [connectedCount() + ' of 4 islands connected', 'var(--ok)'];
+    if (!reachable(id)) return ['Unreachable', 'var(--idle)'];
+    if (id === 'tr' && S.mode === 'syncing') return ['Back, syncing', 'var(--info)'];
+    return ['Connected', 'var(--ok)'];
+  }
+  function agentQ(ag) { return ag.def.q && !S.resolved[ag.def.q] ? QBYID[ag.def.q] : null; }
+  function agentStatus(ag) {
+    if (!reachable(ag.def.host)) return ['Last state heard', 'var(--idle)', 'paused'];
+    var q = agentQ(ag);
+    if (q) return q.kind === 'error' ? ['Stopped', 'var(--bad)', 'error'] : ['Waiting on you', '#E0B000', 'waiting'];
+    if (S.paused[ag.def.id]) return ['Paused', 'var(--idle)', 'paused'];
+    return ['Working', 'var(--ok)', 'working'];
+  }
+  function agentNow(ag) {
+    var now = agentNowRaw(ag);
+    return reachable(ag.def.host) ? now : 'Last heard: ' + now.charAt(0).toLowerCase() + now.slice(1);
+  }
+  function agentNowRaw(ag) {
+    var q = agentQ(ag);
+    if (q) return (q.kind === 'error' ? 'Stopped: ' : 'Waiting: ') + q.text;
+    var f = base(ag.terr.blds[ag.to].userData.file);
+    if (S.paused[ag.def.id]) return 'Paused at ' + f;
+    if (ag.returning) return 'Returning to the flag for work order ' + orderById[ag.def.orderId].n;
+    if (ag.phase === 'move') return (ag.t < MOVE * 0.25 ? 'Taking off for ' : (ag.t > MOVE * 0.75 ? 'Landing on ' : 'Flying to ')) + f;
+    return (ag.act === 'edit' ? 'Editing ' : 'Reading ') + f;
+  }
+
+  // ---------------------------------------------------------------- labels and tags
+  var labelsEl = document.getElementById('labels');
+  var labels = {};
+  ['cit'].concat(HOST_IDS).forEach(function (id) {
+    var b = el('button', { type: 'button', class: 'label', onclick: function () { select(id); } });
+    labelsEl.appendChild(b);
+    labels[id] = b;
+  });
+  var tags = {};
+  function makeTag(ag) {
+    var b = el('button', { type: 'button', class: 'tag', onclick: function () { selectAgent(ag.def.id); } });
+    labelsEl.appendChild(b);
+    tags[ag.def.id] = b;
+  }
+  agents.forEach(makeTag);
+  var ftags = [];
+  for (var fi = 0; fi < 12; fi++) { var ft = el('span', { class: 'ftag', 'aria-hidden': 'true' }); labelsEl.appendChild(ft); ftags.push(ft); }
+
+  function renderLabels() {
+    ['cit'].concat(HOST_IDS).forEach(function (id) {
+      var b = labels[id];
+      var st = statusOf(id);
+      var n = id === 'cit' ? pending().length : pendingFor(id).length;
+      var name = id === 'cit' ? 'Citadel' : HOSTS[id].name;
+      b.textContent = '';
+      b.appendChild(el('span', { class: 'nm' }, [name, n ? el('span', { class: 'badge', text: String(n) }) : null]));
+      b.appendChild(el('span', { class: 'st' }, [el('span', { class: 'dot', style: 'background:' + st[1] }), st[0]]));
+      b.setAttribute('aria-pressed', S.selected === id ? 'true' : 'false');
+      b.setAttribute('aria-label', name + ', ' + st[0] + (n ? ', ' + n + ' waiting on you' : '') + '. Opens the island.');
+    });
+    renderTags();
+  }
+  function renderTags() {
+    agents.forEach(function (ag) {
+      var b = tags[ag.def.id];
+      var st = agentStatus(ag);
+      b.textContent = '';
+      b.appendChild(el('b', { text: ag.def.name }));
+      b.appendChild(el('span', { text: agentNow(ag) }));
+      b.className = 'tag ' + st[2] + (S.agent === ag.def.id ? ' sel' : '');
+      b.setAttribute('aria-label', ag.def.name + ', ' + st[0] + ', ' + agentNow(ag));
+    });
+  }
+  var tmpV = new THREE.Vector3(), tmpW = new THREE.Vector3();
+  function placeAt(node, world, dy, below) {
+    tmpV.copy(world);
+    tmpV.y += dy;
+    tmpV.project(camera);
+    if (tmpV.z > 1 || tmpV.z < -1 || Math.abs(tmpV.x) > 1.2 || Math.abs(tmpV.y) > 1.2) { node.style.transform = 'translate(-9999px,-9999px)'; return false; }
+    var x = (tmpV.x + 1) / 2 * stage.clientWidth, y = (1 - tmpV.y) / 2 * stage.clientHeight;
+    node.style.transform = 'translate(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px) ' + (below ? 'translate(-50%,6px)' : 'translate(-50%,-100%)');
+    return true;
+  }
+  function hide(node) { node.style.transform = 'translate(-9999px,-9999px)'; }
+  function placeLabels() {
+    var deep = S.landed !== null;
+    ['cit'].concat(HOST_IDS).forEach(function (id) {
+      var b = labels[id];
+      if (deep && id === S.selected) { hide(b); return; }
+      if (id === 'cit') placeAt(b, tmpW.set(0, cit.group.position.y + cit.labelY, 0), 0);
+      else placeAt(b, islands[id].pos, 5.5);
+    });
+    agents.forEach(function (ag) {
+      var b = tags[ag.def.id];
+      var here = deep && ag.def.host === S.selected && ag.def.terrace === S.landed && ag.mesh.visible;
+      if (!here) { hide(b); return; }
+      ag.mesh.getWorldPosition(tmpW);
+      placeAt(b, tmpW, 1.0);
+    });
+    var used = 0;
+    if (deep) {
+      var t = islands[S.selected].terr[S.landed];
+      t.blds.forEach(function (b, bi) {
+        var n = Object.keys(b.userData.dwell).length;
+        var focused = S.file && S.file.idx === bi;
+        if ((!n && !focused) || used >= ftags.length) return;
+        var node = ftags[used++];
+        var cls = b.material === M.bldConflict ? 'conflict' : (b.material === M.bldEdit ? 'edit' : (b.material === M.bldRead ? 'read' : ''));
+        var txt = base(b.userData.file) + (cls === 'conflict' ? ', 2 sessions' : '');
+        if (node.textContent !== txt) node.textContent = txt;
+        node.className = 'ftag ' + cls;
+        placeAt(node, bldWorld(b), 0, true);
+      });
+    }
+    for (var i = used; i < ftags.length; i++) hide(ftags[i]);
+  }
+
+  // ---------------------------------------------------------------- panel
+  var panel = document.getElementById('panel');
+  var liveUpdate = null;
+  function hexCss(n) { return '#' + ('000000' + n.toString(16)).slice(-6); }
+  function crewFor(host, terrace) {
+    if (host === 'nc') return [];
+    var counts = {};
+    agents.forEach(function (ag) { var a = ag.def; if (a.host === host && (!terrace || a.terrace === terrace)) counts[a.prov] = (counts[a.prov] || 0) + 1; });
+    return Object.keys(counts).map(function (p) { return [p, counts[p]]; });
+  }
+  function queueRows(list, showHost) {
+    return list.map(function (q) {
+      var acts = q.kind === 'approve'
+        ? [el('button', { type: 'button', class: 'btn small primary', text: 'Approve', onclick: function () { resolve(q.id, 'approved'); } }),
+           el('button', { type: 'button', class: 'btn small ghost', text: 'Deny', onclick: function () { resolve(q.id, 'denied'); } })]
+        : (q.kind === 'choose'
+          ? q.options.map(function (r) { return el('button', { type: 'button', class: 'btn small', text: r.name, onclick: function () { chooseRepo(q.id, r.key); } }); })
+          : [el('button', { type: 'button', class: 'btn small', text: 'Retry', onclick: function () { resolve(q.id, 'retried'); } })]);
+      if (!reachable(q.host)) acts = [el('span', { class: 'sub', text: 'Can\u2019t reach ' + HOSTS[q.host].name + ' to deliver a decision yet' })];
+      var where = q.where + (showHost && q.kind !== 'choose' ? ' on ' + HOSTS[q.host].name : '');
+      return el('div', { class: 'row', style: 'flex-wrap:wrap' }, [
+        el('span', { class: 'dot', style: 'width:10px;height:10px;background:' + (q.kind === 'error' ? 'var(--bad)' : '#E0B000') }),
+        el('span', { class: 'grow' }, [el('span', { style: 'font-weight:600' }, [q.who + ' ', el('span', { class: 'muted', style: 'font-weight:400', text: 'in ' + where })]), el('span', { class: 'sub', text: q.text })]),
+        el('span', { class: 'acts' }, acts)
+      ]);
+    });
+  }
+  function header(title, kind, status) {
+    return el('div', { class: 'ph' }, [
+      el('div', { style: 'flex:1;min-width:0' }, [
+        el('div', { style: 'display:flex;flex-wrap:wrap;align-items:center;gap:10px' }, [
+          el('h2', { text: title }),
+          status ? el('span', { class: 'pill' }, [el('span', { class: 'dot', style: 'background:' + status[1] }), status[0]]) : null
+        ]),
+        kind ? el('p', { class: 'muted', style: 'margin:4px 0 0;font-size:13px', text: kind }) : null
+      ])
+    ]);
+  }
+  function factsBox(rows) {
+    var refs = {};
+    var box = el('div', { class: 'facts' }, rows.map(function (f) {
+      var b = el('b', { text: f[1] });
+      if (f[2]) refs[f[2]] = b;
+      return el('div', { class: 'fact' }, [el('span', { class: 'muted', text: f[0] }), b]);
+    }));
+    return { node: box, refs: refs };
+  }
+  function section(title, kids) { return el('section', { class: 'sec', 'aria-label': title }, [el('h3', { text: title })].concat(kids)); }
+  function feedList(events, withWho) {
+    var ol = el('ol', { class: 'feed' });
+    fillFeed(ol, events, withWho);
+    return ol;
+  }
+  function fillFeed(ol, events, withWho) {
+    ol.textContent = '';
+    if (!events.length) { ol.appendChild(el('li', { class: 'muted', text: 'Nothing yet.' })); return; }
+    events.slice(0, 10).forEach(function (ev) {
+      var cls = ev.kind === 'overlap' || ev.kind === 'error' ? 'bad' : (ev.kind === 'ask' ? 'warn' : (ev.kind === 'decision' ? 'info' : ''));
+      ol.appendChild(el('li', { class: cls }, [
+        el('time', { text: clockStr(ev.t) }),
+        el('span', {}, [withWho ? el('b', { text: ev.who + ' ' }) : null, ev.text])
+      ]));
+    });
+  }
+  function seg(label, options, current, onPick) {
+    return el('div', { class: 'sec' }, [
+      el('h3', { text: label }),
+      el('div', { class: 'seg', role: 'group', 'aria-label': label }, options.map(function (o) {
+        return el('button', { type: 'button', 'aria-pressed': o[0] === current ? 'true' : 'false', text: o[1], onclick: function () { onPick(o[0]); } });
+      }))
+    ]);
+  }
+
+  function panelWorld() {
+    panel.appendChild(header('Citadel', 'Web app and observer for this world', ['Healthy', 'var(--ok)']));
+    panel.appendChild(el('p', { class: 'note', text: 'Every island’s daemon keeps its own event log and syncs it to the world’s NATS server, the crystal under the castle. Decisions you make here travel back down the tethers.' }));
+    panel.appendChild(factsBox([['Islands connected', connectedCount() + ' of 4'], ['Waiting on you', String(pending().length)], ['Spend today', '$23.60 of $40.00'], ['Auto-approve rules', '38 across all islands']]).node);
+    var q = pending();
+    if (q.length) panel.appendChild(section('Waiting on you', queueRows(q, true)));
+    else panel.appendChild(el('p', { class: 'note', text: 'Nothing is waiting on you. Every agent is either working or done.' }));
+    if (orders.length) panel.appendChild(section('Work orders', orderRows(orders, true)));
+    else panel.appendChild(el('p', { class: 'note', text: 'No work orders yet. Describe one in the bar at the bottom of the world, and the bar shows where it will go before anything launches.' }));
+    // the hub as its server describes itself to this citadel's connection; the crystal under the castle is this hub
+    panel.appendChild(section('NATS', [
+      el('p', { class: 'muted', style: 'margin:0;font-size:13px', text: 'The NATS server this citadel is connected to, as the server describes itself. Every tether ends at its crystal.' }),
+      factsBox([
+        ['Server name', 'skylands-nats'],
+        ['Server ID', 'NC4QZ\u2026W7XKD'],
+        ['nats-server', '2.12.1'],
+        ['Cluster', 'None, single server'],
+        ['JetStream domain', 'world'],
+        ['World account', 'ACT4E\u2026M2QHL'],
+        ['Connected through', 'nats://build-01:4222'],
+        ['Daemons connected', connectedCount() + ' of 4']
+      ]).node
+    ]));
+  }
+
+  function panelIsland(id) {
+    var h = HOSTS[id];
+    panel.appendChild(header(h.name, h.kind, statusOf(id)));
+    var facts, note = '';
+    if (id === 'ws') facts = [['Round trip', '12 ms'], ['Daemon', 'skylandsd 0.4.2, up 6 days'], ['Events synced today', '', 'ws']];
+    if (id === 'bd') facts = [['Round trip', '41 ms'], ['Daemon', 'skylandsd 0.4.2, up 19 days'], ['Events synced today', '', 'bd']];
+    if (id === 'tr' || id === 'nc') {
+      if (!reachable(id)) {
+        facts = [['Last heard', '', 'ago'], ['Last event received', id === 'tr' ? '#9,412' : '#48,112'], ['Daemon, as last reported', 'skylandsd 0.4.2']];
+        note = 'The citadel can\u2019t reach this host, and it can\u2019t tell whether the network dropped or the daemon stopped. Everything here is the last state it heard. If the daemon is still running, it\u2019s holding its events, and any decision it needs, until the link comes back.';
+      } else if (id === 'tr' && S.mode === 'syncing') {
+        facts = [['Link', 'Back, 220 ms round trip'], ['Events left to sync', '', 'buf'], ['Daemon', 'skylandsd 0.4.2, up 2 days']];
+        note = 'The daemon kept running the whole time, so the gap was the network. It\u2019s sending the events it held, in order, and the island catches up as they arrive.';
+      } else if (id === 'tr') {
+        facts = [['Round trip', '64 ms'], ['Events left to sync', '0'], ['Daemon', 'skylandsd 0.4.2, up 2 days']];
+        note = 'Caught up. Every event from the unreachable stretch is in the timeline.';
+      } else {
+        facts = [['Round trip', '3 ms'], ['Daemon', '', 'up'], ['Last event received', '#48,113']];
+        note = 'The daemon reports that it restarted, so the gap was a stopped daemon, not the network. Its history picks up at the next event, and anything that was waiting on a person expired at the restart.';
+      }
+    }
+    if (note) panel.appendChild(el('p', { class: 'note', text: note }));
+    var fb = factsBox(facts);
+    panel.appendChild(fb.node);
+    panel.appendChild(section('Terraces', h.terraces.map(function (t) {
+      var n = agentsOn(id, t.id);
+      var w = pendingFor(id).filter(function (q) { return q.where === t.name; }).length;
+      var detail = n ? n + (n === 1 ? ' agent' : ' agents') + (w ? ', ' + w + ' waiting on you' : ' working') : 'No agents';
+      if (!reachable(id)) detail = 'As last heard: ' + detail.charAt(0).toLowerCase() + detail.slice(1);
+      return el('div', { class: 'row' }, [
+        el('span', { class: 'grow' }, [el('span', { style: 'font-weight:600', text: t.name }), el('span', { class: 'sub', text: detail })]),
+        el('button', { type: 'button', class: 'btn small', text: 'Fly in', onclick: function () { land(id, t.id); } })
+      ]);
+    })));
+    var hOrders = orders.filter(function (o) { return o.host === id; });
+    if (hOrders.length) panel.appendChild(section('Work orders', orderRows(hOrders, true)));
+    var crew = crewFor(id);
+    if (crew.length) panel.appendChild(section('Airships', [el('div', { class: 'crew' }, crew.map(function (c) {
+      return el('span', {}, [el('span', { class: 'dot', style: 'background:' + hexCss(PROV[c[0]].color) }), PROV[c[0]].name + ' ', el('b', { text: String(c[1]) })]);
+    }))]));
+    var q = pendingFor(id);
+    if (q.length) panel.appendChild(section('Waiting on you', queueRows(q, false)));
+    if (!reachable(id)) {
+      var code = id === 'tr' ? 'brew services restart skylands' : 'systemctl --user restart skylandsd';
+      panel.appendChild(section('If the daemon stopped', [
+        el('code', { class: 'code', text: code }),
+        el('button', { type: 'button', class: 'btn', style: 'align-self:flex-start', text: 'Copy restart command', onclick: function (e) {
+          var btn = e.currentTarget;
+          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(code).then(function () { btn.textContent = 'Copied'; }, function () { btn.textContent = 'Copy failed, select the command above'; });
+        } })
+      ]));
+    }
+    liveUpdate = function (t) {
+      if (fb.refs.ws) fb.refs.ws.textContent = fmt(18240 + Math.floor(t * 4));
+      if (fb.refs.bd) fb.refs.bd.textContent = fmt(6912 + Math.floor(t * 1.5));
+      if (fb.refs.buf) fb.refs.buf.textContent = fmt(bufferCount(t));
+      if (fb.refs.ago) fb.refs.ago.textContent = agoText(t - S.lostAt[id]);
+      if (fb.refs.up) fb.refs.up.textContent = 'skylandsd 0.4.2, restarted ' + agoText(t - S.nucBack);
+    };
+  }
+
+  function panelTerrace(hostId, terraceId) {
+    var isl = islands[hostId], t = isl.terr[terraceId];
+    var here = agents.filter(function (ag) { return ag.def.host === hostId && ag.def.terrace === terraceId; });
+    var sessions = {};
+    here.forEach(function (ag) { sessions[ag.def.session] = true; });
+    var down = !reachable(hostId);
+    panel.appendChild(header(t.def.name, 'Repo on ' + HOSTS[hostId].name, down ? ['Unreachable, last state heard', 'var(--idle)'] : [here.length + (here.length === 1 ? ' agent' : ' agents'), 'var(--ok)']));
+    var tf = factsBox([['Files', String(t.def.files.length)], ['Sessions', String(Object.keys(sessions).length)], ['Busy files right now', '', 'busy']]);
+    panel.appendChild(tf.node);
+    var fbBusy = tf.refs.busy;
+    var q = pendingFor(hostId).filter(function (x) { return x.where === t.def.name; });
+    if (q.length) panel.appendChild(section('Waiting on you', queueRows(q, false)));
+    var tOrders = orders.filter(function (o) { return o.host === hostId && o.terrace === terraceId; });
+    if (tOrders.length) panel.appendChild(section('Work orders', orderRows(tOrders, false)));
+    var nowRefs = {};
+    if (here.length) {
+      panel.appendChild(section('Agents', here.map(function (ag) {
+        var st = agentStatus(ag);
+        var now = el('span', { class: 'sub', text: agentNow(ag) });
+        nowRefs[ag.def.id] = now;
+        return el('button', { type: 'button', class: 'row', style: 'text-align:left;width:100%', onclick: function () { selectAgent(ag.def.id); } }, [
+          el('span', { class: 'dot', style: 'width:10px;height:10px;background:' + hexCss(PROV[ag.def.prov].color) }),
+          el('span', { class: 'grow' }, [el('span', { style: 'font-weight:600' }, [ag.def.name + ' ', el('span', { class: 'muted', style: 'font-weight:400', text: ag.def.session })]), now]),
+          el('span', { class: 'dot', title: st[0], style: 'background:' + st[1] })
+        ]);
+      })));
+    }
+    var feed = feedList(t.log, true);
+    panel.appendChild(section('Activity on this terrace', [feed]));
+    panel.appendChild(el('p', { class: 'muted', style: 'margin:0;font-size:12px', text: 'Click an airship or a lit building to look closer.' }));
+    liveUpdate = function () {
+      here.forEach(function (ag) { nowRefs[ag.def.id] && (nowRefs[ag.def.id].textContent = agentNow(ag)); });
+      var busy = t.blds.filter(function (b) { return Object.keys(b.userData.dwell).length; }).length;
+      if (fbBusy) fbBusy.textContent = String(busy);
+      fillFeed(feed, t.log, true);
+    };
+  }
+
+  function panelAgent(id) {
+    var ag = agentById[id], a = ag.def, st = agentStatus(ag);
+    panel.appendChild(header(a.name, a.model + ', ' + a.role, st));
+    var now = el('p', { style: 'margin:0;font-size:14px', text: agentNow(ag) });
+    panel.appendChild(now);
+    var q = agentQ(ag);
+    if (q) panel.appendChild(section(q.kind === 'error' ? 'Needs a decision' : 'Waiting on you', queueRows([q], false)));
+    panel.appendChild(factsBox([['Session', a.session], ['Terrace', ag.terr.def.name + ' on ' + HOSTS[a.host].name], ['Provider', PROV[a.prov].name]]).node);
+    var fill = el('div', { style: 'height:100%' });
+    var ctxText = el('b');
+    var gauge = el('div', { class: 'gauge' }, [fill]);
+    function paintCtx() {
+      var c = Math.round(ag.ctx);
+      ctxText.textContent = c + '%';
+      fill.style.width = c + '%';
+      fill.style.background = c >= 80 ? '#E0B000' : 'var(--accent)';
+    }
+    paintCtx();
+    panel.appendChild(section('Context', [el('div', { style: 'display:flex;justify-content:space-between;font-size:13px' }, [el('span', { class: 'muted', text: 'Used' }), ctxText]), gauge, el('span', { class: 'sub muted', style: 'font-size:12px', text: 'Compacts at 92%. Each sandbag is a quarter of the window, and a fuller airship flies lower.' })]));
+    panel.appendChild(section('Plan', [el('ul', { class: 'plan' }, a.plan.map(function (p) {
+      return el('li', { class: p[1] ? 'done' : '' }, [el('span', { 'aria-hidden': 'true', text: p[1] ? '✓' : '○' }), el('span', { text: p[0] })]);
+    }))]));
+    var feed = feedList(agentLogs[id], false);
+    panel.appendChild(section('Recent activity', [feed]));
+    var paused = !!S.paused[id];
+    panel.appendChild(el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px' }, [
+      q ? null : el('button', { type: 'button', class: 'btn', text: paused ? 'Resume' : 'Pause', onclick: function () { if (S.paused[id]) delete S.paused[id]; else S.paused[id] = true; refreshAll(); } }),
+      a.parent ? el('button', { type: 'button', class: 'btn', text: 'Go to ' + agentById[a.parent].def.name, onclick: function () { selectAgent(a.parent); } }) : null,
+      el('button', { type: 'button', class: 'btn ghost', text: 'Back to ' + ag.terr.def.name, onclick: function () { land(a.host, a.terrace); } })
+    ]));
+    liveUpdate = function () {
+      now.textContent = agentNow(ag);
+      paintCtx();
+      fillFeed(feed, agentLogs[id], false);
+    };
+  }
+
+  function panelFile(f) {
+    var t = islands[f.host].terr[f.terrace], b = t.blds[f.idx], path = b.userData.file;
+    function state() {
+      var ids = Object.keys(b.userData.dwell);
+      if (!ids.length) return ['Idle', 'var(--idle)'];
+      if (b.material === M.bldConflict) return ['Two sessions here', 'var(--bad)'];
+      return b.material === M.bldEdit ? ['Being edited', '#C98A1E'] : ['Being read', 'var(--info)'];
+    }
+    panel.appendChild(header(base(path), path, state()));
+    var pill = panel.querySelector('.pill');
+    var fb = factsBox([['Terrace', t.def.name + ' on ' + HOSTS[f.host].name], ['Agents here now', '', 'who']]);
+    panel.appendChild(fb.node);
+    var note = el('p', { class: 'note', text: 'Two sessions are working on this file at once. Their worktrees will collide when they merge.' });
+    note.hidden = b.material !== M.bldConflict;
+    panel.appendChild(note);
+    var key = terrKey(f.host, f.terrace) + ':' + path;
+    var feed = feedList(fileLogs[key] || [], true);
+    panel.appendChild(section('Recent activity on this file', [feed]));
+    panel.appendChild(el('button', { type: 'button', class: 'btn ghost', style: 'align-self:flex-start', text: 'Back to ' + t.def.name, onclick: function () { land(f.host, f.terrace); } }));
+    liveUpdate = function () {
+      var ids = Object.keys(b.userData.dwell);
+      fb.refs.who.textContent = ids.length ? ids.map(function (i) { return agentById[i].def.name; }).join(', ') : 'None';
+      var s = state();
+      if (pill) { pill.textContent = ''; pill.appendChild(el('span', { class: 'dot', style: 'background:' + s[1] })); pill.appendChild(document.createTextNode(s[0])); }
+      note.hidden = b.material !== M.bldConflict;
+      fillFeed(feed, fileLogs[key] || [], true);
+    };
+  }
+
+  function renderPanel() {
+    liveUpdate = null;
+    panel.textContent = '';
+    var l = level();
+    if (l === 'world') panelWorld();
+    else if (l === 'island') panelIsland(S.selected);
+    else if (l === 'terrace') panelTerrace(S.selected, S.landed);
+    else if (l === 'agent') panelAgent(S.agent);
+    else panelFile(S.file);
+    panel.appendChild(el('hr', { style: 'border:none;border-top:1px solid var(--line);margin:0;width:100%' }));
+    panel.appendChild(el('p', { class: 'muted', style: 'margin:0;font-size:12px', text: 'Simulate what happens on the hosts. The citadel only sees whether each one is reachable.' }));
+    panel.appendChild(seg('Laptop link', [['auto', 'Auto cycle'], ['offline', 'Offline'], ['online', 'Online']], S.laptop, function (v) { S.laptop = v; refreshAll(); }));
+    panel.appendChild(seg('nuc daemon', [['stopped', 'Stopped'], ['running', 'Running']], S.nucRunning ? 'running' : 'stopped', function (v) { var run = v === 'running'; if (!run && S.nucRunning) S.lostAt.nc = time; if (run && !S.nucRunning) S.nucBack = time; S.nucRunning = run; refreshAll(); }));
+    if (liveUpdate) liveUpdate(time);
+  }
+
+  // header
+  var crumbs = document.getElementById('crumbs');
+  function crumbBtn(text, fn) { return el('button', { type: 'button', class: 'btn small', text: text, onclick: fn }); }
+  function sep() { return el('span', { class: 'sep', 'aria-hidden': 'true', text: '/' }); }
+  function renderHeader() {
+    crumbs.textContent = '';
+    var l = level();
+    if (l === 'world') { crumbs.appendChild(el('span', { class: 'btn small', 'aria-current': 'page', text: 'World' })); }
+    else {
+      crumbs.appendChild(crumbBtn('World', overview));
+      var host = S.selected;
+      crumbs.appendChild(sep());
+      if (l === 'island') crumbs.appendChild(el('span', { style: 'font-weight:600', 'aria-current': 'page', text: HOSTS[host].name }));
+      else {
+        crumbs.appendChild(crumbBtn(HOSTS[host].name, function () { select(host); }));
+        crumbs.appendChild(sep());
+        var tname = islands[host].terr[S.landed].def.name;
+        if (l === 'terrace') crumbs.appendChild(el('span', { style: 'font-weight:600', 'aria-current': 'page', text: tname }));
+        else {
+          var tid = S.landed;
+          crumbs.appendChild(crumbBtn(tname, function () { land(host, tid); }));
+          crumbs.appendChild(sep());
+          var leaf = l === 'agent' ? agentById[S.agent].def.name : base(islands[host].terr[tid].blds[S.file.idx].userData.file);
+          crumbs.appendChild(el('span', { style: 'font-weight:600', 'aria-current': 'page', text: leaf }));
+        }
+      }
+    }
+    document.getElementById('connected').textContent = connectedCount() + ' of 4 islands connected';
+    var n = pending().length;
+    document.getElementById('flareCount').textContent = String(n);
+    document.getElementById('nextFlare').disabled = n === 0;
+  }
+  function refreshAll() {
+    renderHeader();
+    renderLabels();
+    renderPanel();
+    HOST_IDS.forEach(function (id) { islands[id].ring.visible = S.selected === id && !S.landed; });
+    cit.ring.visible = S.selected === 'cit';
+    updateBar();
+  }
+
+  document.getElementById('overview').addEventListener('click', overview);
+  document.getElementById('nextFlare').addEventListener('click', nextFlare);
+  window.addEventListener('keydown', function (e) {
+    var tg = e.target;
+    var typing = tg && (tg.tagName === 'INPUT' || tg.tagName === 'TEXTAREA' || tg.isContentEditable);
+    if (typing) return;
+    if (e.key === 'Escape') up();
+    else if ((e.key === ' ' || e.code === 'Space') && (tg === document.body || tg === canvas)) { e.preventDefault(); nextFlare(); }
+  });
+
+  // ---------------------------------------------------------------- frame
+  var tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3();
+  function tubeAlong(curve, radius) { return new THREE.TubeGeometry(curve, 36, radius, 6, false); }
+  function setGeo(mesh, geo) { if (mesh.geometry) mesh.geometry.dispose(); mesh.geometry = geo; }
+  var frameNo = 0;
+  var last = performance.now();
+
+  function updateIslands(dt) {
+    var k = reduceMotion ? 1 : Math.min(1, dt * 1.6);
+    HOST_IDS.forEach(function (id) {
+      var h = HOSTS[id], isl = islands[id];
+      var up = reachable(id);
+      if (S.drift[id] === undefined) S.drift[id] = 0;
+      S.drift[id] += ((up ? 0 : 1) - S.drift[id]) * k;
+      var d = S.drift[id];
+      var dist = h.dist + 12 * d, y = h.y - 3 * d;
+      var bob = reduceMotion ? 0 : Math.sin(time * 0.6 + h.phase) * 0.3;
+      isl.pos.set(Math.cos(h.angle) * dist, y + bob, Math.sin(h.angle) * dist);
+      isl.group.position.copy(isl.pos);
+      isl.group.rotation.y = -h.angle + Math.PI / 2;
+      // the crystal is the daemon as the citadel last heard it: lit while reachable, grey while it can't tell
+      isl.core.mat.emissiveIntensity = up ? 1.1 : 0;
+      isl.core.mat.color.set(up ? 0x7FE0F0 : 0x4A5866);
+      isl.core.light.intensity = up ? 1.3 : 0;
+      isl.core.mesh.rotation.y += dt * (up ? 0.8 : 0);
+    });
+    cit.core.mesh.rotation.y += dt * 0.5;
+  }
+
+  function updateTethers() {
+    var end = cit.group.localToWorld(cit.core.local.clone());
+    HOST_IDS.forEach(function (id) {
+      var isl = islands[id], te = tethers[id];
+      var start = isl.group.localToWorld(isl.core.local.clone());
+      var mid = start.clone().add(end).multiplyScalar(0.5);
+      var sag = 4 + 8 * S.drift[id];
+      mid.y -= sag;
+      te.curve = new THREE.QuadraticBezierCurve3(start, mid, end);
+      var dead = false;
+      var key = [start.x, start.y, start.z, sag].map(function (v) { return v.toFixed(1); }).join(',') + (dead ? 'd' : '');
+      if (key !== te.key && frameNo % 2 === 0) {
+        te.key = key;
+        if (!dead) setGeo(te.tube, tubeAlong(te.curve, 0.12));
+      }
+      te.tube.visible = !dead;
+      te.tube.material = reachable(id) ? tetherMat : slackMat;
+      if (id === 'nc') {
+        deadA.visible = dead;
+        deadB.visible = dead;
+        if (dead && frameNo % 6 === 0) {
+          var dir = new THREE.Vector3(start.x - end.x, 0, start.z - end.z).normalize();
+          setGeo(deadA, tubeAlong(new THREE.QuadraticBezierCurve3(end.clone(), end.clone().add(dir.clone().multiplyScalar(3)).add(new THREE.Vector3(0, -1.5, 0)), end.clone().add(dir.clone().multiplyScalar(4.5)).add(new THREE.Vector3(0, -6, 0))), 0.11));
+          setGeo(deadB, tubeAlong(new THREE.QuadraticBezierCurve3(start.clone(), start.clone().add(dir.clone().multiplyScalar(-2)).add(new THREE.Vector3(0, -1.5, 0)), start.clone().add(dir.clone().multiplyScalar(-3)).add(new THREE.Vector3(0, -5.5, 0))), 0.11));
+        }
+      }
+      var flowing = reachable(id);
+      var fast = id === 'tr' && S.mode === 'syncing';
+      var n = flowing ? (fast ? SPARKS : 10) : 0;
+      var speed = fast ? 0.55 : 0.12;
+      var arr = te.pts.geometry.attributes.position;
+      for (var i = 0; i < SPARKS; i++) {
+        if (i < n) {
+          var u = reduceMotion ? i / n : (time * speed + i / n) % 1;
+          te.curve.getPoint(u, tmpA);
+          arr.setXYZ(i, tmpA.x, tmpA.y, tmpA.z);
+        } else arr.setXYZ(i, 0, -9999, 0);
+      }
+      arr.needsUpdate = true;
+      te.pts.material.size = fast ? 1.3 : 0.9;
+    });
+  }
+
+  function pickNext(ag) {
+    if (ag.cands.length < 2) return ag.cands[0];
+    var n = ag.to, guard = 0;
+    while (n === ag.to && guard++ < 8) n = ag.cands[Math.floor(ag.r() * ag.cands.length)];
+    return n;
+  }
+
+  var MOVE = 3.0, LAND = 0.74;
+  function altFor(ctx) { return 3.4 - 2.4 * Math.min(1, Math.max(0, ctx / 100)); }
+  var effects = [];
+  function compact(ag) {
+    var before = Math.round(ag.ctx);
+    ag.ctx = 38 + ag.r() * 12;
+    ag.needsCompact = false;
+    logEvent(ag, 'Compacted context from ' + before + '% to ' + Math.round(ag.ctx) + '% and climbed', null, 'decision');
+    if (reduceMotion) return;
+    var g = ag.isl.group, p = ag.mesh.position.clone();
+    p.y -= 0.6;
+    var puff = new THREE.Mesh(G.ball, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6, depthWrite: false }));
+    puff.position.copy(p);
+    g.add(puff);
+    effects.push({ mesh: puff, t: 0, kind: 'puff' });
+    for (var i = 0; i < 3; i++) {
+      var bag = new THREE.Mesh(G.bag, M.sand);
+      bag.position.set(p.x + (i - 1) * 0.3, p.y, p.z);
+      g.add(bag);
+      effects.push({ mesh: bag, t: 0, kind: 'bag', vy: 0 });
+    }
+  }
+  function updateEffects(dt) {
+    for (var i = effects.length - 1; i >= 0; i--) {
+      var e = effects[i];
+      e.t += dt;
+      var done = false;
+      if (e.kind === 'puff') {
+        e.mesh.scale.setScalar(1 + e.t * 4);
+        e.mesh.material.opacity = Math.max(0, 0.6 * (1 - e.t / 1.2));
+        done = e.t > 1.2;
+      } else {
+        e.vy -= 9.8 * dt;
+        e.mesh.position.y += e.vy * dt;
+        done = e.t > 2.2;
+      }
+      if (done) {
+        if (e.mesh.parent) e.mesh.parent.remove(e.mesh);
+        if (e.kind === 'puff') e.mesh.material.dispose();
+        effects.splice(i, 1);
+      }
+    }
+  }
+  function easeIO(x) { return 0.5 - Math.cos(Math.PI * Math.min(1, Math.max(0, x))) / 2; }
+
+  function updateAgents(dt) {
+    agents.forEach(function (ag) {
+      var blds = ag.terr.blds;
+      ag.mesh.visible = blds.length > 0;
+      if (!ag.mesh.visible) { ag.beam.visible = false; ag.top.visible = false; return; }
+      if (!reachable(ag.def.host)) return;
+      var adt = ag.def.host === 'tr' && S.mode === 'syncing' ? dt * 3 : dt;
+      var bags = ag.mesh.userData.bags, nb = Math.min(4, Math.ceil(ag.ctx / 25));
+      for (var bi = 0; bi < bags.length; bi++) bags[bi].visible = bi < nb;
+      var bob = reduceMotion ? 0 : Math.sin(time * 1.8 + ag.bob) * 0.1;
+      var q = agentQ(ag);
+      if (q) {
+        if (ag.dwellIdx !== null) { setDwell(ag, ag.dwellIdx, false); ag.dwellIdx = null; }
+        var hb = blds[ag.hold];
+        var hy = hb.userData.top + altFor(ag.ctx) + 0.5;
+        ag.to = ag.hold;
+        ag.mesh.position.set(hb.position.x, hy + bob, hb.position.z);
+        ag.beam.visible = true;
+        ag.top.visible = true;
+        ag.beam.material = q.kind === 'error' ? M.beamBad : M.beam;
+        ag.top.material = q.kind === 'error' ? M.beamTopBad : M.beamTop;
+        ag.beam.position.set(hb.position.x, hy + 5.4, hb.position.z);
+        ag.top.position.set(hb.position.x, hy + 10, hb.position.z);
+        ag.top.scale.setScalar(reduceMotion ? 1 : 1 + 0.35 * Math.sin(time * 4 + ag.bob));
+        return;
+      }
+      ag.beam.visible = false;
+      ag.top.visible = false;
+      if (!S.paused[ag.def.id]) {
+        ag.t += adt;
+        if (ag.phase === 'dwell') {
+          if (ag.t > ag.dwellFor) {
+            if (ag.dwellIdx !== null) { setDwell(ag, ag.dwellIdx, false); ag.dwellIdx = null; }
+            ag.from = ag.to;
+            if (ag.finishing) ag.returning = true; else ag.to = pickNext(ag);
+            ag.phase = 'move';
+            ag.t = 0;
+          }
+        } else {
+          if (ag.needsCompact && ag.t > MOVE * 0.12) compact(ag);
+          if (ag.t > MOVE) {
+            if (ag.returning) { retireList.push(ag); return; }
+            ag.launch = null;
+            ag.phase = 'dwell';
+            ag.t = 0;
+            ag.dwellFor = 1.8 + ag.r() * 2.4;
+            ag.act = ag.r() < 0.4 ? 'edit' : 'read';
+            ag.dwellIdx = ag.to;
+            setDwell(ag, ag.to, true);
+            var f = blds[ag.to].userData.file;
+            logEvent(ag, (ag.act === 'edit' ? (f.indexOf('reservations') >= 0 ? 'Write ' : 'Edit ') : 'Read ') + f, f, ag.act);
+            ag.ctx = Math.min(99, ag.ctx + (ag.act === 'read' ? 2.6 : 1.8) + ag.r());
+            if (ag.ctx >= 92) ag.needsCompact = true;
+            var others = Object.keys(blds[ag.to].userData.dwell).filter(function (oid) { return oid !== ag.def.id && agentById[oid].def.session !== ag.def.session; });
+            if (others.length) logEvent(ag, 'Overlaps with ' + agentById[others[0]].def.name + ' (' + agentById[others[0]].def.session + ') on ' + base(f), f, 'overlap');
+            if (ag.def.orderId) orderArrived(ag);
+          }
+        }
+      }
+      var A = ag.launch || blds[ag.from], B = ag.returning ? ag.flagSpot : blds[ag.to];
+      var roofA = A.userData.top + LAND, roofB = B.userData.top + LAND;
+      if (ag.phase !== 'move') {
+        // landed: sit on the roof, side by side if the roof is shared
+        var ids = Object.keys(B.userData.dwell), n = ids.length, k = ids.indexOf(ag.def.id);
+        var off = n > 1 && k >= 0 ? (k - (n - 1) / 2) * 0.6 : 0;
+        ag.mesh.position.set(B.position.x + off, roofB, B.position.z);
+      } else {
+        var p = reduceMotion ? 1 : Math.min(1, ag.t / MOVE);
+        var cruise = Math.max(A.userData.top, B.userData.top) + altFor(ag.ctx);
+        var y;
+        if (p < 0.25) y = roofA + (cruise - roofA) * easeIO(p / 0.25);
+        else if (p > 0.75) y = cruise + (roofB - cruise) * easeIO((p - 0.75) / 0.25);
+        else y = cruise;
+        var h = p < 0.2 ? 0 : (p > 0.8 ? 1 : easeIO((p - 0.2) / 0.6));
+        ag.mesh.position.set(A.position.x + (B.position.x - A.position.x) * h, y + (p > 0.2 && p < 0.8 ? bob : 0), A.position.z + (B.position.z - A.position.z) * h);
+        var dx = B.position.x - A.position.x, dz = B.position.z - A.position.z;
+        if (Math.abs(dx) + Math.abs(dz) > 0.01) ag.mesh.rotation.y = Math.atan2(-dz, dx);
+      }
+    });
+    agents.forEach(function (ag) {
+      if (!ag.leash) return;
+      var par = agentById[ag.def.parent];
+      var show = S.landed === ag.def.terrace && S.selected === ag.def.host && ag.mesh.visible && par.mesh.visible;
+      ag.leash.visible = show;
+      if (!show) return;
+      var arr = ag.leash.geometry.attributes.position;
+      arr.setXYZ(0, ag.mesh.position.x, ag.mesh.position.y - 0.4, ag.mesh.position.z);
+      arr.setXYZ(1, par.mesh.position.x, par.mesh.position.y - 0.4, par.mesh.position.z);
+      arr.needsUpdate = true;
+    });
+    flushRetired();
+  }
+
+  // ---------------------------------------------------------------- work orders and dispatch
+  var ROPE_CSS = { storefront: '#C8553D', web: '#3F7CC4', infra: '#3FA37C', docs: '#9B6BC8', home: '#D9A23B' };
+  var MODELS = {
+    'Claude Opus': { prov: 'claude', short: 'Opus' },
+    'Claude Sonnet': { prov: 'claude', short: 'Sonnet' },
+    'Claude Haiku': { prov: 'claude', short: 'Haiku' },
+    'Codex': { prov: 'codex', short: 'Codex', model: 'GPT-5 Codex' },
+    'Gemini': { prov: 'gemini', short: 'Gemini', model: 'Gemini Pro' },
+    'Local': { prov: 'local', short: 'Qwen', model: 'Qwen3 Coder on Ollama' }
+  };
+  var REPOS = [];
+  var repoByKey = {};
+  HOST_IDS.forEach(function (h) {
+    HOSTS[h].terraces.forEach(function (t) {
+      var r = { key: h + '/' + t.id, host: h, terrace: t.id, name: t.name };
+      REPOS.push(r);
+      repoByKey[r.key] = r;
+    });
+  });
+  var KEYWORDS = {
+    'ws/storefront': ['rust', 'cargo', 'crate', 'cart', 'checkout', 'catalog', 'product', 'search', 'pricing', 'price', 'discount', 'tax', 'payment', 'payments', 'refund', 'webhook', 'reservation', 'stock'],
+    'ws/web': ['web console', 'ui', 'react', 'frontend', 'page', 'component', 'css', 'timeline', 'vite', 'tsx'],
+    'bd/infra': ['terraform', 'staging', 'prod', 'vpc', 'nats cluster', 'iam', 'deploy', 'cluster'],
+    'tr/docs': ['docs', 'documentation', 'readme', 'guide', 'mkdocs', 'tutorial'],
+    'nc/home': ['home assistant', 'automation', 'nas', 'backup', 'dns', 'mqtt', 'grafana']
+  };
+  var ASK_CMD = {
+    'ws/storefront': 'Run cargo test --workspace',
+    'ws/web': 'Run npm test',
+    'bd/infra': 'Run terraform plan on staging',
+    'tr/docs': 'Run mkdocs build',
+    'nc/home': 'Run docker compose up -d'
+  };
+  var orders = [];
+  var orderById = {};
+  var orderSeq = 0;
+  var retireList = [];
+
+  function hasWord(text, w) {
+    var esc = w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp('(^|[^a-z0-9-])@?' + esc + '($|[^a-z0-9-])').test(text);
+  }
+  function agentsOn(host, terrace) {
+    return agents.filter(function (ag) { return ag.def.host === host && ag.def.terrace === terrace; }).length;
+  }
+  function hostState(h) {
+    return reachable(h) ? 'up' : 'unreachable';
+  }
+  function scopeLabelOf(sc) {
+    if (sc.kind === 'world') return 'the citadel picks the island';
+    if (sc.kind === 'host') return HOSTS[sc.host].name + ', its daemon picks the repo';
+    var r = repoByKey[sc.key];
+    return r.name + ' on ' + HOSTS[r.host].name;
+  }
+  function busiestHost() {
+    var best = null, bestRepos = -1, bestLoad = 1e9;
+    HOST_IDS.forEach(function (h) {
+      if (hostState(h) !== 'up') return;
+      var repos = HOSTS[h].terraces.length;
+      var load = agents.filter(function (ag) { return ag.def.host === h; }).length;
+      if (repos > bestRepos || (repos === bestRepos && load < bestLoad)) { best = h; bestRepos = repos; bestLoad = load; }
+    });
+    return best || 'ws';
+  }
+  // the scope value that matches where the camera is; navigation puts this in the dropdown
+  function placeScope() {
+    var lv = level();
+    if (lv === 'island') return 'host:' + S.selected;
+    if (lv === 'terrace' || lv === 'file' || lv === 'agent') return S.selected + '/' + S.landed;
+    return 'auto';
+  }
+  function assumeScope(text, ignoreSel) {
+    var lv = level(), t = (text || '').toLowerCase(), v = ignoreSel ? 'auto' : scopeSel.value;
+    var why = v === placeScope() ? 'where you are' : 'you chose it';
+    if (v.indexOf('host:') === 0) return { kind: 'host', host: v.slice(5), why: why, set: true };
+    if (v !== 'auto') return { kind: 'repo', key: v, why: why, set: true };
+    for (var i = 0; i < REPOS.length; i++) {
+      if (hasWord(t, REPOS[i].name)) return { kind: 'repo', key: REPOS[i].key, why: 'you named it', set: true };
+    }
+    for (var h = 0; h < HOST_IDS.length; h++) {
+      if (hasWord(t, HOSTS[HOST_IDS[h]].name)) return { kind: 'host', host: HOST_IDS[h], why: 'you named it', set: true };
+    }
+    if (lv === 'terrace' || lv === 'file') return { kind: 'repo', key: S.selected + '/' + S.landed, why: 'where you are' };
+    if (lv === 'island') return { kind: 'host', host: S.selected, why: 'where you are' };
+    for (var j = 0; j < REPOS.length; j++) {
+      var kws = KEYWORDS[REPOS[j].key];
+      for (var k = 0; k < kws.length; k++) {
+        if (hasWord(t, kws[k])) return { kind: 'repo', key: REPOS[j].key, why: 'from \u201c' + kws[k] + '\u201d in the text' };
+      }
+    }
+    return { kind: 'world', why: 'nothing in the text points to a host or repo' };
+  }
+  function assumeModel(key, text, choice) {
+    if (choice && choice !== 'auto') return choice;
+    var t = (text || '').toLowerCase();
+    if (key === 'tr/docs' || /\b(docs?|readme|write|guide)\b/.test(t)) return 'Claude Sonnet';
+    if (key === 'bd/infra') return 'Codex';
+    if (key === 'nc/home') return 'Claude Haiku';
+    if (key === 'ws/web') return 'Claude Sonnet';
+    return 'Claude Opus';
+  }
+  function resolveModels(key, text, choice, attempts) {
+    var first = assumeModel(key, text, choice), note = '';
+    if (first === 'Local' && repoByKey[key].host !== 'ws') {
+      first = 'Claude Sonnet';
+      note = ' Local models need a host with a GPU, so Claude Sonnet takes that slot.';
+    }
+    var list = [first];
+    ['Codex', 'Claude Sonnet', 'Gemini', 'Claude Opus'].forEach(function (m) {
+      if (list.length >= attempts) return;
+      if (list.indexOf(m) >= 0) return;
+      if (MODELS[m].prov === MODELS[first].prov) return;
+      list.push(m);
+    });
+    return { list: list, note: note };
+  }
+  function filesOf(key) {
+    var r = repoByKey[key];
+    return HOSTS[r.host].terraces.filter(function (x) { return x.id === r.terrace; })[0].files;
+  }
+  // the daemon's placement processor: it searches its own repos, so no code leaves the host
+  function daemonPlace(o) {
+    var t = o.text.toLowerCase();
+    var pool = REPOS.filter(function (r) { return r.host === o.host; });
+    if (pool.length === 1) return { key: pool[0].key, why: 'the only repo on ' + HOSTS[o.host].name };
+    var i, j;
+    for (i = 0; i < pool.length; i++) {
+      var files = filesOf(pool[i].key), kws = KEYWORDS[pool[i].key];
+      for (j = 0; j < kws.length; j++) {
+        if (!hasWord(t, kws[j])) continue;
+        var kw = kws[j];
+        var hit = files.filter(function (f) { return f.toLowerCase().indexOf(kw) >= 0; })[0];
+        return { key: pool[i].key, why: 'matched \u201c' + kw + '\u201d' + (hit ? ' in ' + hit : '') };
+      }
+    }
+    var stop = ['test', 'tests', 'docs', 'readme', 'main', 'config', 'index', 'with', 'from', 'into', 'that', 'this', 'make', 'some', 'more', 'less', 'things'];
+    var toks = t.split(/[^a-z0-9]+/).filter(function (w) { return w.length >= 4 && stop.indexOf(w) < 0; });
+    for (i = 0; i < pool.length; i++) {
+      var fl = filesOf(pool[i].key);
+      for (j = 0; j < toks.length; j++) {
+        var tok = toks[j];
+        var f2 = fl.filter(function (f) { return base(f).toLowerCase().indexOf(tok) >= 0; })[0];
+        if (f2) return { key: pool[i].key, why: 'matched \u201c' + tok + '\u201d in ' + f2 };
+      }
+    }
+    return null;
+  }
+  function finishPlacement(o, key, why) {
+    var r = repoByKey[key];
+    o.terrace = r.terrace;
+    o.repo = r.name;
+    o.key = key;
+    o.placedWhy = why;
+    o.models = resolveModels(key, o.text, o.modelChoice, o.attempts).list;
+    o.prefer = preferFor(key, o.text, null);
+    o.askText = ASK_CMD[key];
+    plantFlag(o);
+    o.state = 'running';
+    spawnOrderAgents(o);
+  }
+  function askForRepo(o) {
+    o.state = 'choosing';
+    var q = { id: 'q' + o.id, host: o.host, who: 'skylandsd', where: HOSTS[o.host].name, text: 'Order ' + o.n + ' matched no repo here. Which repo should it go to?', kind: 'choose', orderId: o.id, options: REPOS.filter(function (r) { return r.host === o.host; }) };
+    QUEUE.push(q);
+    QBYID[q.id] = q;
+  }
+  function chooseRepo(qid, key) {
+    var q = QBYID[qid];
+    S.resolved[qid] = 'chosen';
+    finishPlacement(orderById[q.orderId], key, 'you chose it');
+    refreshAll();
+  }
+  function preferFor(key, text, file) {
+    var t = (text || '').toLowerCase(), out = [];
+    if (file) out.push(file, file);
+    if (key === 'ws/storefront') {
+      if (/cart|checkout|reservation|stock/.test(t)) out.push('crates/cart');
+      if (/catalog|search|product|variant|filter|image/.test(t)) out.push('crates/catalog');
+      if (/pricing|price|discount|tax|currenc/.test(t)) out.push('crates/pricing');
+      if (/payment|refund|webhook/.test(t)) out.push('crates/payments');
+    }
+    if (out.length < 2) out.push('');
+    return out;
+  }
+
+  // flags and dispatch sparks
+  var FLAG_POLE = new THREE.CylinderGeometry(0.035, 0.035, 1.5, 6);
+  FLAG_POLE.translate(0, 0.75, 0);
+  var FLAG_CLOTH = new THREE.BufferGeometry();
+  FLAG_CLOTH.setAttribute('position', new THREE.Float32BufferAttribute([0, 1.45, 0, 0.75, 1.24, 0, 0, 1.02, 0], 3));
+  FLAG_CLOTH.computeVertexNormals();
+  var SPARK_GEO = new THREE.SphereGeometry(0.45, 12, 8);
+  var SPARK_HALO = new THREE.SphereGeometry(0.95, 12, 8);
+  function plantFlag(o) {
+    var isl = islands[o.host], t = isl.terr[o.terrace].def;
+    var slot = orders.filter(function (x) { return x !== o && x.flag && x.host === o.host && x.terrace === o.terrace; }).length;
+    var fx = t.x - t.sx / 2 + 0.25 + (slot % 6) * 0.65, fz = t.z + t.sz / 2 + 0.55 + Math.floor(slot / 6) * 0.6;
+    var g = new THREE.Group();
+    g.position.set(fx, 0, fz);
+    var pole = new THREE.Mesh(FLAG_POLE, POST_MAT);
+    o.clothMat = new THREE.MeshBasicMaterial({ color: 0x8A97A6, side: THREE.DoubleSide });
+    var cloth = new THREE.Mesh(FLAG_CLOTH, o.clothMat);
+    [pole, cloth].forEach(function (m) { m.userData.terraceId = o.terrace; g.add(m); });
+    isl.group.add(g);
+    o.flag = g;
+    o.flagColor = '#8A97A6';
+    o.flagSpot = { position: { x: fx, z: fz }, userData: { top: 0, dwell: {} } };
+    o.plantT = 0;
+    g.scale.y = 0.01;
+  }
+  function startDispatch(o) {
+    o.state = 'dispatching';
+    o.sparkT = 0;
+    var s = new THREE.Group();
+    s.add(new THREE.Mesh(SPARK_GEO, new THREE.MeshBasicMaterial({ color: 0xFFF1B0 })));
+    s.add(new THREE.Mesh(SPARK_HALO, new THREE.MeshBasicMaterial({ color: 0xFFD54A, transparent: true, opacity: 0.35, depthWrite: false })));
+    scene.add(s);
+    o.spark = s;
+    if (o.flag) o.flag.visible = false;
+  }
+  function spawnOrderAgents(o) {
+    o.models.forEach(function (mName, k) {
+      var mm = MODELS[mName];
+      var def = {
+        id: o.id + String.fromCharCode(97 + k), host: o.host, terrace: o.terrace, prov: mm.prov,
+        name: mm.short + ' ' + o.n, model: mm.model || mName, session: 'Order ' + o.n,
+        role: o.models.length > 1 ? 'racing in work order ' + o.n : 'lead for work order ' + o.n,
+        ctx: 10 + k * 4, prefer: o.prefer, plan: [[o.text, 0]], orderId: o.id
+      };
+      var ag = makeAgent(def, 40 + o.n * 3 + k);
+      ag.from = ag.to;
+      ag.phase = 'move';
+      ag.t = 0;
+      ag.launch = o.flagSpot;
+      ag.flagSpot = o.flagSpot;
+      ag.steps = 0;
+      ag.stepsTarget = 6 + Math.floor(ag.r() * 3);
+      agents.push(ag);
+      makeTag(ag);
+      o.agents.push(def.id);
+      logEvent(ag, 'Took work order ' + o.n + ': ' + o.text, null, 'decision');
+    });
+  }
+  function orderArrived(ag) {
+    var o = orderById[ag.def.orderId];
+    ag.steps++;
+    if (o.ask && !o.asked && ag.def.id === o.agents[0] && ag.steps >= 3) {
+      var q = { id: 'q' + o.id, host: o.host, agent: ag.def.id, who: ag.def.name, where: o.repo, text: o.askText, kind: 'approve' };
+      QUEUE.push(q);
+      QBYID[q.id] = q;
+      ag.def.q = q.id;
+      ag.hold = ag.to;
+      o.asked = true;
+      logEvent(ag, 'Asked to ' + o.askText.charAt(0).toLowerCase() + o.askText.slice(1), ag.terr.blds[ag.to].userData.file, 'ask');
+      refreshAll();
+      return;
+    }
+    if (ag.steps >= ag.stepsTarget) ag.finishing = true;
+  }
+  function retireAgent(ag) {
+    if (ag.dwellIdx !== null) { setDwell(ag, ag.dwellIdx, false); ag.dwellIdx = null; }
+    [ag.mesh, ag.beam, ag.top].forEach(function (m) { if (m.parent) m.parent.remove(m); });
+    if (tags[ag.def.id]) { tags[ag.def.id].remove(); delete tags[ag.def.id]; }
+    var i = agents.indexOf(ag);
+    if (i >= 0) agents.splice(i, 1);
+    ag.retired = true;
+    ag.def.plan.forEach(function (p) { p[1] = 1; });
+    logEvent(ag, 'Finished and returned to the flag', null, 'decision');
+    if (S.agent === ag.def.id) land(ag.def.host, ag.def.terrace); else refreshAll();
+  }
+  function flushRetired() {
+    if (!retireList.length) return;
+    var list = retireList.splice(0);
+    list.forEach(retireAgent);
+  }
+  function orderNeeds(o) {
+    if (o.state === 'choosing') return true;
+    return o.agents.some(function (id) { var ag = agentById[id]; return !ag.retired && agentQ(ag); });
+  }
+  function orderStatus(o) {
+    if (o.state === 'queued') return ['Queued until ' + HOSTS[o.host].name + ' is reachable', '#8A97A6'];
+    if (o.state === 'dispatching') return ['Dispatching', 'var(--info)'];
+    if (o.state === 'choosing') return ['Waiting on you to pick a repo', '#E0B000'];
+    if (o.state === 'done') return ['Done', 'var(--ok)'];
+    if (orderNeeds(o)) return ['Waiting on you', '#E0B000'];
+    return ['Running', ROPE_CSS[o.terrace]];
+  }
+  function updateOrders(dt) {
+    orders.forEach(function (o) {
+      if (o.state === 'queued' && hostState(o.host) === 'up') { startDispatch(o); refreshAll(); }
+      if (o.state === 'dispatching') {
+        o.sparkT += dt / (reduceMotion ? 0.05 : 1.4);
+        var te = tethers[o.host];
+        if (te.curve) { te.curve.getPoint(Math.max(0, 1 - o.sparkT), tmpA); o.spark.position.copy(tmpA); }
+        if (!reduceMotion) o.spark.children[1].scale.setScalar(1 + 0.25 * Math.sin(time * 18));
+        if (o.sparkT >= 1) {
+          scene.remove(o.spark);
+          o.spark = null;
+          if (o.terrace) {
+            o.state = 'running';
+            o.flag.visible = true;
+            o.plantT = 0;
+            spawnOrderAgents(o);
+          } else {
+            var pl = daemonPlace(o);
+            if (pl) finishPlacement(o, pl.key, pl.why); else askForRepo(o);
+          }
+          refreshAll();
+        }
+      }
+      if (o.flag && o.flag.visible && o.plantT < 1) {
+        o.plantT = reduceMotion ? 1 : Math.min(1, o.plantT + dt / 0.4);
+        o.flag.scale.y = Math.max(0.01, o.plantT);
+      }
+      if (o.state === 'running' && o.agents.length && o.agents.every(function (id) { return agentById[id].retired; })) {
+        o.state = 'done';
+        o.doneAt = time;
+        refreshAll();
+      }
+      if (o.flag) {
+        var col = o.state === 'queued' ? '#8A97A6' : (o.state === 'done' ? '#6FD08C' : (orderNeeds(o) ? '#FFD54A' : ROPE_CSS[o.terrace]));
+        if (o.flagColor !== col) { o.clothMat.color.set(col); o.flagColor = col; }
+        if (o.state === 'done' && time - o.doneAt > 6) { if (o.flag.parent) o.flag.parent.remove(o.flag); o.flag = null; }
+      }
+    });
+  }
+
+  // the command bar
+  var cmdInput = document.getElementById('cmdInput');
+  var cmdGo = document.getElementById('cmdGo');
+  var scopeSel = document.getElementById('scopeSel');
+  var scopeLabel = document.getElementById('scopeLabel');
+  var scopeTo = document.getElementById('scopeTo');
+  var scopeWhy = document.getElementById('scopeWhy');
+  var chipRow = document.getElementById('chipRow');
+  var modelSel = document.getElementById('modelSel');
+  var attemptSel = document.getElementById('attemptSel');
+  var budgetSel = document.getElementById('budgetSel');
+  var fileChip = document.getElementById('fileChip');
+  var previewBox = document.getElementById('preview');
+  var previewText = document.getElementById('previewText');
+  scopeSel.appendChild(el('option', { value: 'auto', text: 'Auto' }));
+  scopeSel.appendChild(el('optgroup', { label: 'Hosts: the daemon picks the repo' }, HOST_IDS.map(function (h) { return el('option', { value: 'host:' + h, text: HOSTS[h].name }); })));
+  scopeSel.appendChild(el('optgroup', { label: 'Repos' }, REPOS.map(function (r) { return el('option', { value: r.key, text: r.name + ' on ' + HOSTS[r.host].name }); })));
+  modelSel.appendChild(el('option', { value: 'auto', text: 'Auto' }));
+  Object.keys(MODELS).forEach(function (m) { modelSel.appendChild(el('option', { value: m, text: m === 'Local' ? 'Local (Qwen on Ollama)' : m })); });
+  var barNav = -1;
+
+  function currentFile() {
+    if (!S.file) return null;
+    return islands[S.file.host].terr[S.file.terrace].blds[S.file.idx].userData.file;
+  }
+  function draft() {
+    var text = cmdInput.value.trim();
+    var sc = assumeScope(text);
+    var d = { text: text, sc: sc, budget: budgetSel.value, note: '', models: [], r: null };
+    if (sc.kind === 'world') d.host = null;
+    else if (sc.kind === 'host') d.host = sc.host;
+    else {
+      d.r = repoByKey[sc.key];
+      d.host = d.r.host;
+      var md = resolveModels(sc.key, text, modelSel.value, Number(attemptSel.value));
+      d.models = md.list;
+      d.note = md.note;
+    }
+    return d;
+  }
+  function updateBar() {
+    var lv = level();
+    // every click, breadcrumb, Esc or dropdown pick that moves the camera sets the scope to that place
+    if (S.nav !== barNav) { barNav = S.nav; scopeSel.value = placeScope(); hidePreview(); }
+    var isAgent = lv === 'agent';
+    scopeSel.hidden = isAgent;
+    scopeTo.hidden = !isAgent;
+    chipRow.hidden = isAgent;
+    if (isAgent) {
+      var ag = agentById[S.agent];
+      scopeLabel.textContent = 'To';
+      scopeTo.textContent = ag.def.name;
+      cmdInput.placeholder = 'Message ' + ag.def.name + '\u2026';
+      cmdInput.setAttribute('aria-label', 'Message to ' + ag.def.name);
+      cmdGo.textContent = 'Send';
+      return;
+    }
+    var d = draft();
+    var where = scopeLabelOf(d.sc);
+    scopeLabel.textContent = 'Scope';
+    scopeSel.options[0].textContent = 'Auto: ' + scopeLabelOf(assumeScope(d.text, true));
+    scopeWhy.textContent = (!d.sc.set ? 'Assumed scope: ' : d.sc.why === 'where you are' ? 'Scope: ' : 'Scope set: ') + where + ' (' + d.sc.why + ').';
+    modelSel.options[0].textContent = d.sc.kind !== 'repo' ? 'Auto: the daemon picks' : 'Auto: ' + assumeModel(d.sc.key, d.text, 'auto');
+    var f = currentFile();
+    fileChip.hidden = !f;
+    if (f) fileChip.textContent = 'Attached: ' + base(f);
+    if (lv === 'world') cmdInput.placeholder = 'Describe work for any host or repo\u2026';
+    else if (lv === 'island') cmdInput.placeholder = 'Describe work for ' + HOSTS[S.selected].name + '\u2026';
+    else cmdInput.placeholder = 'Describe work for ' + islands[S.selected].terr[S.landed].def.name + '\u2026';
+    cmdInput.setAttribute('aria-label', 'Work order');
+    cmdGo.textContent = previewBox.hidden ? 'Preview' : 'Launch';
+    if (!previewBox.hidden) fillPreview(d);
+  }
+  function fillPreview(d) {
+    var n = Number(attemptSel.value);
+    var tail = ', ' + n + (n === 1 ? ' attempt' : ' attempts, one each') + ', $' + d.budget + ' cap.';
+    if (d.sc.kind === 'world') {
+      previewText.textContent = 'Sent to the citadel, which picks a connected island. That island\u2019s daemon chooses the repo' + (modelSel.value === 'auto' ? ' and the model' : ' and runs ' + modelSel.value) + tail;
+      return;
+    }
+    var hn = HOSTS[d.host].name, hs = hostState(d.host);
+    var txt;
+    if (d.sc.kind === 'host') txt = 'Sent to ' + hn + ', whose daemon chooses the repo' + (modelSel.value === 'auto' ? ' and the model' : ' and runs ' + modelSel.value) + tail;
+    else txt = d.models.join(' and ') + ' on ' + d.r.name + ' at ' + hn + tail + d.note;
+    if (hs === 'unreachable') txt += ' The citadel can\u2019t reach ' + hn + ' right now, so this order will queue until it can.';
+    previewText.textContent = txt;
+  }
+  function showPreview() {
+    if (!cmdInput.value.trim()) { cmdInput.focus(); return; }
+    previewBox.hidden = false;
+    updateBar();
+  }
+  function hidePreview() {
+    previewBox.hidden = true;
+    cmdGo.textContent = level() === 'agent' ? 'Send' : 'Preview';
+  }
+  function launchOrder() {
+    var d = draft();
+    if (!d.text) return;
+    orderSeq++;
+    var isHost = d.sc.kind !== 'repo';
+    // world scope: the citadel picks the island when the order is submitted
+    var hostWhy = null;
+    if (d.sc.kind === 'world') { d.host = busiestHost(); hostWhy = 'the connected host with the most repos'; }
+    var o = {
+      id: 'o' + orderSeq, n: orderSeq, text: d.text, host: d.host, scopeKind: d.sc.kind, hostWhy: hostWhy,
+      terrace: isHost ? null : d.r.terrace, repo: isHost ? null : d.r.name, key: isHost ? null : d.r.key,
+      models: d.models, modelChoice: modelSel.value, attempts: Number(attemptSel.value), budget: d.budget,
+      state: 'queued', agents: [], asked: false, spark: null, flag: null,
+      ask: /\b(test|tests|run|deploy|apply|build|migrat\w*)\b/i.test(d.text),
+      askText: isHost ? null : ASK_CMD[d.r.key],
+      prefer: isHost ? null : preferFor(d.r.key, d.text, currentFile())
+    };
+    orders.unshift(o);
+    orderById[o.id] = o;
+    if (!isHost) plantFlag(o);
+    if (hostState(o.host) === 'up') startDispatch(o);
+    cmdInput.value = '';
+    modelSel.value = 'auto';
+    attemptSel.value = '1';
+    budgetSel.value = '5';
+    hidePreview();
+    refreshAll();
+  }
+  function sendMessage() {
+    var text = cmdInput.value.trim();
+    if (!text || !S.agent) return;
+    var ag = agentById[S.agent];
+    logEvent(ag, 'You: ' + text, null, 'decision');
+    ag.def.plan.push([text, 0]);
+    cmdInput.value = '';
+    refreshAll();
+  }
+  function submitBar() {
+    if (level() === 'agent') { sendMessage(); return; }
+    if (previewBox.hidden) showPreview(); else launchOrder();
+  }
+  cmdInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); submitBar(); }
+    else if (e.key === 'Escape' && !previewBox.hidden) { e.preventDefault(); hidePreview(); }
+  });
+  cmdInput.addEventListener('input', function () { if (!previewBox.hidden) hidePreview(); updateBar(); });
+  cmdGo.addEventListener('click', submitBar);
+  document.getElementById('launchBtn').addEventListener('click', launchOrder);
+  document.getElementById('editBtn').addEventListener('click', function () { hidePreview(); cmdInput.focus(); });
+  // picking a scope in the bar moves the camera there, the same way clicking in the world sets the scope
+  scopeSel.addEventListener('change', function () {
+    var v = scopeSel.value;
+    if (v === 'auto') { updateBar(); return; }
+    if (v.indexOf('host:') === 0) select(v.slice(5));
+    else { var r = repoByKey[v]; land(r.host, r.terrace); }
+  });
+  [modelSel, attemptSel, budgetSel].forEach(function (s) { s.addEventListener('change', updateBar); });
+
+  function orderRows(list, showWhere) {
+    return list.map(function (o) {
+      var st = orderStatus(o);
+      var where = o.repo ? o.repo + ' on ' + HOSTS[o.host].name : HOSTS[o.host].name + ', its daemon picks the repo';
+      var models = o.models.length ? o.models.join(' and ') : 'model picked on placement';
+      var notes = [];
+      if (o.hostWhy) notes.push('the citadel picked ' + HOSTS[o.host].name + ' as ' + o.hostWhy);
+      if (o.placedWhy) notes.push(o.placedWhy === 'you chose it' ? 'you picked the repo' : 'the daemon placed it: ' + o.placedWhy);
+      var placed = notes.length ? ' (' + notes.join('; ') + ')' : '';
+      return el('button', { type: 'button', class: 'row', style: 'text-align:left;width:100%', onclick: function () { if (o.terrace) land(o.host, o.terrace); else select(o.host); } }, [
+        el('span', { class: 'dot', style: 'width:10px;height:10px;background:' + st[1] }),
+        el('span', { class: 'grow' }, [
+          el('span', { style: 'font-weight:600', text: 'Order ' + o.n + ': ' + o.text }),
+          el('span', { class: 'sub', text: st[0] + ', ' + (showWhere || !o.repo ? where + ', ' : '') + models + placed })
+        ])
+      ]);
+    });
+  }
+
+  var liveClock = 0;
+  function frame(now) {
+    var dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+    last = now;
+    time += dt;
+    frameNo++;
+    var mode = laptopMode(time);
+    if (mode !== S.mode) { if (mode === 'offline') S.lostAt.tr = time; S.mode = mode; refreshAll(); }
+    updateIslands(dt);
+    updateTethers();
+    updateAgents(dt);
+    updateOrders(dt);
+    updateEffects(dt);
+    if (S.agent) {
+      var ag = agentById[S.agent];
+      ag.mesh.getWorldPosition(tmpW);
+      want.target.copy(tmpW);
+    }
+    var cycle = (time * 0.8) % 1;
+    var any = pending().length > 0;
+    cit.halo.visible = any;
+    cit.halo.scale.setScalar(reduceMotion ? 1.6 : (1 + 0.6 * cycle) * 1.6);
+    cit.halo.material.opacity = reduceMotion ? 0.3 : 0.45 * (1 - cycle);
+    cit.light.intensity = any ? 1.1 : 0.4;
+    if (!reduceMotion) puffs.rotation.y += dt * 0.01;
+    updateCamera(reduceMotion ? 1 : Math.min(1, dt * 3));
+    placeLabels();
+    liveClock += dt;
+    if (liveClock > 0.3) {
+      liveClock = 0;
+      if (S.landed) renderTags();
+      if (liveUpdate) liveUpdate(time);
+    }
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+
+  S.mode = laptopMode(0);
+  refreshAll();
+  requestAnimationFrame(frame);
+})();
+
+</script>
+</body>
+</html>

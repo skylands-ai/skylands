@@ -29,5 +29,13 @@ go.work.sum
 .env
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
+
+.DS_Store
+
+
+# Build output
+/skylands
+/bin/
+/dist/
