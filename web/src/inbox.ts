@@ -336,6 +336,7 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
   if (isOpen(x)) foot.appendChild(replyBox(x, { prompt: (text) => actions.prompt(x, text), stop: () => actions.stop(x) }))
   else foot.appendChild(el('p', { class: 'muted', style: 'margin:0;font-size:13px', text: 'This session is over. Start a new one from its terrace in the world.' }))
 
-  const convo = el('section', { class: 'convo', 'aria-label': `${sessionLabel(x)}, with ${name}`, 'data-session': x.id }, [head, body, foot])
+  const hint = isOpen(x) && x.trusted ? el('p', { class: 'trust-hint', text: 'Tool calls in this session run without asking.' }) : null
+  const convo = el('section', { class: 'convo', 'aria-label': `${sessionLabel(x)}, with ${name}`, 'data-session': x.id }, [head, hint, body, foot])
   return convo
 }

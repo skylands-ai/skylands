@@ -159,6 +159,7 @@ button:focus-visible,a:focus-visible{ outline:2px solid var(--accent); outline-o
 .kindchip{ padding:1px 7px; border-radius:999px; background:var(--surface-2); border:1px solid var(--line); font-size:11px; color:var(--muted); font-family:"JetBrains Mono",ui-monospace,monospace; }
 .trust{ display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--muted); cursor:pointer; padding:0 6px; }
 .trust input{ accent-color:#E0B000; width:16px; height:16px; }
+.trust-hint{ margin:0; padding:6px 18px; font-size:13px; color:var(--muted); background:var(--surface); border-bottom:1px solid var(--line); }
 .convo-foot{ padding:12px 18px; background:var(--surface); border-top:1px solid var(--line); }
 .reply{ display:flex; flex-direction:column; gap:8px; }
 .reply textarea{ min-height:72px; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--surface); color:var(--text); font:inherit; font-size:14px; resize:vertical; }
