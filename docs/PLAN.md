@@ -15,6 +15,9 @@ specifies. No events, streams, or aggregates are needed for it.
 - The island part of milestone 4 is done: islands rise with stable placement
   and go grey on a slack tether when unreachable. What remains of milestone 4
   is the terrace, building, airship, and work order code.
+- Milestone 5 is done: `test/e2e` runs hosts coming, going, and restarting,
+  and a NATS restart under a live citadel and daemon. The README has the
+  quickstart, and the browser shows a lost citadel as a dimmed world.
 
 ## What the MVP proves
 

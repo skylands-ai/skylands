@@ -39,7 +39,9 @@ type Config struct {
 	NATSURL string
 	// CredsFile is the path to the daemon's NATS credentials file.
 	CredsFile string
-	// DataDir holds the leaf node's JetStream store and agent worktrees.
+	// DataDir holds the leaf node's JetStream store and agent worktrees. The
+	// leaf store lives under DataDir/leaf/<host>, so daemons for different
+	// hosts can share a DataDir.
 	DataDir string
 	// SocketPath is the Unix socket the local CLI connects to.
 	SocketPath string
@@ -59,7 +61,7 @@ func Run(ctx context.Context, cfg Config) error {
 		Name:      ServiceName + "-" + host,
 		RemoteURL: cfg.NATSURL,
 		CredsFile: cfg.CredsFile,
-		StoreDir:  filepath.Join(cfg.DataDir, "leaf"),
+		StoreDir:  filepath.Join(cfg.DataDir, "leaf", host),
 		Domain:    host,
 	})
 	if err != nil {

@@ -54,6 +54,8 @@ export class World {
   private beaconOn = false
   /** True while the page can't reach the citadel: nothing in the scene is current. */
   private stale = false
+  /** Whether the citadel's crystal, the world's NATS server, is known to be up. */
+  private crystalLit = false
   private time = 0
   private frameNo = 0
   private last = performance.now()
@@ -126,9 +128,14 @@ export class World {
     this.beaconOn = on
   }
 
-  /** Marks the whole scene as the last state heard: the citadel's crystal goes grey and nothing flows. */
+  /** Marks the whole scene as the last state heard: tethers dim and nothing flows. */
   setStale(on: boolean): void {
     this.stale = on
+  }
+
+  /** Lights the crystal under the castle while the citadel reports a live NATS connection. */
+  setCitadelCrystal(lit: boolean): void {
+    this.crystalLit = lit
   }
 
   /** Flies to the whole-world view. */
@@ -234,8 +241,8 @@ export class World {
     this.updateTethers()
 
     const cit = this.citadel
-    // The citadel's crystal is the world's NATS server as this page last heard of it.
-    const known = !this.stale
+    // The citadel's crystal is the world's NATS server as the citadel reports it.
+    const known = this.crystalLit && !this.stale
     cit.core.mat.emissiveIntensity = known ? 1.1 : 0
     cit.core.mat.color.set(known ? 0x7fe0f0 : 0x4a5866)
     cit.core.light.intensity = known ? 1.3 : 0

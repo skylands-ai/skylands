@@ -76,6 +76,7 @@ store.subscribe((s) => {
     world.setLabel('cit', 'Citadel', citadelLabelStatus(s), 0)
     world.setBeacon(false)
     world.setStale(stale)
+    world.setCitadelCrystal(!!s.server?.connected)
   }
 })
 
