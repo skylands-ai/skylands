@@ -67,7 +67,14 @@ export class Store {
   }
 
   private notify(): void {
-    for (const fn of this.listeners) fn(this.state)
+    for (const fn of this.listeners) {
+      try {
+        fn(this.state)
+      } catch (err) {
+        // One broken render must not freeze the page or block the next update.
+        console.error('render failed', err)
+      }
+    }
   }
 }
 

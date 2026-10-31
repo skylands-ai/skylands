@@ -13,11 +13,14 @@ import { FetchCache } from './fetchcache'
 import { renderHeader, type NavActions } from './header'
 import { renderAgentPanel } from './panels/agent'
 import { renderFilePanel } from './panels/file'
+import { refreshTimes } from './panels/parts'
 import { renderIslandPanel } from './panels/island'
 import { renderTerracePanel } from './panels/terrace'
 import { renderWorldPanel } from './panels/world'
 import { citadelLabelStatus, clockText, durationText, islandStatus, isStale, secondsSince } from './status'
 import { islandList, level, reposOn, sessionsOn, Store, type State } from './store'
+import { providerOf } from './world/airship'
+import type { AgentState } from './world/agents'
 import { World } from './world/world'
 import { connectToCitadel } from './ws'
 
@@ -69,7 +72,57 @@ function renderVeil(s: State): void {
   )
 }
 
+/**
+ * What the open panel is built from. The store replaces a record's object
+ * only when that record changes, so comparing these by identity tells
+ * whether the panel needs rebuilding at all.
+ */
+function panelDeps(s: State, stale: boolean): unknown[] {
+  const island = s.selected !== 'cit' ? s.islands[s.selected] : undefined
+  const repo = s.terrace ? s.repos[s.terrace] : undefined
+  switch (level(s)) {
+    case 'agent': {
+      const ag = s.agent ? s.sessions[s.agent] : undefined
+      const fetched = (kind: 'transcript' | 'diff'): unknown[] => {
+        const f = island && ag ? cache.peek(kind, island.host, ag.id) : undefined
+        return [f?.at, f?.loading, f?.error, f?.text]
+      }
+      return ['agent', ag, repo, island, stale, ...fetched('transcript'), ...fetched('diff')]
+    }
+    case 'file':
+      return ['file', repo, island, s.file]
+    case 'terrace':
+      return ['terrace', repo, island, stale, world?.buildingCount(island?.host ?? '', repo?.id ?? ''), ...(repo ? sessionsOn(s, repo.id) : [])]
+    case 'island':
+      return ['island', island, stale, stale ? s.lastContact : 0, ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
+    default:
+      return ['world', s.server, s.link, ...islandList(s)]
+  }
+}
+
+let lastDeps: unknown[] | null = null
+
+/**
+ * Rebuilds the panel when what it shows has changed, and leaves it alone
+ * otherwise. Scroll positions of the panel and of any scrollable box inside
+ * it survive a rebuild, so reading a long response is never interrupted.
+ */
 function renderPanel(s: State, stale: boolean): void {
+  const deps = panelDeps(s, stale)
+  if (lastDeps && lastDeps.length === deps.length && lastDeps.every((d, i) => d === deps[i])) return
+  lastDeps = deps
+  const panelScroll = panelEl.scrollTop
+  const boxScrolls = new Map<string, number>()
+  for (const box of panelEl.querySelectorAll<HTMLElement>('[data-scroll]')) boxScrolls.set(box.dataset.scroll as string, box.scrollTop)
+  renderPanelContent(s, stale)
+  panelEl.scrollTop = panelScroll
+  for (const box of panelEl.querySelectorAll<HTMLElement>('[data-scroll]')) {
+    const top = boxScrolls.get(box.dataset.scroll as string)
+    if (top !== undefined) box.scrollTop = top
+  }
+}
+
+function renderPanelContent(s: State, stale: boolean): void {
   const island = s.selected !== 'cit' ? s.islands[s.selected] : undefined
   const repo = s.terrace ? s.repos[s.terrace] : undefined
   switch (level(s)) {
@@ -90,8 +143,16 @@ function renderPanel(s: State, stale: boolean): void {
     case 'terrace':
       if (island && repo) {
         const shown = world?.buildingCount(island.host, repo.id) ?? repo.files.length
-        renderTerracePanel(panelEl, repo, island, stale, shown, sessionsOn(s, repo.id), (idx) => nav.selectFile(island.host, repo.id, idx), (id) =>
-          nav.selectAgent(island.host, repo.id, id),
+        renderTerracePanel(
+          panelEl,
+          repo,
+          island,
+          stale,
+          shown,
+          sessionsOn(s, repo.id),
+          (idx) => nav.selectFile(island.host, repo.id, idx),
+          (id) => nav.selectAgent(island.host, repo.id, id),
+          () => nav.select(island.host),
         )
         return
       }
@@ -117,6 +178,25 @@ store.subscribe((s) => {
       world.upsertIsland(i.host, i.reachable)
       world.setRepos(i.host, reposOn(s, i.host))
       world.setLabel(i.host, i.host, islandStatus(i, stale), 0)
+      world.setAgents(
+        i.host,
+        Object.values(s.sessions)
+          .filter((x) => x.host === i.host)
+          .map(
+            (x): AgentState => ({
+              id: x.id,
+              terrace: x.repoId,
+              prov: providerOf(x.agent),
+              name: x.agentName ?? x.agent,
+              action: x.currentAction ?? '',
+              status: x.status,
+              file: x.currentFile ?? null,
+              kind: x.currentFile && x.files[x.currentFile] === 'edit' ? 'edit' : 'read',
+              atFile: !!x.recent?.length && !!x.recent[x.recent.length - 1]?.locations?.length,
+              ctx: x.used && x.size ? (x.used / x.size) * 100 : 0,
+            }),
+          ),
+      )
     }
     world.setLabel('cit', 'Citadel', citadelLabelStatus(s), 0)
     world.setBeacon(false)
@@ -131,7 +211,6 @@ store.subscribe((s) => {
 
 if (world) {
   world.onNav = (n) => store.update(n)
-  byId<HTMLButtonElement>('overview').addEventListener('click', nav.overview)
   window.addEventListener('keydown', (e) => {
     const t = e.target as HTMLElement | null
     const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
@@ -140,7 +219,18 @@ if (world) {
   world.start()
 }
 
-// Times in the panel tick.
-setInterval(() => store.touch(), 1000)
+// Times tick in place. Nothing is rebuilt for the clock. A running agent's
+// response and diff are re-fetched every couple of seconds while its panel
+// is open, which rebuilds only when they changed.
+setInterval(() => {
+  const s = store.state
+  refreshTimes(panelEl)
+  if (s.link === 'lost') renderVeil(s)
+  const ag = level(s) === 'agent' && s.agent ? s.sessions[s.agent] : undefined
+  if (ag && ag.status === 'running') {
+    cache.get('transcript', ag.host, ag.id, 2000)
+    cache.get('diff', ag.host, ag.id, 2000)
+  }
+}, 1000)
 
 connectToCitadel(store)

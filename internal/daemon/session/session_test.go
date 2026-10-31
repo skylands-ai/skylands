@@ -151,7 +151,7 @@ func TestStartRunsAnAgentAndRecordsItsEvents(t *testing.T) {
 	if done.ToolCalls[0].Locations[0] != "a.go" || done.ToolCalls[0].Kind != "read" {
 		t.Errorf("first tool call = %+v, want a read of a.go", done.ToolCalls[0])
 	}
-	if b, err := os.ReadFile(filepath.Join(f.cfg.TranscriptsDir, "s1.md")); err != nil || !strings.Contains(string(b), "Done.") {
+	if b, err := os.ReadFile(filepath.Join(f.cfg.TranscriptsDir, "s1.md")); err != nil || !strings.Contains(string(b), "Done. I read 2 files and edited a.go. Every tracked file was counted") {
 		t.Errorf("transcript = %q, %v", b, err)
 	}
 

@@ -18,6 +18,11 @@ export class FetchCache {
 
   constructor(private readonly onChange: () => void) {}
 
+  /** Returns the cached entry without fetching, or undefined when nothing was ever asked for. */
+  peek(kind: 'transcript' | 'diff', host: string, id: string): Fetched | undefined {
+    return this.entries.get(`${kind}/${host}/${id}`)
+  }
+
   /**
    * Returns the cached text for one session's transcript or diff, starting a
    * fetch when there is none or when the entry is older than refreshMs.

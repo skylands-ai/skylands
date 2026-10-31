@@ -1,7 +1,6 @@
-import { el } from '../dom'
 import { base, fmtBytes, sortedFiles } from '../files'
 import type { Island, Repo } from '../protocol'
-import { factsBox, header } from './parts'
+import { backButton, factsBox, header } from './parts'
 
 /** The file-level panel: one building. */
 export function renderFilePanel(panel: HTMLElement, repo: Repo, island: Island, idx: number, back: () => void): void {
@@ -12,6 +11,7 @@ export function renderFilePanel(panel: HTMLElement, repo: Repo, island: Island, 
     return
   }
   panel.appendChild(header(base(f.path), f.path, ['Idle', 'var(--idle)']))
+  panel.appendChild(backButton('repo', repo.name, back))
   panel.appendChild(
     factsBox([
       ['Terrace', `${repo.name} on ${island.host}`],
@@ -19,5 +19,4 @@ export function renderFilePanel(panel: HTMLElement, repo: Repo, island: Island, 
       ['Agents here now', 'None'],
     ]),
   )
-  panel.appendChild(el('button', { type: 'button', class: 'btn ghost', style: 'align-self:flex-start', text: `Back to ${repo.name}`, onclick: back }))
 }

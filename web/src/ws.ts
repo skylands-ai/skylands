@@ -1,6 +1,11 @@
 import type { Island, Message, Repo, Session } from './protocol'
 import type { Store } from './store'
 
+/** Fills in lists an older citadel might send as null, so renderers never check. */
+function normalizeSession(s: Session): Session {
+  return { ...s, recent: s.recent ?? [], files: s.files ?? {}, plan: s.plan ?? [] }
+}
+
 // The browser stays on one citadel through this socket. When it drops, keep
 // trying with a growing delay so a citadel restart heals on its own.
 export function connectToCitadel(store: Store): void {
@@ -23,7 +28,7 @@ export function connectToCitadel(store: Store): void {
           const repos: Record<string, Repo> = {}
           for (const r of m.repos ?? []) repos[r.id] = r
           const sessions: Record<string, Session> = {}
-          for (const x of m.sessions ?? []) sessions[x.id] = x
+          for (const x of m.sessions ?? []) sessions[x.id] = normalizeSession(x)
           store.update({ server: m.server ?? null, islands, repos, sessions })
           break
         }
@@ -37,7 +42,7 @@ export function connectToCitadel(store: Store): void {
           if (m.repo) store.upsertRepo(m.repo)
           break
         case 'session':
-          if (m.session) store.upsertSession(m.session)
+          if (m.session) store.upsertSession(normalizeSession(m.session))
           break
       }
     })

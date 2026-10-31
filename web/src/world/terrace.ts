@@ -23,7 +23,12 @@ export interface TerraceSpec {
 export interface TerraceMeshes {
   group: THREE.Group
   blds: THREE.Mesh[]
+  /** The rope's material, which pulses while the terrace is selected. */
+  rope: THREE.MeshStandardMaterial
 }
+
+/** The rope's resting glow. */
+export const ROPE_GLOW = 0.25
 
 /** One rope color per repo, the same everywhere the repo appears. */
 const ROPE_COLORS = [0xc8553d, 0x3f7cc4, 0x3fa37c, 0x9b6bc8, 0xd9a23b, 0x2e9e57]
@@ -75,10 +80,10 @@ const POST_GEO = new THREE.CylinderGeometry(0.045, 0.06, 0.6, 6)
 const KNOB_GEO = new THREE.SphereGeometry(0.08, 8, 6)
 const FOOT_GEO = new THREE.CylinderGeometry(0.12, 0.14, 0.05, 8)
 
-/** Stanchions with a colored rope around a terrace: the repository boundary. */
-function addStanchions(g: THREE.Group, t: TerraceSpec): void {
+/** Stanchions with a colored rope around a terrace: the repository boundary. Returns the rope's material. */
+function addStanchions(g: THREE.Group, t: TerraceSpec): THREE.MeshStandardMaterial {
   const col = ropeColor(t.id)
-  const ropeMat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.25, roughness: 0.8 })
+  const ropeMat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: ROPE_GLOW, roughness: 0.8 })
   const hx = t.sx / 2 + 0.14
   const hz = t.sz / 2 + 0.14
   const base = 0.35
@@ -116,6 +121,7 @@ function addStanchions(g: THREE.Group, t: TerraceSpec): void {
       g.add(m)
     }
   })
+  return ropeMat
 }
 
 /**
@@ -131,7 +137,7 @@ export function buildTerrace(t: TerraceSpec, seed: number): TerraceMeshes {
   plaza.position.set(t.x, 0.17, t.z)
   plaza.userData.terraceId = t.id
   g.add(plaza)
-  addStanchions(g, t)
+  const rope = addStanchions(g, t)
 
   const cols = Math.max(1, Math.floor((t.sx - 0.5) / CELL))
   const rows = Math.max(1, Math.floor((t.sz - 0.5) / CELL))
@@ -158,11 +164,14 @@ export function buildTerrace(t: TerraceSpec, seed: number): TerraceMeshes {
     // The outline sits a hair outside the faces, so no renderer can hide it.
     const edges = new THREE.LineSegments(G.boxEdges, M.bldEdge)
     edges.scale.setScalar(1.006)
+    // Outlines are not pickable. A line counts as hit anywhere near the ray,
+    // so a neighbor's edge would steal clicks meant for this roof.
+    edges.raycast = () => {}
     b.add(edges)
     g.add(b)
     blds.push(b)
   })
-  return { group: g, blds }
+  return { group: g, blds, rope }
 }
 
 /** Frees a terrace's own geometry. Shared geometry and materials stay. */
@@ -172,5 +181,6 @@ export function disposeTerrace(t: TerraceMeshes): void {
       o.geometry.dispose()
     }
   })
+  t.rope.dispose()
   t.group.parent?.remove(t.group)
 }

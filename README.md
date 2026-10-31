@@ -65,9 +65,11 @@ commands.
 Open a terrace and type a task into the bar at the bottom of the world. The
 order goes straight to that island's daemon, which checks out a git worktree
 of the repository on a `skylands/<session>` branch and runs the agent there.
-The terrace panel shows the agent, what it is reading or editing, and when it
-finishes. Click the agent to read its response and the diff in its
-worktree. Both stay on the host, under `transcripts/` and `worktrees/` in
+An airship rises from the terrace and lands on each file the agent reads or
+edits, lighting the building blue or amber, and red when two sessions are
+on the same file. The terrace panel shows the agent, what it is reading or
+editing, and when it finishes. Click the airship or the agent to follow it
+and read its response and the diff in its worktree. Both stay on the host, under `transcripts/` and `worktrees/` in
 the data directory, and the citadel fetches them only while you look.
 
 Two agents are available. The built-in fake agent reads a few files and

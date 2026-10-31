@@ -1,8 +1,8 @@
 import { el } from '../dom'
 import { fmtBytes, shortCommit, sortedFiles } from '../files'
 import type { Island, Repo, Session } from '../protocol'
-import { agentColor, agoText, sessionStatus } from '../status'
-import { factsBox, header, hint, note, section } from './parts'
+import { agentColor, sessionStatus } from '../status'
+import { backButton, factsBox, header, hint, note, section, timeNode } from './parts'
 
 /** The terrace-level panel: one repository on one host. */
 export function renderTerracePanel(
@@ -14,6 +14,7 @@ export function renderTerracePanel(
   sessions: Session[],
   selectFile: (idx: number) => void,
   selectAgent: (id: string) => void,
+  backToIsland: () => void,
 ): void {
   panel.textContent = ''
   const down = stale || !island.reachable
@@ -29,6 +30,7 @@ export function renderTerracePanel(
           : [sessions.length ? 'No agents running' : 'No agents yet', 'var(--idle)'],
     ),
   )
+  panel.appendChild(backButton('island', island.host, backToIsland))
   if (sessions.length) {
     panel.appendChild(
       section(
@@ -53,13 +55,13 @@ export function renderTerracePanel(
       ),
     )
   }
-  const facts: [string, string][] = [
+  const facts: [string, string | Node][] = [
     ['Path', repo.path],
     ['Commit', shortCommit(repo.commit)],
     ['Tracked files', String(repo.totalFiles)],
   ]
   if (shown < repo.totalFiles) facts.push(['Buildings shown', `${shown} largest`])
-  facts.push(['Registered', agoText(repo.registeredAt)], ['Terrain snapshot', agoText(repo.snapshottedAt)])
+  facts.push(['Registered', timeNode(repo.registeredAt)], ['Terrain snapshot', timeNode(repo.snapshottedAt)])
   panel.appendChild(factsBox(facts))
 
   const files = sortedFiles(repo)

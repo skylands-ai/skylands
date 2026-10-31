@@ -94,7 +94,9 @@ func RunPrompt(ctx context.Context, ad Adapter, cwd, prompt, model string, obs O
 	stderr := &tailBuffer{limit: 4096}
 	cmd.Stderr = stderr
 
-	client, err := acp.Connect(ctx, &acp.CommandTransport{Command: cmd}, &handler{cwd: cwd, obs: obs, calls: map[acp.ToolCallId]ToolCall{}})
+	h := &handler{cwd: cwd, obs: obs, calls: map[acp.ToolCallId]ToolCall{}}
+	h.seq = newSequencer(h.update)
+	client, err := acp.Connect(ctx, &processTransport{cmd: cmd}, h)
 	if err != nil {
 		return "", fmt.Errorf("start %s agent: %w", ad.Name, err)
 	}
@@ -135,11 +137,19 @@ func RunPrompt(ctx context.Context, ad Adapter, cwd, prompt, model string, obs O
 type handler struct {
 	cwd   string
 	obs   Observer
+	seq   *sequencer
 	mu    sync.Mutex
 	calls map[acp.ToolCallId]ToolCall
 }
 
+// Update receives session updates, possibly concurrently and out of order,
+// and lets the sequencer hand them on in the order the agent sent them.
 func (h *handler) Update(_ context.Context, n *acp.SessionNotification) error {
+	h.seq.Deliver(n)
+	return nil
+}
+
+func (h *handler) update(n *acp.SessionNotification) {
 	u := n.Update
 	switch u.SessionUpdate {
 	case acp.SessionUpdateTypeToolCall, acp.SessionUpdateTypeToolCallUpdate:
@@ -176,7 +186,6 @@ func (h *handler) Update(_ context.Context, n *acp.SessionNotification) error {
 			h.obs.Message(text)
 		}
 	}
-	return nil
 }
 
 // RequestPermission allows every tool call for now. Rules and signed

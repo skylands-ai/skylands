@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { G, M } from './materials'
 import { ringNoise } from './noise'
-import { crenelRing, crenelSquare, crystalAt, slit, underside, type Crystal } from './shapes'
+import { crenelRing, crenelSquare, crystalAt, selectionRing, slit, underside, type Crystal } from './shapes'
 
 export interface Citadel {
   group: THREE.Group
@@ -11,8 +11,8 @@ export interface Citadel {
   beacon: THREE.Mesh
   halo: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
   light: THREE.PointLight
-  /** The selection ring around the castle. */
-  ring: THREE.Mesh
+  /** The selection ring around the castle. It turns slowly while visible. */
+  ring: THREE.Group
   /** Height above the group where its label floats. */
   labelY: number
 }
@@ -124,10 +124,8 @@ export function buildCitadel(): Citadel {
   g.add(bl)
 
   const core = crystalAt(g, -1.6 - 12 - 1.8, 1.7)
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(10, 0.1, 6, 96), M.ring)
-  ring.rotation.x = Math.PI / 2
+  const ring = selectionRing(10, 0.1)
   ring.position.y = 0.1
-  ring.visible = false
   g.add(ring)
   return { group: g, core, beacon, halo, light: bl, ring, labelY: top + 3 }
 }

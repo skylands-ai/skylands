@@ -35,6 +35,16 @@ specifies. No events, streams, or aggregates are needed for it.
   shows. Two adapters exist: the built-in fake agent and Claude Code through
   its npm ACP adapter. Permissions are auto-allowed until milestone 7.
   Dispatch rules, SendPrompt, and Claude Code hooks are deferred.
+- Milestone 6b is done: airships. Each running session is an airship on its
+  terrace, hull and color by provider. It takes off from the terrace, flies
+  to the building of the file the agent is on, sits on its roof, and lights
+  it blue for a read or amber for an edit, red with a "2 sessions" tag when
+  two sessions share it. Files without a building are worked from a slow
+  circle over the terrace. Altitude and sandbags follow context use. A
+  finished session's airship lifts away and fades. The agent level follows
+  the airship, and the agent panel shows the plan, activity, response, and
+  worktree diff fetched from the host. Compaction puffs and subagent leashes
+  wait for their events.
 
 ## After the MVP
 

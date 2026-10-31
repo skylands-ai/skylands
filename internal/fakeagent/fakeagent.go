@@ -189,10 +189,24 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	if edited != "" {
 		msg += " and edited " + edited
 	}
-	if err := send(acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(msg + "."))); err != nil {
-		return nil, err
+	msg += ". Every tracked file was counted, every hidden one was skipped, and nothing was changed on disk."
+	// Stream the answer in small chunks with no pause, as real agents do.
+	for _, chunk := range chunks(msg, 6) {
+		if err := send(acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(chunk))); err != nil {
+			return nil, err
+		}
 	}
 	return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
+}
+
+// chunks splits s into pieces of about n bytes.
+func chunks(s string, n int) []string {
+	var out []string
+	for len(s) > n {
+		out = append(out, s[:n])
+		s = s[n:]
+	}
+	return append(out, s)
 }
 
 func toolCall(id acp.ToolCallId, title string, kind acp.ToolKind, path string, status acp.ToolCallStatus) acp.SessionUpdate {

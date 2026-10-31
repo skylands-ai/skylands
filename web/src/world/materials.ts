@@ -18,7 +18,8 @@ export const M = {
   bldEdit: std(0xf4e7c2, { emissive: 0x8a6a20, emissiveIntensity: 0.6, ...offset }),
   bldRead: std(0xdce8f4, { emissive: 0x2f5f95, emissiveIntensity: 0.45, ...offset }),
   bldConflict: std(0xf3c6be, { emissive: 0xa8352a, emissiveIntensity: 0.7, ...offset }),
-  bldFocus: std(0xffffff, { emissive: 0x555555, emissiveIntensity: 0.5, ...offset }),
+  /** The selected building: a cool glow that breathes, distinct from the read, edit, and conflict colors. */
+  bldSelected: std(0xf4fbfd, { emissive: 0x3fc9e0, emissiveIntensity: 0.5, ...offset }),
   /** The single-stroke outline on every building edge. */
   bldEdge: new THREE.LineBasicMaterial({ color: 0x4a4238, transparent: true, opacity: 0.6 }),
   trunk: std(0x6b4a30),

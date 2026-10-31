@@ -1,25 +1,34 @@
 import * as THREE from 'three'
-import { el, reduceMotion } from '../dom'
-import { base } from '../files'
+import { css, el, reduceMotion } from '../dom'
 import type { Repo } from '../protocol'
 import { level, type Nav } from '../store'
+import { Agents, bldWorld, refreshBuilding, type AgentState, type TerraceAccess } from './agents'
 import { CameraRig, HOME } from './camera'
 import { buildCitadel, type Citadel } from './citadel'
 import { attachPointerInput } from './input'
 import { buildIsland } from './island'
 import { Labels } from './labels'
+import { M } from './materials'
 import { placeIsland, type Placement } from './placement'
 import type { Crystal } from './shapes'
 import { Sky } from './sky'
-import { buildTerrace, disposeTerrace, layoutTerraces, type TerraceMeshes, type TerraceSpec } from './terrace'
+import { buildTerrace, disposeTerrace, layoutTerraces, ROPE_GLOW, type TerraceMeshes, type TerraceSpec } from './terrace'
 import { Tethers } from './tethers'
 
 /** Text and a CSS color for a status dot. */
 export type Status = [text: string, color: string]
 
+/** Whether an object and all its ancestors are visible. */
+function isDrawn(o: THREE.Object3D | null): boolean {
+  for (; o; o = o.parent) if (!o.visible) return false
+  return true
+}
+
 interface TerraceView {
   spec: TerraceSpec
   meshes: TerraceMeshes
+  /** Building index by repo-relative path, for the files that got one. */
+  pathIdx: Map<string, number>
 }
 
 interface IslandView {
@@ -27,7 +36,7 @@ interface IslandView {
   def: Placement
   group: THREE.Group
   core: Crystal
-  ring: THREE.Mesh
+  ring: THREE.Group
   pos: THREE.Vector3
   /** 0 while reachable, easing to 1 while the citadel can't reach the host. */
   drift: number
@@ -43,6 +52,7 @@ interface Pick {
   host: string
   terrace: string | null
   bld: number | null
+  agent: string | null
   point: THREE.Vector3
 }
 
@@ -68,7 +78,9 @@ export class World {
   private readonly tethers: Tethers
   private readonly labels: Labels
   private readonly citLabel: HTMLButtonElement
-  private readonly fileTag: HTMLSpanElement
+  private readonly agents: Agents
+  /** The building currently pulsing as selected, so it can get its normal color back. */
+  private selectedBld: THREE.Mesh | null = null
   private readonly islands = new Map<string, IslandView>()
   private readonly pickRoots: THREE.Object3D[] = []
   private readonly raycaster = new THREE.Raycaster()
@@ -97,8 +109,8 @@ export class World {
     this.pickRoots.push(this.citadel.group)
     this.labels = new Labels(labelsEl, stage, this.rig.camera)
     this.citLabel = this.labels.create(() => this.select('cit'))
-    this.fileTag = el('span', { class: 'ftag', 'aria-hidden': 'true' })
-    labelsEl.appendChild(this.fileTag)
+    this.agents = new Agents(labelsEl, this.labels, (host, terrace) => this.terraceAccess(host, terrace))
+    this.agents.onPick = (host, terrace, id) => this.selectAgent(host, terrace, id)
 
     if (window.ResizeObserver) new ResizeObserver(() => this.resize()).observe(stage)
     window.addEventListener('resize', () => this.resize())
@@ -158,7 +170,10 @@ export class World {
     specs.forEach((spec, k) => {
       const meshes = buildTerrace(spec, isl.def.seed * 31 + k)
       isl.group.add(meshes.group)
-      isl.terraces.set(spec.id, { spec, meshes })
+      const pathIdx = new Map<string, number>()
+      meshes.blds.forEach((_, i) => pathIdx.set(spec.files[i].path, i))
+      isl.terraces.set(spec.id, { spec, meshes, pathIdx })
+      this.agents.terraceRebuilt(host, spec.id)
     })
     // Scenery was placed before the terraces existed, so clear what they cover.
     for (const o of isl.group.children) {
@@ -172,6 +187,18 @@ export class World {
   /** How many buildings a terrace shows, which can be fewer than the repo's files. */
   buildingCount(host: string, terrace: string): number {
     return this.islands.get(host)?.terraces.get(terrace)?.meshes.blds.length ?? 0
+  }
+
+  /** Gives a host's agents their airships, and takes them away as sessions end. */
+  setAgents(host: string, states: AgentState[]): void {
+    this.agents.set(host, states)
+  }
+
+  private terraceAccess(host: string, terrace: string): TerraceAccess | undefined {
+    const isl = this.islands.get(host)
+    const t = isl?.terraces.get(terrace)
+    if (!isl || !t) return undefined
+    return { island: isl.group, blds: t.meshes.blds, pathIdx: t.pathIdx, center: { x: t.spec.x, z: t.spec.z } }
   }
 
   /** Fills the floating label of the citadel or an island. */
@@ -227,13 +254,15 @@ export class World {
     this.rig.flyTo(this.terraceWorld(isl, t), Math.max(t.spec.sx, t.spec.sz) * 1.6 + 6, isl.def.angle, 0.92)
   }
 
-  /** Follows one agent on a terrace. Until airships exist, that is the terrace view. */
+  /** Follows one agent's airship, close up. Without an airship it is the terrace view. */
   selectAgent(host: string, terrace: string, agent: string): void {
     const isl = this.islands.get(host)
     const t = isl?.terraces.get(terrace)
     if (!isl || !t) return
     this.setNav({ selected: host, terrace, file: null, agent })
-    this.rig.flyTo(this.terraceWorld(isl, t), Math.max(t.spec.sx, t.spec.sz) * 1.4 + 5, isl.def.angle, 0.95)
+    const target = new THREE.Vector3()
+    if (this.agents.position(agent, target)) this.rig.flyTo(target, 9, null, 0.95)
+    else this.rig.flyTo(this.terraceWorld(isl, t), Math.max(t.spec.sx, t.spec.sz) * 1.4 + 5, isl.def.angle, 0.95)
   }
 
   /** Flies up close to one building. */
@@ -277,6 +306,10 @@ export class World {
     if (!p) return
     if (p.host === 'cit') {
       this.select('cit')
+      return
+    }
+    if (p.agent && p.terrace) {
+      this.selectAgent(p.host, p.terrace, p.agent)
       return
     }
     const sameHost = this.nav.selected === p.host
@@ -335,10 +368,18 @@ export class World {
     this.ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1)
     this.raycaster.setFromCamera(this.ndc, this.rig.camera)
     for (const hit of this.raycaster.intersectObjects(this.pickRoots, true)) {
-      const res: Pick = { host: '', terrace: null, bld: null, point: hit.point }
+      // Hidden things still intersect the ray in this three.js, such as the
+      // trees a terrace covers, which would hand a building's click to the
+      // island. Skip anything not drawn.
+      if (!isDrawn(hit.object)) continue
+      const res: Pick = { host: '', terrace: null, bld: null, agent: null, point: hit.point }
       let o: THREE.Object3D | null = hit.object
       while (o) {
         const u = o.userData
+        if (u.agentId && !res.agent) {
+          res.agent = u.agentId as string
+          res.terrace = u.terraceId as string
+        }
         if (u.bldIdx !== undefined && res.bld === null) {
           res.bld = u.bldIdx as number
           res.terrace = u.terraceId as string
@@ -352,6 +393,38 @@ export class World {
       }
     }
     return null
+  }
+
+  /** A visible selection turns its ring slowly through drifting hues, and a selected terrace's rope pulses. */
+  private animateSelection(dt: number): void {
+    const spin = reduceMotion ? 0 : dt * 0.35
+    // The rings share one material. A pastel hue sweeps round every fifteen
+    // seconds or so, which keeps the ring lively without shouting.
+    if (reduceMotion) M.ring.color.set(css('--accent', '#2D5BC7'))
+    else M.ring.color.setHSL((this.time * 0.065) % 1, 0.7, 0.72)
+    if (this.citadel.ring.visible) this.citadel.ring.rotation.z += spin
+    const n = this.nav
+    // The selected building breathes. Any other state it had, such as an
+    // agent reading it, comes back the moment it is deselected.
+    const focused = n.file !== null && n.terrace ? this.islands.get(n.selected) : undefined
+    const b = (focused && n.terrace ? focused.terraces.get(n.terrace)?.meshes.blds[n.file as number] : undefined) ?? null
+    if (this.selectedBld && this.selectedBld !== b) {
+      this.selectedBld.material = M.bld
+      refreshBuilding(this.selectedBld)
+    }
+    this.selectedBld = b
+    if (b) {
+      if (b.material !== M.bldSelected) b.material = M.bldSelected
+      M.bldSelected.emissiveIntensity = reduceMotion ? 0.55 : 0.4 + 0.35 * Math.sin(this.time * 2.6)
+    }
+    for (const isl of this.islands.values()) {
+      if (isl.ring.visible) isl.ring.rotation.z += spin
+      for (const t of isl.terraces.values()) {
+        const selected = isl.id === n.selected && t.spec.id === n.terrace
+        const glow = selected ? (reduceMotion ? 0.7 : 0.45 + 0.4 * Math.sin(this.time * 2.6)) : ROPE_GLOW
+        if (t.meshes.rope.emissiveIntensity !== glow) t.meshes.rope.emissiveIntensity = glow
+      }
+    }
   }
 
   /** Moves each island toward its place, out and down while unreachable, and lights its crystal. */
@@ -395,6 +468,7 @@ export class World {
     if (!isl) return
     const t = n.terrace ? isl.terraces.get(n.terrace) : undefined
     const b = t && n.file !== null ? t.meshes.blds[n.file] : undefined
+    if (n.agent && this.agents.position(n.agent, this.rig.want.target)) return
     if (b) this.rig.want.target.copy(bldWorld(b))
     else if (t) this.rig.want.target.copy(this.terraceWorld(isl, t))
     else this.rig.want.target.set(isl.pos.x, isl.pos.y + 1.5, isl.pos.z)
@@ -408,12 +482,7 @@ export class World {
       if (deep && isl.id === n.selected) this.labels.hide(isl.label)
       else this.labels.placeAt(isl.label, isl.pos, 5.5)
     }
-    const b = n.file !== null && n.terrace ? this.islands.get(n.selected)?.terraces.get(n.terrace)?.meshes.blds[n.file] : undefined
-    if (b) {
-      const txt = base(b.userData.file as string)
-      if (this.fileTag.textContent !== txt) this.fileTag.textContent = txt
-      this.labels.placeAt(this.fileTag, bldWorld(b), 0, true)
-    } else this.labels.hide(this.fileTag)
+    this.agents.placeTags(deep ? { host: n.selected, terrace: n.terrace as string } : null, n.agent, n.file)
   }
 
   private frame(now: number): void {
@@ -424,7 +493,9 @@ export class World {
 
     this.updateIslands(dt)
     this.updateTethers()
+    this.agents.update(dt, this.time)
     this.trackTarget()
+    this.animateSelection(dt)
 
     const cit = this.citadel
     // The citadel's crystal is the world's NATS server as the citadel reports it.
@@ -447,7 +518,3 @@ export class World {
   }
 }
 
-/** The world position of a building's roof. */
-function bldWorld(b: THREE.Mesh): THREE.Vector3 {
-  return (b.parent as THREE.Object3D).localToWorld(new THREE.Vector3(b.position.x, b.userData.top as number, b.position.z))
-}

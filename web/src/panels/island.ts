@@ -1,7 +1,7 @@
 import { el } from '../dom'
 import type { Island, Repo, Session } from '../protocol'
-import { agoText, clockText, islandStatus, upText } from '../status'
-import { factsBox, header, note, section } from './parts'
+import { clockText, islandStatus } from '../status'
+import { factsBox, header, note, section, timeNode } from './parts'
 
 /** The island-level panel: one host, as the citadel last heard it. */
 export function renderIslandPanel(
@@ -26,16 +26,17 @@ export function renderIslandPanel(
       factsBox([
         ['Link, as last heard', i.reachable ? 'Connected' : 'Unreachable'],
         ['Daemon, as last reported', `skylands ${d.version}`],
-        ['Last heard by the citadel', agoText(i.lastSeen)],
+        ['Last heard by the citadel', timeNode(i.lastSeen)],
       ]),
     )
   } else if (i.reachable) {
+    const daemon = el('span', {}, [`skylands ${d.version}, `, timeNode(d.started, 'up')])
     panel.appendChild(
       factsBox([
         ['Link', 'Connected'],
-        ['Daemon', `skylands ${d.version}, ${upText(d.started)}`],
-        ['First seen', agoText(i.firstSeen)],
-        ['Last heard', agoText(i.lastSeen)],
+        ['Daemon', daemon],
+        ['First seen', timeNode(i.firstSeen)],
+        ['Last heard', timeNode(i.lastSeen)],
       ]),
     )
   } else {
@@ -46,9 +47,9 @@ export function renderIslandPanel(
     )
     panel.appendChild(
       factsBox([
-        ['Last heard', agoText(i.lastSeen)],
+        ['Last heard', timeNode(i.lastSeen)],
         ['Daemon, as last reported', `skylands ${d.version}`],
-        ['First seen', agoText(i.firstSeen)],
+        ['First seen', timeNode(i.firstSeen)],
       ]),
     )
   }

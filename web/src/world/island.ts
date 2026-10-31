@@ -2,14 +2,14 @@ import * as THREE from 'three'
 import { G, M } from './materials'
 import { ringNoise, rng } from './noise'
 import type { Placement } from './placement'
-import { crystalAt, SLAB, slabGeo, underside, type Crystal } from './shapes'
+import { crystalAt, selectionRing, SLAB, slabGeo, underside, type Crystal } from './shapes'
 
 export interface IslandMeshes {
   group: THREE.Group
   /** The daemon as the citadel last heard it: lit while reachable, grey while it can't tell. */
   core: Crystal
-  /** The selection ring around the island. */
-  ring: THREE.Mesh
+  /** The selection ring around the island. It turns slowly while visible. */
+  ring: THREE.Group
 }
 
 /**
@@ -78,10 +78,8 @@ export function buildIsland(id: string, h: Placement): IslandMeshes {
     g.add(stream)
   }
 
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(h.R * 1.18, 0.09, 6, 96), M.ring)
-  ring.rotation.x = Math.PI / 2
+  const ring = selectionRing(h.R * 1.18, 0.09)
   ring.position.y = 0.15
-  ring.visible = false
   g.add(ring)
   return { group: g, core, ring }
 }

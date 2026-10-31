@@ -46,7 +46,7 @@ type Session struct {
 	// Files maps each file the session touched to the kind of its last
 	// touch, such as read or edit.
 	Files map[string]string `json:"files"`
-	Plan  []v1.PlanEntry    `json:"plan,omitempty"`
+	Plan  []v1.PlanEntry    `json:"plan"`
 	Used  uint64            `json:"used,omitempty"`
 	Size  uint64            `json:"size,omitempty"`
 }
@@ -184,13 +184,16 @@ func (p *Sessions) List() []Session {
 	return out
 }
 
+// cloneSession copies a session for callers. Its slices and map are never
+// nil, so they encode as [] and {} rather than null, which browsers can
+// index without checking.
 func cloneSession(s *Session) Session {
 	c := *s
-	c.Recent = append([]ToolCall(nil), s.Recent...)
+	c.Recent = append(make([]ToolCall, 0, len(s.Recent)), s.Recent...)
 	c.Files = make(map[string]string, len(s.Files))
 	for k, v := range s.Files {
 		c.Files[k] = v
 	}
-	c.Plan = append([]v1.PlanEntry(nil), s.Plan...)
+	c.Plan = append(make([]v1.PlanEntry, 0, len(s.Plan)), s.Plan...)
 	return c
 }

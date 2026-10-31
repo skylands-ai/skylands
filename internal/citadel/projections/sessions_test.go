@@ -1,10 +1,30 @@
 package projections
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
 )
+
+func TestEmptySessionEncodesLists(t *testing.T) {
+	p := NewSessions(nil)
+	ev, _ := v1.NewEvent(v1.EventSessionStarted, "c", v1.SessionStarted{SessionID: "s1", RepoID: "r1", Agent: "fake"})
+	p.Apply("ws", ev)
+	data, err := json.Marshal(p.List()[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"recent":[]`, `"files":{}`, `"plan":[]`} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("session JSON lacks %s: %s", want, data)
+		}
+	}
+	if strings.Contains(string(data), "null") {
+		t.Errorf("session JSON has a null: %s", data)
+	}
+}
 
 func TestSessionsFollowSessionEvents(t *testing.T) {
 	var changes int

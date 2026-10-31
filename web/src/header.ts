@@ -1,5 +1,6 @@
 import { el } from './dom'
 import { base, sortedFiles } from './files'
+import { placeIcon, type Place } from './panels/parts'
 import { islandCounts, isStale } from './status'
 import { level, type State } from './store'
 
@@ -10,12 +11,12 @@ export interface NavActions {
   selectAgent(host: string, terrace: string, agent: string): void
 }
 
-function crumbBtn(text: string, fn: () => void): HTMLElement {
-  return el('button', { type: 'button', class: 'btn small', text, onclick: fn })
+function crumbBtn(text: string, fn: () => void, place?: Place): HTMLElement {
+  return el('button', { type: 'button', class: 'btn small', onclick: fn }, [place ? placeIcon(place) : null, text])
 }
 
-function current(text: string): HTMLElement {
-  return el('span', { style: 'font-weight:600', 'aria-current': 'page', text })
+function current(text: string, place?: Place): HTMLElement {
+  return el('span', { style: 'font-weight:600;display:inline-flex;align-items:center;gap:6px', 'aria-current': 'page' }, [place ? placeIcon(place) : null, text])
 }
 
 function sep(): HTMLElement {
@@ -27,21 +28,23 @@ export function renderHeader(crumbs: HTMLElement, connected: HTMLElement, link: 
   crumbs.textContent = ''
   const l = level(s)
   if (l === 'world') {
-    crumbs.appendChild(el('span', { class: 'btn small', 'aria-current': 'page', text: 'World' }))
+    const world = crumbBtn('World', nav.overview, 'world')
+    world.setAttribute('aria-current', 'page')
+    crumbs.appendChild(world)
   } else {
-    crumbs.appendChild(crumbBtn('World', nav.overview))
+    crumbs.appendChild(crumbBtn('World', nav.overview, 'world'))
     crumbs.appendChild(sep())
     const host = s.selected
-    if (l === 'island') crumbs.appendChild(current(host))
+    if (l === 'island') crumbs.appendChild(current(host, 'island'))
     else {
-      crumbs.appendChild(crumbBtn(host, () => nav.select(host)))
+      crumbs.appendChild(crumbBtn(host, () => nav.select(host), 'island'))
       crumbs.appendChild(sep())
       const repo = s.terrace ? s.repos[s.terrace] : undefined
       const tname = repo?.name ?? 'terrace'
-      if (l === 'terrace') crumbs.appendChild(current(tname))
+      if (l === 'terrace') crumbs.appendChild(current(tname, 'repo'))
       else {
         const tid = s.terrace as string
-        crumbs.appendChild(crumbBtn(tname, () => nav.land(host, tid)))
+        crumbs.appendChild(crumbBtn(tname, () => nav.land(host, tid), 'repo'))
         crumbs.appendChild(sep())
         if (l === 'agent') {
           const ag = s.agent ? s.sessions[s.agent] : undefined
