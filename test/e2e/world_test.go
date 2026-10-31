@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	v1 "github.com/skylands-ai/skylands/api/v1"
 	"github.com/skylands-ai/skylands/internal/citadel"
 	"github.com/skylands-ai/skylands/internal/citadel/projections"
 	"github.com/skylands-ai/skylands/internal/citadel/web"
@@ -129,7 +131,10 @@ func (w *world) startDaemonWithSocket(host, socketPath string) (stop func()) {
 
 // browser is a WebSocket client that keeps the same state a page would.
 type browser struct {
+	c         *websocket.Conn
+	ctx       context.Context
 	mu        sync.Mutex
+	live      []v1.Live
 	server    web.ServerInfo
 	islands   map[string]projections.Island
 	repos     map[string]projections.Repo
@@ -145,7 +150,7 @@ func (w *world) openBrowser() *browser {
 		w.t.Fatalf("dial: %v", err)
 	}
 	w.t.Cleanup(func() { _ = c.CloseNow() })
-	b := &browser{islands: map[string]projections.Island{}, repos: map[string]projections.Repo{}, sessions: map[string]projections.Session{}}
+	b := &browser{c: c, ctx: w.ctx, islands: map[string]projections.Island{}, repos: map[string]projections.Repo{}, sessions: map[string]projections.Session{}}
 	go func() {
 		for {
 			_, data, err := c.Read(w.ctx)
@@ -161,6 +166,10 @@ func (w *world) openBrowser() *browser {
 			}
 			b.mu.Lock()
 			switch m.Type {
+			case "live":
+				if m.Live != nil {
+					b.live = append(b.live, *m.Live)
+				}
 			case "snapshot":
 				b.snapshots++
 				b.islands = map[string]projections.Island{}
@@ -199,6 +208,25 @@ func (w *world) openBrowser() *browser {
 		}
 	}()
 	return b
+}
+
+// watch asks the citadel for one session's transcript as it is written.
+func (b *browser) watch(host, id string) error {
+	data, _ := json.Marshal(web.Inbound{Type: "watch", Host: host, ID: id})
+	return b.c.Write(b.ctx, websocket.MessageText, data)
+}
+
+// liveText is everything heard live so far, in order of offset.
+func (b *browser) liveText() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	lives := append([]v1.Live(nil), b.live...)
+	sort.Slice(lives, func(i, j int) bool { return lives[i].Off < lives[j].Off })
+	var sb strings.Builder
+	for _, l := range lives {
+		sb.WriteString(l.Text)
+	}
+	return sb.String()
 }
 
 type view struct {
@@ -493,11 +521,24 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 		t.Errorf("activity: recent=%+v files=%v current=%q used=%d", s.Recent, s.Files, s.CurrentFile, s.Used)
 	}
 
-	// The conversation continues with another prompt, then stops.
+	// A browser reading the conversation hears the next turn as it is written.
+	if err := b.watch("ws", id); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
 	if code, out := post2("/api/sessions/ws/"+id+"/prompt", `{"text":"now make it smaller"}`); code != http.StatusOK {
 		t.Fatalf("prompt: %d %v", code, out)
 	}
 	b.wait(t, "the second turn to end", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "idle" && s.Turns == 2 })
+	for deadline := time.Now().Add(5 * time.Second); !strings.Contains(b.liveText(), "Done with \"now make it smaller\""); {
+		if time.Now().After(deadline) {
+			t.Fatalf("live text never carried the answer: %q", b.liveText())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if live := b.liveText(); !strings.HasPrefix(live, "## You\n\nnow make it smaller") || !strings.Contains(live, "\u2699 Read") {
+		t.Errorf("live text = %q", live)
+	}
 	v = b.wait(t, "the agent to name the conversation", 15*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Title != "" })
 	if v.sessions[id].Title != "Make it faster" {
 		t.Errorf("title = %q", v.sessions[id].Title)

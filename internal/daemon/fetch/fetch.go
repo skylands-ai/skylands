@@ -71,7 +71,7 @@ func (r *Responder) Handle(ctx context.Context, msg *nats.Msg) {
 		r.reply(msg, v1.Reply{Error: err.Error()})
 		return
 	}
-	res := v1.TextResult{Text: text}
+	res := v1.TextResult{Text: text, Length: int64(len(text))}
 	if len(res.Text) > MaxBytes {
 		res.Text, res.Truncated = res.Text[:MaxBytes], true
 	}

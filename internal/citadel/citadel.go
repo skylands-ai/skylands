@@ -9,9 +9,12 @@ package citadel
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -74,7 +77,7 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("web client: %w", err)
 	}
-	c.web = web.New(web.Config{Addr: cfg.HTTPAddr, Snapshot: c.snapshot, Dist: dist, API: c.api()})
+	c.web = web.New(web.Config{Addr: cfg.HTTPAddr, Snapshot: c.snapshot, Dist: dist, API: c.api(), Live: c.live})
 
 	opts := []nats.Option{
 		nats.Name("skylands-citadel"),
@@ -114,6 +117,35 @@ func Run(ctx context.Context, cfg Config) error {
 
 // snapshot is the world as this citadel sees it, sent to each browser as it
 // connects.
+// live relays one session's transcript appends from its island to a
+// browser, for as long as the browser watches.
+func (c *citadel) live(host, id string, deliver func(v1.Live)) (func(), error) {
+	if !plainToken(host) || !plainToken(id) {
+		return nil, errors.New("not a session")
+	}
+	c.mu.Lock()
+	nc := c.nc
+	c.mu.Unlock()
+	if nc == nil {
+		return nil, errors.New("not connected to NATS")
+	}
+	sub, err := nc.Subscribe(v1.SessionLiveSubject(host, id), func(m *nats.Msg) {
+		var l v1.Live
+		if json.Unmarshal(m.Data, &l) == nil {
+			deliver(l)
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	return func() { _ = sub.Unsubscribe() }, nil
+}
+
+// plainToken is true for a subject token with no wildcards or separators.
+func plainToken(s string) bool {
+	return s != "" && !strings.ContainsAny(s, ".*> \t\r\n")
+}
+
 func (c *citadel) snapshot() web.Message {
 	info := c.serverInfo()
 	return web.Message{Type: "snapshot", Server: &info, Islands: c.islands.List(), Repos: c.terrain.List(), Sessions: c.sessions.List()}

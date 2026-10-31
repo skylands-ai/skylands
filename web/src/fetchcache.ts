@@ -1,7 +1,11 @@
+import { byteLength } from './live'
+
 /** One fetched text, such as a session's transcript or diff. */
 export interface Fetched {
   text: string
   truncated: boolean
+  /** The whole text's length in bytes on the host, even when truncated. */
+  length: number
   error?: string
   loading: boolean
   /** When it was last fetched, in ms since the epoch, or 0 before the first fetch. */
@@ -33,7 +37,7 @@ export class FetchCache {
     const key = `${kind}/${host}/${id}`
     let e = this.entries.get(key)
     if (!e) {
-      e = { text: '', truncated: false, loading: false, at: 0 }
+      e = { text: '', truncated: false, length: 0, loading: false, at: 0 }
       this.entries.set(key, e)
     }
     const stale = e.at === 0 || e.at < since || (refreshMs > 0 && Date.now() - e.at > refreshMs)
@@ -47,12 +51,13 @@ export class FetchCache {
   private async load(kind: string, host: string, id: string, e: Fetched): Promise<void> {
     try {
       const resp = await fetch(`/api/sessions/${encodeURIComponent(host)}/${encodeURIComponent(id)}/${kind}`)
-      const body = (await resp.json().catch(() => ({}))) as { text?: string; truncated?: boolean; error?: string }
+      const body = (await resp.json().catch(() => ({}))) as { text?: string; truncated?: boolean; length?: number; error?: string }
       if (!resp.ok) {
         e.error = body.error ?? `The citadel answered ${resp.status}.`
       } else {
         e.text = body.text ?? ''
         e.truncated = !!body.truncated
+        e.length = body.length ?? byteLength(e.text)
         e.error = undefined
       }
     } catch (err) {

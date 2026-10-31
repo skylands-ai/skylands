@@ -107,6 +107,7 @@ func Run(ctx context.Context, cfg Config) error {
 		TranscriptsDir: transcriptsDir,
 		Registry:       cfg.Adapters,
 		Repos:          agg,
+		Publish:        nc.Publish,
 	})
 	if err != nil {
 		return err

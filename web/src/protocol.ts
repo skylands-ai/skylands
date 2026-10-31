@@ -92,8 +92,17 @@ export interface Session {
   size?: number
 }
 
+/** One piece of text appended to a transcript, at byte offset off. */
+export interface Live {
+  off: number
+  text: string
+}
+
 export interface Message {
   type: string
+  host?: string
+  id?: string
+  live?: Live
   server?: ServerInfo
   islands?: Island[]
   island?: Island

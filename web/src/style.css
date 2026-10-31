@@ -128,7 +128,10 @@ button:focus-visible,a:focus-visible{ outline:2px solid var(--accent); outline-o
 .msg.you{ align-self:flex-end; align-items:flex-end; }
 .msg.you .body{ background:var(--accent-bg); border-color:transparent; white-space:pre-wrap; }
 .msg.agent{ align-self:flex-start; }
-.msg.live .body{ color:var(--muted); font-style:italic; }
+.msg.live .body.quiet{ color:var(--muted); font-style:italic; }
+.toolchip{ display:inline-flex; align-items:center; gap:6px; margin:2px 0 10px; padding:3px 9px; border-radius:999px; background:var(--surface-2); border:1px solid var(--line); font-size:12px; color:var(--muted); font-family:"JetBrains Mono",ui-monospace,monospace; }
+.toolchip::before{ content:"\2699"; font-family:Barlow,sans-serif; }
+.md .toolchip + *{ margin-top:0; }
 .md p{ margin:0 0 10px; white-space:pre-wrap; }
 .md > :last-child{ margin-bottom:0; }
 .md pre{ margin:0 0 10px; padding:10px 12px; border-radius:8px; background:var(--surface-2); overflow:auto; }

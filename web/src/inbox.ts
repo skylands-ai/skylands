@@ -1,5 +1,6 @@
 import { el } from './dom'
 import type { FetchCache } from './fetchcache'
+import type { LiveText } from './live'
 import { renderMarkdown } from './markdown'
 import { agentGlyph, timeNode } from './panels/parts'
 import type { Session } from './protocol'
@@ -27,9 +28,16 @@ let lastDeps: unknown[] | null = null
  * shows has changed. Scroll positions survive a rebuild, and the
  * conversation stays pinned to its end while it was there.
  */
-export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, actions: InboxActions): void {
+export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live: LiveText, actions: InboxActions): void {
   const open = s.inbox ? s.sessions[s.inbox] : undefined
-  const fetched = open ? cache.get('transcript', open.host, open.id, open.status === 'running' ? 2000 : 0, Date.parse(open.updatedAt)) : undefined
+  // While a turn runs the live feed carries the transcript, with a slow
+  // re-read as a safety net. Once the turn is over it is read again, so
+  // what stays on screen is the file and not the feed.
+  const fetched = open
+    ? open.status === 'running'
+      ? cache.get('transcript', open.host, open.id, 15000)
+      : cache.get('transcript', open.host, open.id, 0, Date.parse(open.updatedAt))
+    : undefined
   const deps = [s.sessions, s.repos, s.viewed, s.inbox, s.inboxFilter, open, fetched?.at, fetched?.loading, fetched?.error, fetched?.text]
   if (lastDeps && lastDeps.length === deps.length && lastDeps.every((d, i) => d === deps[i])) return
   lastDeps = deps
@@ -42,7 +50,11 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, acti
 
   root.textContent = ''
   root.appendChild(open ? narrowList(s, open.id, actions) : table(s, actions))
-  if (open) root.appendChild(conversation(s, open, fetched?.text, fetched?.error, actions))
+  if (open) {
+    const { text, gap } = live.compose(open.id, fetched)
+    if (gap && fetched && !fetched.loading) cache.get('transcript', open.host, open.id, 0, Date.now())
+    root.appendChild(conversation(s, open, text, fetched?.error, actions))
+  }
 
   for (const box of root.querySelectorAll<HTMLElement>('[data-scroll]')) {
     const key = box.dataset.scroll as string
@@ -50,6 +62,71 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, acti
     if (key === 'convo' && (!was || openedBefore !== open?.id || was.atEnd)) box.scrollTop = box.scrollHeight
     else if (was) box.scrollTop = was.top
   }
+}
+
+/** An agent message: its words as Markdown, with each tool call it made as a chip where it happened. */
+function agentBody(text: string): HTMLElement {
+  const body = el('div', { class: 'body md' })
+  for (const seg of segments(text)) {
+    if (seg.kind === 'tool') body.appendChild(el('span', { class: 'toolchip', text: seg.text }))
+    else body.appendChild(renderMarkdown(seg.text))
+  }
+  return body
+}
+
+/** The running turn's body: what the agent has said so far, or what it is doing. */
+function liveBody(x: Session, text: string): HTMLElement {
+  if (text.trim()) {
+    const body = agentBody(text)
+    body.classList.add('md')
+    return body
+  }
+  const doing = x.currentAction ?? (x.agentName ? 'Thinking' : 'Starting')
+  return el('div', { class: 'body quiet', text: `${doing}\u2026` })
+}
+
+/** A line the daemon writes for a tool call, between the agent's words. */
+const TOOL_LINE = /^\u2699 (.*)$/
+
+/** Splits an agent turn into runs of words and the tool calls between them. */
+function segments(text: string): { kind: 'text' | 'tool'; text: string }[] {
+  const out: { kind: 'text' | 'tool'; text: string }[] = []
+  let words: string[] = []
+  const flush = (): void => {
+    const t = words.join('\n').trim()
+    if (t) out.push({ kind: 'text', text: t })
+    words = []
+  }
+  for (const line of text.split('\n')) {
+    const m = TOOL_LINE.exec(line)
+    if (m) {
+      flush()
+      out.push({ kind: 'tool', text: m[1] })
+    } else words.push(line)
+  }
+  flush()
+  return out
+}
+
+/**
+ * Grows the open conversation's live bubble with what the feed brought,
+ * without rebuilding anything else. Called as pieces arrive.
+ */
+export function growLive(root: HTMLElement, s: State, cache: FetchCache, live: LiveText): void {
+  const open = s.inbox ? s.sessions[s.inbox] : undefined
+  const convo = root.querySelector<HTMLElement>('.convo')
+  if (!open || !convo || convo.dataset.session !== open.id || open.status !== 'running') return
+  const fetched = cache.peek('transcript', open.host, open.id)
+  const { text, gap } = live.compose(open.id, fetched)
+  if (gap && fetched && !fetched.loading) cache.get('transcript', open.host, open.id, 0, Date.now())
+  const conv = parseTranscript(text)
+  const last = conv.turns[conv.turns.length - 1]
+  const bubble = convo.querySelector<HTMLElement>('.msg.live')
+  if (!bubble || !last || last.who !== 'agent') return
+  const box = convo.querySelector<HTMLElement>('.convo-body')
+  const atEnd = !!box && box.scrollHeight - box.scrollTop - box.clientHeight < 12
+  bubble.querySelector('.body')?.replaceWith(liveBody(open, last.text))
+  if (box && atEnd) box.scrollTop = box.scrollHeight
 }
 
 /** Copies one message's Markdown as the agent wrote it. */
@@ -177,14 +254,17 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
   const body = el('div', { class: 'convo-body', 'data-scroll': 'convo' })
   const conv = parseTranscript(transcript ?? '')
   if (!conv.turns.length) conv.turns.push({ who: 'you', text: x.prompt })
+  const running = x.status === 'running'
+  // While a turn runs, its last agent turn is the live bubble, which grows
+  // in place as the feed arrives rather than rebuilding the conversation.
+  const last = conv.turns[conv.turns.length - 1]
+  const liveTurn = running && last?.who === 'agent' ? last : null
   for (const t of conv.turns) {
     if (t.who === 'you') body.appendChild(el('div', { class: 'msg you' }, [el('span', { class: 'from', text: 'You' }), el('div', { class: 'body', text: t.text })]))
-    else if (t.text) body.appendChild(el('div', { class: 'msg agent' }, [el('span', { class: 'from' }, [name, copyButton(t.text)]), el('div', { class: 'body md' }, [renderMarkdown(t.text)])]))
+    else if (t === liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, t.text)]))
+    else if (t.text) body.appendChild(el('div', { class: 'msg agent' }, [el('span', { class: 'from' }, [name, copyButton(t.text)]), agentBody(t.text)]))
   }
-  if (x.status === 'running') {
-    const doing = x.currentAction ?? (x.agentName ? 'Thinking' : 'Starting')
-    body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), el('div', { class: 'body', text: `${doing}\u2026` })]))
-  }
+  if (running && !liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, '')]))
   if (fetchError) body.appendChild(el('p', { class: 'convo-end', style: 'color:var(--bad)', text: fetchError }))
   if (x.status === 'failed') body.appendChild(el('p', { class: 'convo-end', style: 'color:var(--bad)', text: `Failed: ${x.error ?? 'unknown error'}` }))
   else if (x.status === 'ended') body.appendChild(el('p', { class: 'convo-end', text: x.stopReason === 'stopped' ? 'You ended this session.' : `This session ended (${(x.stopReason ?? 'done').replace(/_/g, ' ')}).` }))

@@ -1,6 +1,9 @@
 package web
 
-import "github.com/skylands-ai/skylands/internal/citadel/projections"
+import (
+	v1 "github.com/skylands-ai/skylands/api/v1"
+	"github.com/skylands-ai/skylands/internal/citadel/projections"
+)
 
 // Message is the envelope for everything the citadel sends to a browser over
 // its WebSocket. Type names which other fields are set:
@@ -12,8 +15,13 @@ import "github.com/skylands-ai/skylands/internal/citadel/projections"
 //   - "repo" carries Repo when a repository is registered or its terrain
 //     changes.
 //   - "session" carries Session whenever an agent session changes.
+//   - "live" carries Live, with Host and ID, for the session the browser
+//     is watching: text as it is appended to the transcript.
 type Message struct {
 	Type     string                `json:"type"`
+	Host     string                `json:"host,omitempty"`
+	ID       string                `json:"id,omitempty"`
+	Live     *v1.Live              `json:"live,omitempty"`
 	Server   *ServerInfo           `json:"server,omitempty"`
 	Islands  []projections.Island  `json:"islands,omitempty"`
 	Island   *projections.Island   `json:"island,omitempty"`
@@ -21,6 +29,15 @@ type Message struct {
 	Repo     *projections.Repo     `json:"repo,omitempty"`
 	Sessions []projections.Session `json:"sessions,omitempty"`
 	Session  *projections.Session  `json:"session,omitempty"`
+}
+
+// Inbound is what a browser sends: "watch" with Host and ID to read one
+// session's transcript as it is written, or "unwatch" to stop. A browser
+// watches at most one session at a time.
+type Inbound struct {
+	Type string `json:"type"`
+	Host string `json:"host,omitempty"`
+	ID   string `json:"id,omitempty"`
 }
 
 // ServerInfo describes the NATS server as it describes itself to the

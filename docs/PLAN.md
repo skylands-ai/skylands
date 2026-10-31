@@ -70,8 +70,8 @@ user's side one feature: a conversation with an agent that lasts.
   waiting on you, running, finished, or failed. The tab title carries the
   count of sessions waiting on you.
 - **Reading the conversation.** An open conversation shows the whole
-  exchange by turns as a chat, with a reply box and a stop button.
-  Streaming follows.
+  exchange by turns as a chat, with a reply box and a stop button, and the
+  agent's words and tool calls arrive as they happen.
 
 ### Milestone 8: approvals
 
@@ -126,6 +126,13 @@ hand-placed rather than derived from the host.
   "Waiting on you" means idle with a last message you have not read, which
   is what the tab title and the Inbox badge count; reading it in the inbox
   makes the session idle. Approvals will join that count in milestone 8.
+- Milestone 7 is done: the conversation streams. Every transcript append is
+  published on the session's live subject with its byte offset, plain NATS
+  with no stream; a browser watching a conversation over the WebSocket gets
+  the pieces and grows the running bubble in place, with tool calls as
+  chips where they happened, and reads the file once when the turn ends.
+  A piece that arrives out of place triggers a re-read, so the page can
+  never drift from the file.
   Streaming of the agent's words as they arrive remains.
 
 ## Milestones

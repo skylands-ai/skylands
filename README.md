@@ -88,8 +88,9 @@ yellow mark is waiting on you, green is working, grey-blue is idle, a ring
 is over, and a bold line with a blue dot has something you have not read.
 A session waits on you while its agent has stopped for a reply you have
 not read yet; once you have read it, it is idle until you answer. Open one
-to read it as a chat, reply at the bottom, or end the session, which stops
-the agent and keeps its worktree. The world is paused while the inbox is
+to read it as a chat, with the agent's words and tool calls arriving as
+they happen, reply at the bottom, or end the session, which stops the
+agent and keeps its worktree. The world is paused while the inbox is
 open, and "Show in world" flies back to the airship. The header's Inbox
 badge and the tab title count the sessions waiting on you.
 

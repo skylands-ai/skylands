@@ -13,9 +13,11 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
+	v1 "github.com/skylands-ai/skylands/api/v1"
 )
 
 // Config describes what the server listens on and serves.
@@ -31,6 +33,9 @@ type Config struct {
 	Dist fs.FS
 	// API, if set, serves every path under /api/.
 	API http.Handler
+	// Live, if set, starts delivering one session's transcript appends and
+	// returns how to stop.
+	Live func(host, id string, deliver func(v1.Live)) (stop func(), err error)
 }
 
 // Server serves the web client and the WebSocket browsers subscribe to.
@@ -107,9 +112,56 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	s.hub.add(c)
 	defer s.hub.remove(c)
 
-	// Browsers only listen for now, so reads are discarded and the returned
-	// context ends when the browser goes away.
-	ctx := c.CloseRead(r.Context())
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	// A browser asks to watch one session at a time. Its reads also keep
+	// the connection's control frames flowing.
+	var (
+		watchMu sync.Mutex
+		unwatch func()
+	)
+	setWatch := func(stop func()) {
+		watchMu.Lock()
+		defer watchMu.Unlock()
+		if unwatch != nil {
+			unwatch()
+		}
+		unwatch = stop
+	}
+	defer setWatch(nil)
+	go func() {
+		defer cancel()
+		for {
+			_, data, err := c.Read(ctx)
+			if err != nil {
+				return
+			}
+			var in Inbound
+			if json.Unmarshal(data, &in) != nil {
+				continue
+			}
+			switch in.Type {
+			case "watch":
+				if s.cfg.Live == nil {
+					continue
+				}
+				host, id := in.Host, in.ID
+				stop, err := s.cfg.Live(host, id, func(l v1.Live) {
+					if err := sendJSON(ctx, c, Message{Type: "live", Host: host, ID: id, Live: &l}); err != nil {
+						cancel()
+					}
+				})
+				if err != nil {
+					slog.Debug("web: watch refused", "host", host, "session", id, "err", err)
+					continue
+				}
+				setWatch(stop)
+			case "unwatch":
+				setWatch(nil)
+			}
+		}
+	}()
 
 	if err := sendJSON(ctx, c, s.cfg.Snapshot()); err != nil {
 		return

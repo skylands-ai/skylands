@@ -224,10 +224,21 @@ type FetchSessionRequest struct {
 }
 
 // TextResult is a fetched text, cut off at the daemon's size limit when
-// Truncated is set.
+// Truncated is set. Length is the whole text's size in bytes, which is
+// where live appends continue from.
 type TextResult struct {
 	Text      string `json:"text"`
 	Truncated bool   `json:"truncated,omitempty"`
+	Length    int64  `json:"length,omitempty"`
+}
+
+// Live is one piece of text appended to a session's transcript, published
+// on the session's live subject as it is written. Off is the byte offset
+// in the transcript where Text begins, so a reader can tell what it
+// already has from what is new.
+type Live struct {
+	Off  int64  `json:"off"`
+	Text string `json:"text"`
 }
 
 // EventTurnEnded records that the agent finished one turn and the session

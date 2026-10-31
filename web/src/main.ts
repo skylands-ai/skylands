@@ -19,7 +19,8 @@ import { renderTerracePanel } from './panels/terrace'
 import { renderWorldPanel } from './panels/world'
 import { agentLabel, citadelLabelStatus, clockText, durationText, islandStatus, isStale, secondsSince } from './status'
 import { islandList, isWaiting, level, reposOn, sessionsOn, Store, waitingCount, type State } from './store'
-import { renderInbox, type InboxActions } from './inbox'
+import { growLive, renderInbox, type InboxActions } from './inbox'
+import { LiveText } from './live'
 import { renderMarkdown } from './markdown'
 import { providerOf } from './world/airship'
 import type { AgentState } from './world/agents'
@@ -43,6 +44,19 @@ const inboxCount = byId<HTMLElement>('inboxCount')
 const store = new Store()
 const bar = new CommandBar()
 const cache = new FetchCache(() => store.touch())
+const live = new LiveText()
+
+// Live pieces grow the open conversation's last bubble, at most once a frame.
+let growQueued = false
+const link = connectToCitadel(store, (_host, id, piece) => {
+  live.push(id, piece)
+  if (growQueued) return
+  growQueued = true
+  requestAnimationFrame(() => {
+    growQueued = false
+    growLive(inboxEl, store.state, cache, live)
+  })
+})
 
 let world: World | null = null
 try {
@@ -232,7 +246,9 @@ store.subscribe((s0) => {
   renderHeader(crumbsEl, connectedEl, linkEl, s, nav)
   renderVeil(s)
   bar.update(s)
-  if (s.view === 'inbox') renderInbox(inboxEl, s, cache, inboxActions)
+  if (s.view === 'inbox') renderInbox(inboxEl, s, cache, live, inboxActions)
+  const reading = s.view === 'inbox' && s.inbox ? s.sessions[s.inbox] : undefined
+  link.watch(reading?.host ?? null, reading?.id ?? null)
   if (world) {
     for (const i of islandList(s)) {
       world.upsertIsland(i.host, i.reachable)
@@ -294,7 +310,6 @@ setInterval(() => {
   const ag = level(s) === 'agent' && s.agent ? s.sessions[s.agent] : undefined
   if (ag && ag.status === 'running') cache.get('diff', ag.host, ag.id, 2000)
   const open = s.view === 'inbox' && s.inbox ? s.sessions[s.inbox] : undefined
-  if (open && open.status === 'running') cache.get('transcript', open.host, open.id, 2000)
+  if (open && open.status === 'running') cache.get('transcript', open.host, open.id, 15000)
 }, 1000)
 
-connectToCitadel(store)

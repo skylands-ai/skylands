@@ -2,11 +2,13 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -113,6 +115,23 @@ func waitStatus(t *testing.T, m *Manager, id string, want Status) Session {
 
 func TestStartRunsAnAgentAndRecordsItsEvents(t *testing.T) {
 	f := setup(t)
+	// Everything appended to the transcript is published live, in order,
+	// with the offset it landed at.
+	var liveMu sync.Mutex
+	var lives []v1.Live
+	f.cfg.Publish = func(subject string, data []byte) error {
+		var l v1.Live
+		if err := json.Unmarshal(data, &l); err != nil {
+			return err
+		}
+		if subject != v1.SessionLiveSubject("ws", "s1") {
+			t.Errorf("live subject = %q", subject)
+		}
+		liveMu.Lock()
+		lives = append(lives, l)
+		liveMu.Unlock()
+		return nil
+	}
 	m, err := Load(f.ctx, f.store, f.cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -179,6 +198,26 @@ func TestStartRunsAnAgentAndRecordsItsEvents(t *testing.T) {
 	}
 	if b, err := os.ReadFile(filepath.Join(f.cfg.TranscriptsDir, "s1.md")); err != nil || !strings.Contains(string(b), "Done with \"tidy up\"") || !strings.Contains(string(b), "## You\n\nand again") || !strings.Contains(string(b), "Done with \"and again\"") {
 		t.Errorf("transcript = %q, %v", b, err)
+	} else {
+		// Tool calls sit on their own lines between the agent's words.
+		if !strings.Contains(string(b), "\n"+ToolLinePrefix+"Read a.go\n") {
+			t.Errorf("transcript lacks a tool line: %q", b)
+		}
+		// The live feed is the file, piece by piece.
+		liveMu.Lock()
+		var joined strings.Builder
+		var next int64
+		for _, l := range lives {
+			if l.Off != next {
+				t.Errorf("live offset %d, want %d", l.Off, next)
+			}
+			joined.WriteString(l.Text)
+			next = l.Off + int64(len(l.Text))
+		}
+		liveMu.Unlock()
+		if joined.String() != string(b) {
+			t.Errorf("live feed differs from the transcript:\n%q\n%q", joined.String(), b)
+		}
 	}
 
 	// Stop ends the session; a repeated stop is harmless.

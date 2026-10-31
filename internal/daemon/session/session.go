@@ -8,6 +8,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -91,6 +92,9 @@ type Config struct {
 	TranscriptsDir string
 	Registry       agents.Registry
 	Repos          Repos
+	// Publish, when set, sends each transcript append on the session's live
+	// subject so a browser can read along.
+	Publish func(subject string, data []byte) error
 }
 
 var (
@@ -116,7 +120,9 @@ type Manager struct {
 	handled  map[string]string
 	// live holds the agent process of every session that has not ended.
 	live map[string]*live
-	runs sync.WaitGroup
+	// transcripts holds each session's transcript writer once it is in use.
+	transcripts map[string]*transcript
+	runs        sync.WaitGroup
 }
 
 // live is a session's running agent and the turn it may be on.
@@ -135,7 +141,7 @@ func Load(ctx context.Context, store *es.Store, cfg Config) (*Manager, error) {
 	if cfg.Registry == nil {
 		cfg.Registry = agents.DefaultRegistry()
 	}
-	m := &Manager{cfg: cfg, store: store, ctx: ctx, sessions: map[string]*Session{}, handled: map[string]string{}, live: map[string]*live{}}
+	m := &Manager{cfg: cfg, store: store, ctx: ctx, sessions: map[string]*Session{}, handled: map[string]string{}, live: map[string]*live{}, transcripts: map[string]*transcript{}}
 	err := store.Replay(ctx, v1.IslandStreamName(cfg.Host), []string{v1.SessionEventFilter(cfg.Host)}, func(seq uint64, ev v1.Event) error {
 		m.apply(ev)
 		return nil
@@ -213,7 +219,7 @@ func (m *Manager) Prompt(ctx context.Context, cmd v1.SendPrompt) (Session, error
 	if err := m.record(ctx, cmd.SessionID, cmd.ID, v1.EventPromptSent, v1.PromptSent{SessionID: cmd.SessionID, Text: cmd.Text}); err != nil {
 		return Session{}, err
 	}
-	appendTranscript(m.transcriptPath(cmd.SessionID), "## You\n\n"+strings.TrimSpace(cmd.Text)+"\n\n## Agent\n\n")
+	m.transcript(cmd.SessionID).Append("## You\n\n" + strings.TrimSpace(cmd.Text) + "\n\n## Agent\n\n")
 	l.turnDone = make(chan struct{})
 	m.runs.Add(1)
 	go m.turn(cmd.SessionID, l, cmd.Text)
@@ -261,7 +267,7 @@ func (m *Manager) Stop(ctx context.Context, cmd v1.StopAgent) (Session, error) {
 		delete(m.live, cmd.SessionID)
 		m.mu.Unlock()
 	}
-	appendTranscript(m.transcriptPath(cmd.SessionID), "\n\n---\n\n*Stopped*\n")
+	m.transcript(cmd.SessionID).Append("\n\n---\n\n*Stopped*\n")
 	if err := m.record(ctx, cmd.SessionID, cmd.ID, v1.EventSessionEnded, v1.SessionEnded{SessionID: cmd.SessionID, StopReason: "stopped"}); err != nil {
 		return Session{}, err
 	}
@@ -313,7 +319,7 @@ func (m *Manager) Start(ctx context.Context, cmd v1.StartSession) (Session, erro
 		return Session{}, err
 	}
 	slog.Info("session: started", "session", id, "repo", repo.Name, "agent", cmd.Agent, "model", cmd.Model, "worktree", worktree)
-	appendTranscript(m.transcriptPath(id), "## You\n\n"+strings.TrimSpace(cmd.Prompt)+"\n\n## Agent\n\n")
+	m.transcript(id).Append("## You\n\n" + strings.TrimSpace(cmd.Prompt) + "\n\n## Agent\n\n")
 
 	m.runs.Add(1)
 	go m.begin(id, adapter, worktree, cmd.Prompt, cmd.Model)
@@ -324,7 +330,7 @@ func (m *Manager) Start(ctx context.Context, cmd v1.StartSession) (Session, erro
 // begin launches a session's agent and runs its first turn.
 func (m *Manager) begin(id string, adapter agents.Adapter, worktree, prompt, model string) {
 	defer m.runs.Done()
-	obs := &observer{m: m, id: id, transcript: m.transcriptPath(id)}
+	obs := &observer{m: m, id: id, t: m.transcript(id)}
 	run, err := agents.Start(m.ctx, adapter, worktree, model, obs)
 	if err != nil {
 		if m.ctx.Err() == nil {
@@ -379,13 +385,13 @@ func (m *Manager) turn(id string, l *live, text string) {
 		return
 	}
 	slog.Info("session: turn ended", "session", id, "stop", stop)
-	appendTranscript(m.transcriptPath(id), "\n\n")
+	m.transcript(id).Append("\n\n")
 	_ = m.record(m.ctx, id, "", v1.EventTurnEnded, v1.TurnEnded{SessionID: id, StopReason: stop})
 }
 
 func (m *Manager) failed(id string, err error) {
 	slog.Warn("session: agent failed", "session", id, "err", err)
-	appendTranscript(m.transcriptPath(id), "\n\n---\n\n*Failed: "+err.Error()+"*\n")
+	m.transcript(id).Append("\n\n---\n\n*Failed: " + err.Error() + "*\n")
 	_ = m.record(m.ctx, id, "", v1.EventAgentFailed, v1.AgentFailed{SessionID: id, Error: err.Error()})
 }
 
@@ -393,17 +399,92 @@ func (m *Manager) transcriptPath(id string) string {
 	return filepath.Join(m.cfg.TranscriptsDir, id+".md")
 }
 
-// appendTranscript adds text to a session's transcript on the host.
-func appendTranscript(path, text string) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+// transcript is one session's transcript file on the host, and the live
+// feed of whatever is appended to it.
+type transcript struct {
+	mu   sync.Mutex
+	path string
+	// size is the file's length, which is where the next append lands.
+	size int64
+	// last is the file's final byte, so a line can be started cleanly.
+	last    byte
+	publish func(l v1.Live)
+}
+
+// transcript returns the session's transcript writer, picking up the size
+// of whatever is already on disk.
+func (m *Manager) transcript(id string) *transcript {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t := m.transcripts[id]
+	if t != nil {
+		return t
+	}
+	t = &transcript{path: m.transcriptPath(id)}
+	if f, err := os.Open(t.path); err == nil {
+		if fi, err := f.Stat(); err == nil && fi.Size() > 0 {
+			t.size = fi.Size()
+			var b [1]byte
+			if _, err := f.ReadAt(b[:], t.size-1); err == nil {
+				t.last = b[0]
+			}
+		}
+		_ = f.Close()
+	}
+	if m.cfg.Publish != nil {
+		subject := v1.SessionLiveSubject(m.cfg.Host, id)
+		publish := m.cfg.Publish
+		t.publish = func(l v1.Live) {
+			data, err := json.Marshal(l)
+			if err == nil {
+				_ = publish(subject, data)
+			}
+		}
+	}
+	m.transcripts[id] = t
+	return t
+}
+
+// Append writes text to the end of the transcript and tells anyone reading
+// along where it landed.
+func (t *transcript) Append(text string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.append(text)
+}
+
+// Line appends text on a line of its own.
+func (t *transcript) Line(text string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.size > 0 && t.last != '\n' {
+		text = "\n" + text
+	}
+	t.append(text + "\n")
+}
+
+func (t *transcript) append(text string) {
+	if text == "" {
 		return
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err := os.MkdirAll(filepath.Dir(t.path), 0o755); err != nil {
+		return
+	}
+	f, err := os.OpenFile(t.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
-	defer func() { _ = f.Close() }()
-	_, _ = f.WriteString(text)
+	n, _ := f.WriteString(text)
+	_ = f.Close()
+	if n == 0 {
+		return
+	}
+	off := t.size
+	t.size += int64(n)
+	t.last = text[n-1]
+	if t.publish != nil {
+		t.publish(v1.Live{Off: off, Text: text[:n]})
+	}
 }
 
 // record appends one event for a session and folds it into the state.
@@ -532,10 +613,10 @@ func (m *Manager) apply(ev v1.Event) {
 
 // observer turns what the agent reports into session events, one at a time.
 type observer struct {
-	m          *Manager
-	id         string
-	transcript string
-	mu         sync.Mutex
+	m  *Manager
+	id string
+	t  *transcript
+	mu sync.Mutex
 }
 
 func (o *observer) Spawned(name, version string) {
@@ -556,12 +637,21 @@ func (o *observer) ToolCall(tc agents.ToolCall) {
 	}
 	if known == nil {
 		_ = o.m.record(o.m.ctx, o.id, "", v1.EventToolCallStarted, v1.ToolCallStarted{SessionID: o.id, ToolCallID: tc.ID, Title: tc.Title, Kind: tc.Kind, Locations: tc.Locations})
+		// The transcript notes each tool call on a line of its own, between
+		// the agent's words, so a reader sees what it did where it did it.
+		o.t.Line(ToolLinePrefix + tc.Title)
 	}
 	finished := tc.Status == "completed" || tc.Status == "failed"
 	if finished && (known == nil || (known.Status != "completed" && known.Status != "failed")) {
 		_ = o.m.record(o.m.ctx, o.id, "", v1.EventToolCallCompleted, v1.ToolCallCompleted{SessionID: o.id, ToolCallID: tc.ID, Status: tc.Status, Locations: tc.Locations})
+		if tc.Status == "failed" {
+			o.t.Line(ToolLinePrefix + tc.Title + " (failed)")
+		}
 	}
 }
+
+// ToolLinePrefix opens a transcript line that records a tool call.
+const ToolLinePrefix = "\u2699 "
 
 func (o *observer) Plan(entries []v1.PlanEntry) {
 	o.mu.Lock()
@@ -579,7 +669,7 @@ func (o *observer) Usage(used, size uint64) {
 func (o *observer) Message(text string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	appendTranscript(o.transcript, text)
+	o.t.Append(text)
 }
 
 // addWorktree checks out a new branch of repo into dir.
