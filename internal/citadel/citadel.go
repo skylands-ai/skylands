@@ -41,12 +41,13 @@ type Config struct {
 
 // citadel is one running citadel.
 type citadel struct {
-	cfg     Config
-	ctx     context.Context
-	web     *web.Server
-	islands *projections.Islands
-	terrain *projections.Terrain
-	store   *es.Store
+	cfg      Config
+	ctx      context.Context
+	web      *web.Server
+	islands  *projections.Islands
+	terrain  *projections.Terrain
+	sessions *projections.Sessions
+	store    *es.Store
 
 	mu sync.Mutex
 	nc *nats.Conn
@@ -68,11 +69,12 @@ func Run(ctx context.Context, cfg Config) error {
 	c := &citadel{cfg: cfg, ctx: ctx, following: map[string]bool{}}
 	c.islands = projections.NewIslands(c.onIsland)
 	c.terrain = projections.NewTerrain(c.onRepo)
+	c.sessions = projections.NewSessions(c.onSession)
 	dist, err := fs.Sub(webclient.Dist, "dist")
 	if err != nil {
 		return fmt.Errorf("web client: %w", err)
 	}
-	c.web = web.New(web.Config{Addr: cfg.HTTPAddr, Snapshot: c.snapshot, Dist: dist})
+	c.web = web.New(web.Config{Addr: cfg.HTTPAddr, Snapshot: c.snapshot, Dist: dist, API: c.api()})
 
 	opts := []nats.Option{
 		nats.Name("skylands-citadel"),
@@ -114,7 +116,7 @@ func Run(ctx context.Context, cfg Config) error {
 // connects.
 func (c *citadel) snapshot() web.Message {
 	info := c.serverInfo()
-	return web.Message{Type: "snapshot", Server: &info, Islands: c.islands.List(), Repos: c.terrain.List()}
+	return web.Message{Type: "snapshot", Server: &info, Islands: c.islands.List(), Repos: c.terrain.List(), Sessions: c.sessions.List()}
 }
 
 // serverInfo describes the NATS server as the citadel sees it right now.
@@ -172,6 +174,11 @@ func (c *citadel) onRepo(r projections.Repo) {
 	c.web.Broadcast(web.Message{Type: "repo", Repo: &r})
 }
 
+// onSession runs whenever an agent session changes.
+func (c *citadel) onSession(s projections.Session) {
+	c.web.Broadcast(web.Message{Type: "session", Session: &s})
+}
+
 // followHost mirrors a host's stream into the world's domain the first time
 // the host is seen, then projects its events. Creating a mirror that already
 // exists changes nothing.
@@ -200,8 +207,12 @@ func (c *citadel) followHost(host string) {
 			}
 		}
 		slog.Info("citadel: following host events", "host", host)
-		err := store.Follow(c.ctx, name, []string{v1.IslandEventFilter(host)}, func(seq uint64, ev v1.Event) {
-			c.terrain.Apply(host, ev)
+		err := store.Follow(c.ctx, name, []string{v1.IslandEventFilter(host), v1.SessionEventFilter(host)}, func(seq uint64, ev v1.Event) {
+			if v1.IsSessionEvent(ev.Type) {
+				c.sessions.Apply(host, ev)
+			} else {
+				c.terrain.Apply(host, ev)
+			}
 		})
 		if err != nil && c.ctx.Err() == nil {
 			slog.Warn("citadel: follow host events", "host", host, "err", err)

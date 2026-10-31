@@ -1,7 +1,7 @@
 import { el } from '../dom'
 import { fmtBytes, shortCommit, sortedFiles } from '../files'
-import type { Island, Repo } from '../protocol'
-import { agoText } from '../status'
+import type { Island, Repo, Session } from '../protocol'
+import { agentColor, agoText, sessionStatus } from '../status'
 import { factsBox, header, hint, note, section } from './parts'
 
 /** The terrace-level panel: one repository on one host. */
@@ -11,13 +11,48 @@ export function renderTerracePanel(
   island: Island,
   stale: boolean,
   shown: number,
+  sessions: Session[],
   selectFile: (idx: number) => void,
+  selectAgent: (id: string) => void,
 ): void {
   panel.textContent = ''
   const down = stale || !island.reachable
+  const running = sessions.filter((s) => s.status === 'running').length
   panel.appendChild(
-    header(repo.name, `Repo on ${island.host}`, down ? ['Unreachable, last state heard', 'var(--idle)'] : ['No agents yet', 'var(--ok)']),
+    header(
+      repo.name,
+      `Repo on ${island.host}`,
+      down
+        ? ['Unreachable, last state heard', 'var(--idle)']
+        : running
+          ? [`${running} ${running === 1 ? 'agent' : 'agents'}`, 'var(--ok)']
+          : [sessions.length ? 'No agents running' : 'No agents yet', 'var(--idle)'],
+    ),
   )
+  if (sessions.length) {
+    panel.appendChild(
+      section(
+        'Agents',
+        sessions.map((s) => {
+          const st = sessionStatus(s)
+          const file = s.status === 'running' && s.currentFile ? ` \u00b7 ${s.currentFile}` : ''
+          return el('button', { type: 'button', class: 'row', style: 'text-align:left;width:100%', onclick: () => selectAgent(s.id) }, [
+            el('span', { class: 'dot', style: `width:10px;height:10px;background:${agentColor(s.agent)}` }),
+            el('span', { class: 'grow' }, [
+              el('span', { style: 'font-weight:600' }, [
+                s.agentName ?? s.agent,
+                s.model ? el('span', { class: 'muted', style: 'font-weight:400', text: ` (${s.model})` }) : null,
+                ' ',
+                el('span', { class: 'muted', style: 'font-weight:400', text: s.prompt.length > 60 ? s.prompt.slice(0, 57) + '\u2026' : s.prompt }),
+              ]),
+              el('span', { class: 'sub', text: st[0] + file }),
+            ]),
+            el('span', { class: 'dot', title: st[0], style: `background:${st[1]}` }),
+          ])
+        }),
+      ),
+    )
+  }
   const facts: [string, string][] = [
     ['Path', repo.path],
     ['Commit', shortCommit(repo.commit)],
@@ -47,5 +82,5 @@ export function renderTerracePanel(
   } else {
     panel.appendChild(note('This repository has no tracked files yet.'))
   }
-  panel.appendChild(hint('Click a building to look closer.'))
+  panel.appendChild(hint(sessions.length ? 'Click an agent to read its response, or a building to look closer.' : 'Click a building to look closer.'))
 }

@@ -47,6 +47,45 @@ export interface Repo {
   snapshottedAt: string
 }
 
+export interface PlanEntry {
+  content: string
+  priority?: string
+  status: string
+}
+
+export interface ToolCall {
+  id: string
+  title: string
+  kind?: string
+  status: string
+  locations?: string[]
+  at: string
+}
+
+/** One agent run on one repository, as the citadel projects it. */
+export interface Session {
+  host: string
+  id: string
+  repoId: string
+  agent: string
+  model?: string
+  agentName?: string
+  prompt: string
+  branch: string
+  status: 'running' | 'ended' | 'failed'
+  stopReason?: string
+  error?: string
+  startedAt: string
+  endedAt?: string
+  currentFile?: string
+  currentAction?: string
+  recent: ToolCall[]
+  files: Record<string, string>
+  plan?: PlanEntry[]
+  used?: number
+  size?: number
+}
+
 export interface Message {
   type: string
   server?: ServerInfo
@@ -54,4 +93,6 @@ export interface Message {
   island?: Island
   repos?: Repo[]
   repo?: Repo
+  sessions?: Session[]
+  session?: Session
 }

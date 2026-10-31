@@ -28,3 +28,23 @@ func IslandEventSubject(host, eventType string) string {
 func SessionEventSubject(host, session, eventType string) string {
 	return "v1.island." + host + ".session." + session + ".evt." + eventType
 }
+
+// SessionCommandSubject is where one command for a session is sent, by
+// request-reply.
+func SessionCommandSubject(host, session, commandType string) string {
+	return "v1.island." + host + ".session." + session + ".cmd." + commandType
+}
+
+// SessionCommandFilter matches every session command for host.
+func SessionCommandFilter(host string) string { return "v1.island." + host + ".session.*.cmd.>" }
+
+// SessionEventFilter matches every session event for host.
+func SessionEventFilter(host string) string { return "v1.island." + host + ".session.*.evt.>" }
+
+// IslandFetchSubject is where an on-demand read of one kind, such as a
+// session's transcript or diff, is requested from host's daemon. The daemon
+// answers from the host's disk, so nothing leaves the host until asked.
+func IslandFetchSubject(host, kind string) string { return "v1.island." + host + ".fetch." + kind }
+
+// IslandFetchFilter matches every fetch request for host.
+func IslandFetchFilter(host string) string { return "v1.island." + host + ".fetch.>" }

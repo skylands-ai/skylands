@@ -56,7 +56,7 @@ const tmpW = new THREE.Vector3()
 export class World {
   readonly citadel: Citadel
   /** Where the camera is. */
-  nav: Nav = { selected: 'cit', terrace: null, file: null }
+  nav: Nav = { selected: 'cit', terrace: null, file: null, agent: null }
   /** Called whenever navigation changes, from a click in the world or a label. */
   onNav: (n: Nav) => void = () => {}
 
@@ -202,7 +202,7 @@ export class World {
 
   /** Flies to the whole-world view. */
   overview(): void {
-    this.setNav({ selected: 'cit', terrace: null, file: null })
+    this.setNav({ selected: 'cit', terrace: null, file: null, agent: null })
     this.rig.flyTo(HOME.target, HOME.radius, HOME.theta, HOME.phi)
   }
 
@@ -210,7 +210,7 @@ export class World {
   select(id: string): void {
     const isl = this.islands.get(id)
     if (id !== 'cit' && !isl) return
-    this.setNav({ selected: id, terrace: null, file: null })
+    this.setNav({ selected: id, terrace: null, file: null, agent: null })
     if (isl) {
       const h = isl.def
       const p = isl.pos
@@ -223,8 +223,17 @@ export class World {
     const isl = this.islands.get(host)
     const t = isl?.terraces.get(terrace)
     if (!isl || !t) return
-    this.setNav({ selected: host, terrace, file: null })
+    this.setNav({ selected: host, terrace, file: null, agent: null })
     this.rig.flyTo(this.terraceWorld(isl, t), Math.max(t.spec.sx, t.spec.sz) * 1.6 + 6, isl.def.angle, 0.92)
+  }
+
+  /** Follows one agent on a terrace. Until airships exist, that is the terrace view. */
+  selectAgent(host: string, terrace: string, agent: string): void {
+    const isl = this.islands.get(host)
+    const t = isl?.terraces.get(terrace)
+    if (!isl || !t) return
+    this.setNav({ selected: host, terrace, file: null, agent })
+    this.rig.flyTo(this.terraceWorld(isl, t), Math.max(t.spec.sx, t.spec.sz) * 1.4 + 5, isl.def.angle, 0.95)
   }
 
   /** Flies up close to one building. */
@@ -232,7 +241,7 @@ export class World {
     const t = this.islands.get(host)?.terraces.get(terrace)
     const b = t?.meshes.blds[idx]
     if (!t || !b) return
-    this.setNav({ selected: host, terrace, file: idx })
+    this.setNav({ selected: host, terrace, file: idx, agent: null })
     this.rig.flyTo(bldWorld(b), 8, null, 0.95)
   }
 
@@ -240,6 +249,7 @@ export class World {
   up(): void {
     const n = this.nav
     switch (level(n)) {
+      case 'agent':
       case 'file':
         this.land(n.selected, n.terrace as string)
         break

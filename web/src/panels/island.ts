@@ -1,5 +1,5 @@
 import { el } from '../dom'
-import type { Island, Repo } from '../protocol'
+import type { Island, Repo, Session } from '../protocol'
 import { agoText, clockText, islandStatus, upText } from '../status'
 import { factsBox, header, note, section } from './parts'
 
@@ -10,6 +10,7 @@ export function renderIslandPanel(
   repos: Repo[],
   stale: boolean,
   lastContact: number | null,
+  sessions: Session[],
   land: (terrace: string) => void,
 ): void {
   panel.textContent = ''
@@ -57,7 +58,8 @@ export function renderIslandPanel(
         'Terraces',
         repos.map((r) => {
           const n = r.totalFiles
-          const detail = `${n} tracked ${n === 1 ? 'file' : 'files'}, no agents`
+          const agents = sessions.filter((s) => s.repoId === r.id && s.status === 'running').length
+          const detail = `${n} tracked ${n === 1 ? 'file' : 'files'}, ${agents ? `${agents} ${agents === 1 ? 'agent' : 'agents'} working` : 'no agents'}`
           return el('div', { class: 'row' }, [
             el('span', { class: 'grow' }, [
               el('span', { style: 'font-weight:600', text: r.name }),

@@ -29,6 +29,8 @@ type Config struct {
 	// nil or has no index.html, the server serves a placeholder page that
 	// says how to build the client.
 	Dist fs.FS
+	// API, if set, serves every path under /api/.
+	API http.Handler
 }
 
 // Server serves the web client and the WebSocket browsers subscribe to.
@@ -46,6 +48,9 @@ func New(cfg Config) *Server {
 		_, _ = io.WriteString(w, "ok\n")
 	})
 	mux.HandleFunc("GET /ws", s.handleWS)
+	if cfg.API != nil {
+		mux.Handle("/api/", cfg.API)
+	}
 	mux.Handle("/", s.staticHandler())
 	s.mux = mux
 	return s

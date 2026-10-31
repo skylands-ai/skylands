@@ -63,6 +63,17 @@ func Load(ctx context.Context, store *es.Store, name string) (*Host, error) {
 	return h, nil
 }
 
+// Repo returns one registered repository by id.
+func (h *Host) Repo(id string) (Repo, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	r, ok := h.repos[id]
+	if !ok {
+		return Repo{}, false
+	}
+	return *r, true
+}
+
 // Repos lists the registered repositories by name.
 func (h *Host) Repos() []Repo {
 	h.mu.Lock()

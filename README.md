@@ -60,6 +60,26 @@ the terrace, then a building. Each daemon has one local socket, so a second
 daemon on the same machine needs `--socket` on both `daemon up` and these
 commands.
 
+### Run an agent
+
+Open a terrace and type a task into the bar at the bottom of the world. The
+order goes straight to that island's daemon, which checks out a git worktree
+of the repository on a `skylands/<session>` branch and runs the agent there.
+The terrace panel shows the agent, what it is reading or editing, and when it
+finishes. Click the agent to read its response and the diff in its
+worktree. Both stay on the host, under `transcripts/` and `worktrees/` in
+the data directory, and the citadel fetches them only while you look.
+
+Two agents are available. The built-in fake agent reads a few files and
+edits one, so you can see the loop without any API keys. Claude Code runs
+through its ACP adapter from npm, which `npx` fetches on first use, and needs
+a Claude Code login on that machine. The model chip overrides the model for
+that session; leave it empty for Claude Code's own default. A model alias
+such as `fable` in your Claude Code settings may not work under the adapter,
+so set a full model id in the chip if a session fails on its model. Until
+approvals land, the daemon allows every tool call an agent asks for, so run
+real agents only on repositories you would trust them with unattended.
+
 ### An island on another machine
 
 Nothing is authenticated yet, so only do this on a network you trust. The

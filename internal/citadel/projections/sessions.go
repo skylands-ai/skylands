@@ -1,0 +1,196 @@
+package projections
+
+import (
+	"sort"
+	"sync"
+	"time"
+
+	v1 "github.com/skylands-ai/skylands/api/v1"
+)
+
+// RecentToolCalls is how many tool calls a session keeps for display.
+const RecentToolCalls = 20
+
+// ToolCall is one tool call as the session last reported it.
+type ToolCall struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Kind      string    `json:"kind,omitempty"`
+	Status    string    `json:"status"`
+	Locations []string  `json:"locations,omitempty"`
+	At        time.Time `json:"at"`
+}
+
+// Session is one agent run on one repository, as the citadel projects it
+// from session events.
+type Session struct {
+	Host       string    `json:"host"`
+	ID         string    `json:"id"`
+	RepoID     string    `json:"repoId"`
+	Agent      string    `json:"agent"`
+	Model      string    `json:"model,omitempty"`
+	AgentName  string    `json:"agentName,omitempty"`
+	Prompt     string    `json:"prompt"`
+	Branch     string    `json:"branch"`
+	Status     string    `json:"status"`
+	StopReason string    `json:"stopReason,omitempty"`
+	Error      string    `json:"error,omitempty"`
+	StartedAt  time.Time `json:"startedAt"`
+	EndedAt    time.Time `json:"endedAt,omitzero"`
+	// CurrentFile is the file of the latest tool call that named one, and
+	// CurrentAction that call's title.
+	CurrentFile   string `json:"currentFile,omitempty"`
+	CurrentAction string `json:"currentAction,omitempty"`
+	// Recent holds the last RecentToolCalls tool calls, oldest first.
+	Recent []ToolCall `json:"recent"`
+	// Files maps each file the session touched to the kind of its last
+	// touch, such as read or edit.
+	Files map[string]string `json:"files"`
+	Plan  []v1.PlanEntry    `json:"plan,omitempty"`
+	Used  uint64            `json:"used,omitempty"`
+	Size  uint64            `json:"size,omitempty"`
+}
+
+// Sessions is the projection of every host's sessions. It is safe for
+// concurrent use.
+type Sessions struct {
+	mu       sync.Mutex
+	byID     map[string]*Session
+	onChange func(Session)
+}
+
+// NewSessions returns an empty projection. onChange, if set, gets a copy of
+// each session whose state changed.
+func NewSessions(onChange func(Session)) *Sessions {
+	if onChange == nil {
+		onChange = func(Session) {}
+	}
+	return &Sessions{byID: map[string]*Session{}, onChange: onChange}
+}
+
+// Apply folds one session event into the projection.
+func (p *Sessions) Apply(host string, ev v1.Event) {
+	var changed *Session
+	p.mu.Lock()
+	switch ev.Type {
+	case v1.EventSessionStarted:
+		var d v1.SessionStarted
+		if ev.Decode(&d) == nil {
+			s := &Session{Host: host, ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Branch: d.Branch, Status: "running", StartedAt: ev.Time, Recent: []ToolCall{}, Files: map[string]string{}}
+			p.byID[d.SessionID] = s
+			changed = s
+		}
+	case v1.EventPromptSent:
+		var d v1.PromptSent
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.Prompt = d.Text
+				changed = s
+			}
+		}
+	case v1.EventAgentSpawned:
+		var d v1.AgentSpawned
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.AgentName = d.Name
+				changed = s
+			}
+		}
+	case v1.EventToolCallStarted:
+		var d v1.ToolCallStarted
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.Recent = append(s.Recent, ToolCall{ID: d.ToolCallID, Title: d.Title, Kind: d.Kind, Status: "in_progress", Locations: d.Locations, At: ev.Time})
+				if len(s.Recent) > RecentToolCalls {
+					s.Recent = s.Recent[len(s.Recent)-RecentToolCalls:]
+				}
+				s.CurrentAction = d.Title
+				if len(d.Locations) > 0 {
+					s.CurrentFile = d.Locations[0]
+					for _, l := range d.Locations {
+						s.Files[l] = d.Kind
+					}
+				}
+				changed = s
+			}
+		}
+	case v1.EventToolCallCompleted:
+		var d v1.ToolCallCompleted
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				for i := range s.Recent {
+					if s.Recent[i].ID == d.ToolCallID {
+						s.Recent[i].Status = d.Status
+						if len(d.Locations) > 0 {
+							s.Recent[i].Locations = d.Locations
+						}
+					}
+				}
+				changed = s
+			}
+		}
+	case v1.EventPlanUpdated:
+		var d v1.PlanUpdated
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.Plan = d.Entries
+				changed = s
+			}
+		}
+	case v1.EventUsageReported:
+		var d v1.UsageReported
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.Used, s.Size = d.Used, d.Size
+				changed = s
+			}
+		}
+	case v1.EventAgentFailed:
+		var d v1.AgentFailed
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.Status, s.Error, s.EndedAt = "failed", d.Error, ev.Time
+				changed = s
+			}
+		}
+	case v1.EventSessionEnded:
+		var d v1.SessionEnded
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.Status, s.StopReason, s.EndedAt = "ended", d.StopReason, ev.Time
+				changed = s
+			}
+		}
+	}
+	var copy Session
+	if changed != nil {
+		copy = cloneSession(changed)
+	}
+	p.mu.Unlock()
+	if changed != nil {
+		p.onChange(copy)
+	}
+}
+
+// List returns every session, newest first.
+func (p *Sessions) List() []Session {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]Session, 0, len(p.byID))
+	for _, s := range p.byID {
+		out = append(out, cloneSession(s))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	return out
+}
+
+func cloneSession(s *Session) Session {
+	c := *s
+	c.Recent = append([]ToolCall(nil), s.Recent...)
+	c.Files = make(map[string]string, len(s.Files))
+	for k, v := range s.Files {
+		c.Files[k] = v
+	}
+	c.Plan = append([]v1.PlanEntry(nil), s.Plan...)
+	return c
+}

@@ -24,13 +24,24 @@ type RepoInfo struct {
 	RegisteredAt time.Time `json:"registeredAt"`
 }
 
+// SessionInfo describes one agent session on this host.
+type SessionInfo struct {
+	ID        string    `json:"id"`
+	Repo      string    `json:"repo"`
+	Agent     string    `json:"agent"`
+	Status    string    `json:"status"`
+	Prompt    string    `json:"prompt"`
+	StartedAt time.Time `json:"startedAt"`
+}
+
 // StatusInfo is what GET /v1/status returns.
 type StatusInfo struct {
-	Host    string     `json:"host"`
-	World   string     `json:"world"`
-	Version string     `json:"version"`
-	Started time.Time  `json:"started"`
-	Repos   []RepoInfo `json:"repos"`
+	Host     string        `json:"host"`
+	World    string        `json:"world"`
+	Version  string        `json:"version"`
+	Started  time.Time     `json:"started"`
+	Repos    []RepoInfo    `json:"repos"`
+	Sessions []SessionInfo `json:"sessions,omitempty"`
 }
 
 // ErrorResponse is the body of every error reply.

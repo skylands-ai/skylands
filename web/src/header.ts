@@ -7,6 +7,7 @@ export interface NavActions {
   overview(): void
   select(host: string): void
   land(host: string, terrace: string): void
+  selectAgent(host: string, terrace: string, agent: string): void
 }
 
 function crumbBtn(text: string, fn: () => void): HTMLElement {
@@ -42,8 +43,13 @@ export function renderHeader(crumbs: HTMLElement, connected: HTMLElement, link: 
         const tid = s.terrace as string
         crumbs.appendChild(crumbBtn(tname, () => nav.land(host, tid)))
         crumbs.appendChild(sep())
-        const f = repo && s.file !== null ? sortedFiles(repo)[s.file] : undefined
-        crumbs.appendChild(current(f ? base(f.path) : 'file'))
+        if (l === 'agent') {
+          const ag = s.agent ? s.sessions[s.agent] : undefined
+          crumbs.appendChild(current(ag?.agentName ?? ag?.agent ?? 'agent'))
+        } else {
+          const f = repo && s.file !== null ? sortedFiles(repo)[s.file] : undefined
+          crumbs.appendChild(current(f ? base(f.path) : 'file'))
+        }
       }
     }
   }

@@ -7,14 +7,17 @@ import '@fontsource/jetbrains-mono/500.css'
 import '@fontsource/sora/700.css'
 import './style.css'
 
+import { CommandBar } from './bar'
 import { byId, el } from './dom'
+import { FetchCache } from './fetchcache'
 import { renderHeader, type NavActions } from './header'
+import { renderAgentPanel } from './panels/agent'
 import { renderFilePanel } from './panels/file'
 import { renderIslandPanel } from './panels/island'
 import { renderTerracePanel } from './panels/terrace'
 import { renderWorldPanel } from './panels/world'
 import { citadelLabelStatus, clockText, durationText, islandStatus, isStale, secondsSince } from './status'
-import { islandList, level, reposOn, Store, type State } from './store'
+import { islandList, level, reposOn, sessionsOn, Store, type State } from './store'
 import { World } from './world/world'
 import { connectToCitadel } from './ws'
 
@@ -29,6 +32,8 @@ const veilEl = byId<HTMLElement>('veil')
 const veilMsgEl = byId<HTMLElement>('veilmsg')
 
 const store = new Store()
+const bar = new CommandBar()
+const cache = new FetchCache(() => store.touch())
 
 let world: World | null = null
 try {
@@ -41,10 +46,11 @@ try {
 // Navigation goes through the world when it runs, so the camera moves, and
 // straight to the store otherwise.
 const nav: NavActions & { selectFile(host: string, terrace: string, idx: number): void } = {
-  overview: () => (world ? world.overview() : store.update({ selected: 'cit', terrace: null, file: null })),
-  select: (host) => (world ? world.select(host) : store.update({ selected: host, terrace: null, file: null })),
-  land: (host, terrace) => (world ? world.land(host, terrace) : store.update({ selected: host, terrace, file: null })),
-  selectFile: (host, terrace, idx) => (world ? world.selectFile(host, terrace, idx) : store.update({ selected: host, terrace, file: idx })),
+  overview: () => (world ? world.overview() : store.update({ selected: 'cit', terrace: null, file: null, agent: null })),
+  select: (host) => (world ? world.select(host) : store.update({ selected: host, terrace: null, file: null, agent: null })),
+  land: (host, terrace) => (world ? world.land(host, terrace) : store.update({ selected: host, terrace, file: null, agent: null })),
+  selectFile: (host, terrace, idx) => (world ? world.selectFile(host, terrace, idx) : store.update({ selected: host, terrace, file: idx, agent: null })),
+  selectAgent: (host, terrace, agent) => (world ? world.selectAgent(host, terrace, agent) : store.update({ selected: host, terrace, file: null, agent })),
 }
 
 function renderVeil(s: State): void {
@@ -67,6 +73,14 @@ function renderPanel(s: State, stale: boolean): void {
   const island = s.selected !== 'cit' ? s.islands[s.selected] : undefined
   const repo = s.terrace ? s.repos[s.terrace] : undefined
   switch (level(s)) {
+    case 'agent': {
+      const ag = s.agent ? s.sessions[s.agent] : undefined
+      if (island && repo && ag) {
+        renderAgentPanel(panelEl, ag, repo, island, stale, cache, () => nav.land(island.host, repo.id))
+        return
+      }
+      break
+    }
     case 'file':
       if (island && repo && s.file !== null) {
         renderFilePanel(panelEl, repo, island, s.file, () => nav.land(island.host, repo.id))
@@ -76,13 +90,16 @@ function renderPanel(s: State, stale: boolean): void {
     case 'terrace':
       if (island && repo) {
         const shown = world?.buildingCount(island.host, repo.id) ?? repo.files.length
-        renderTerracePanel(panelEl, repo, island, stale, shown, (idx) => nav.selectFile(island.host, repo.id, idx))
+        renderTerracePanel(panelEl, repo, island, stale, shown, sessionsOn(s, repo.id), (idx) => nav.selectFile(island.host, repo.id, idx), (id) =>
+          nav.selectAgent(island.host, repo.id, id),
+        )
         return
       }
       break
     case 'island':
       if (island) {
-        renderIslandPanel(panelEl, island, reposOn(s, island.host), stale, s.lastContact, (terrace) => nav.land(island.host, terrace))
+        const sessions = Object.values(s.sessions).filter((x) => x.host === island.host)
+        renderIslandPanel(panelEl, island, reposOn(s, island.host), stale, s.lastContact, sessions, (terrace) => nav.land(island.host, terrace))
         return
       }
       break
@@ -94,6 +111,7 @@ store.subscribe((s) => {
   const stale = isStale(s)
   renderHeader(crumbsEl, connectedEl, linkEl, s, nav)
   renderVeil(s)
+  bar.update(s)
   if (world) {
     for (const i of islandList(s)) {
       world.upsertIsland(i.host, i.reachable)

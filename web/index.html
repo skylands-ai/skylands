@@ -28,6 +28,19 @@
         <button type="button" class="btn" id="overview">Whole world</button>
         <span class="chipnote hint">Drag to orbit, scroll to zoom. Click to go deeper, Esc to go back up.</span>
       </div>
+      <div class="cmdbar" id="cmdbar" role="group" aria-label="Command bar" hidden>
+        <div class="cmdrow">
+          <div class="scope"><span>Scope</span><span class="scope-to" id="scopeTo"></span></div>
+          <input id="cmdInput" type="text" autocomplete="off" aria-label="Work order" placeholder="Describe work for this repo">
+          <button type="button" class="btn primary" id="cmdGo">Launch</button>
+        </div>
+        <div class="cmdrow">
+          <span class="why" id="scopeWhy">Dispatches straight to this island’s daemon.</span>
+          <label class="chip">Agent <select id="agentSel" aria-label="Agent"><option value="fake">Fake agent, built in</option><option value="claude">Claude Code</option></select></label>
+          <label class="chip">Model <input id="modelInput" list="models" placeholder="Agent’s default" autocomplete="off" aria-label="Model" style="min-height:32px;padding:0 8px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--text);font:inherit;font-size:13px;width:190px"></label>
+          <datalist id="models"><option value="claude-sonnet-5-5"><option value="claude-opus-5-5"><option value="claude-haiku-5-5"><option value="claude-fable-5-1"></datalist>
+        </div>
+      </div>
       <div class="legend" aria-label="Legend">
         <span><svg width="26" height="8" viewBox="0 0 26 8" aria-hidden="true"><line x1="1" y1="4" x2="25" y2="4" stroke="var(--tether)" stroke-width="2.5"/><circle cx="8" cy="4" r="2" fill="var(--spark)"/><circle cx="18" cy="4" r="2" fill="var(--spark)"/></svg>Connected</span>
         <span><svg width="26" height="12" viewBox="0 0 26 12" aria-hidden="true"><path d="M1 2 Q13 18 25 2" fill="none" stroke="var(--idle)" stroke-width="2" stroke-dasharray="3 3"/></svg>Unreachable</span>

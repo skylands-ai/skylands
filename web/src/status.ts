@@ -1,4 +1,4 @@
-import type { Island } from './protocol'
+import type { Island, Session } from './protocol'
 import type { State } from './store'
 import type { Status } from './world/world'
 
@@ -37,6 +37,27 @@ export function islandStatus(i: Island, stale: boolean): Status {
 /** "12:37:05" in the viewer's locale. */
 export function clockText(ms: number): string {
   return new Date(ms).toLocaleTimeString()
+}
+
+/** The provider color for an agent, matching the airship hulls. */
+export function agentColor(agent: string): string {
+  switch (agent) {
+    case 'claude':
+      return '#F2995E'
+    case 'codex':
+      return '#3FBF9C'
+    case 'gemini':
+      return '#7C9BFF'
+    default:
+      return '#B58BEB'
+  }
+}
+
+/** What a session is doing right now, in a few words. */
+export function sessionStatus(s: Session): Status {
+  if (s.status === 'failed') return [`Failed: ${s.error ?? 'unknown error'}`, 'var(--bad)']
+  if (s.status === 'ended') return [`Finished${s.stopReason && s.stopReason !== 'end_turn' ? ` (${s.stopReason.replace(/_/g, ' ')})` : ''}`, 'var(--muted)']
+  return [s.currentAction ?? (s.agentName ? 'Thinking' : 'Starting'), 'var(--ok)']
 }
 
 /** Shortens a NATS id to its ends, the way the prototype shows them. */

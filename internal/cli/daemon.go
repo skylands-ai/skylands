@@ -89,6 +89,17 @@ func newDaemonStatusCmd() *cobra.Command {
 				}
 				fmt.Fprintf(w, "%s%s  %d files  %s\n", label, r.Name, r.Files, r.Path)
 			}
+			for i, s := range st.Sessions {
+				label := "          "
+				if i == 0 {
+					label = "Sessions: "
+				}
+				prompt := s.Prompt
+				if len(prompt) > 48 {
+					prompt = prompt[:45] + "..."
+				}
+				fmt.Fprintf(w, "%s%s  %s on %s  %s  %q\n", label, s.ID, s.Agent, s.Repo, s.Status, prompt)
+			}
 			return nil
 		},
 	}

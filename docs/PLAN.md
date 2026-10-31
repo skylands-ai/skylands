@@ -26,6 +26,31 @@ specifies. No events, streams, or aggregates are needed for it.
   terrace and file levels. The event-sourcing kit (`internal/es`), the
   public event types (`api/v1`), and the socket API now exist for everything
   after it.
+- Milestone 6a is done: a session runs. The command bar on a terrace sends
+  StartSession straight to that island's daemon by request-reply, the
+  Session aggregate checks out a git worktree and drives the agent over ACP,
+  and SessionStarted, PromptSent, AgentSpawned, ToolCallStarted and
+  Completed, PlanUpdated, UsageReported, and SessionEnded or AgentFailed
+  flow back through the mirror into a sessions projection the terrace panel
+  shows. Two adapters exist: the built-in fake agent and Claude Code through
+  its npm ACP adapter. Permissions are auto-allowed until milestone 7.
+  Dispatch rules, SendPrompt, and Claude Code hooks are deferred.
+
+## After the MVP
+
+### Milestone 6b: airships
+
+Port the prototype's airship, flight, landing, sandbags, name tags, and the
+agent panel, driven by session events. Buildings light blue or amber when a
+session reads or edits them, and red when two sessions overlap. The agent
+level in navigation follows one airship.
+
+### Milestone 7: approvals
+
+The daemon records PermissionRequested instead of auto-allowing, rules settle
+what they can, the citadel's beacon lights, and `request list`, `approve`,
+and `deny` work locally over the socket. Signed approvals from a browser
+follow once passkeys exist.
 
 ## What the MVP proves
 

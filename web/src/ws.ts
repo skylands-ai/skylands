@@ -1,4 +1,4 @@
-import type { Island, Message, Repo } from './protocol'
+import type { Island, Message, Repo, Session } from './protocol'
 import type { Store } from './store'
 
 // The browser stays on one citadel through this socket. When it drops, keep
@@ -22,7 +22,9 @@ export function connectToCitadel(store: Store): void {
           for (const i of m.islands ?? []) islands[i.host] = i
           const repos: Record<string, Repo> = {}
           for (const r of m.repos ?? []) repos[r.id] = r
-          store.update({ server: m.server ?? null, islands, repos })
+          const sessions: Record<string, Session> = {}
+          for (const x of m.sessions ?? []) sessions[x.id] = x
+          store.update({ server: m.server ?? null, islands, repos, sessions })
           break
         }
         case 'server':
@@ -33,6 +35,9 @@ export function connectToCitadel(store: Store): void {
           break
         case 'repo':
           if (m.repo) store.upsertRepo(m.repo)
+          break
+        case 'session':
+          if (m.session) store.upsertSession(m.session)
           break
       }
     })

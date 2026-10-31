@@ -11,13 +11,16 @@ import "github.com/skylands-ai/skylands/internal/citadel/projections"
 //   - "island" carries Island when one host's state changes.
 //   - "repo" carries Repo when a repository is registered or its terrain
 //     changes.
+//   - "session" carries Session whenever an agent session changes.
 type Message struct {
-	Type    string               `json:"type"`
-	Server  *ServerInfo          `json:"server,omitempty"`
-	Islands []projections.Island `json:"islands,omitempty"`
-	Island  *projections.Island  `json:"island,omitempty"`
-	Repos   []projections.Repo   `json:"repos,omitempty"`
-	Repo    *projections.Repo    `json:"repo,omitempty"`
+	Type     string                `json:"type"`
+	Server   *ServerInfo           `json:"server,omitempty"`
+	Islands  []projections.Island  `json:"islands,omitempty"`
+	Island   *projections.Island   `json:"island,omitempty"`
+	Repos    []projections.Repo    `json:"repos,omitempty"`
+	Repo     *projections.Repo     `json:"repo,omitempty"`
+	Sessions []projections.Session `json:"sessions,omitempty"`
+	Session  *projections.Session  `json:"session,omitempty"`
 }
 
 // ServerInfo describes the NATS server as it describes itself to the

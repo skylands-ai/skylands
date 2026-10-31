@@ -78,3 +78,154 @@ type RegisterRepo struct {
 	ID   string `json:"id"`
 	Path string `json:"path"`
 }
+
+// Session event types, produced by the Session aggregate on each daemon.
+const (
+	EventSessionStarted    = "SessionStarted"
+	EventPromptSent        = "PromptSent"
+	EventAgentSpawned      = "AgentSpawned"
+	EventToolCallStarted   = "ToolCallStarted"
+	EventToolCallCompleted = "ToolCallCompleted"
+	EventPlanUpdated       = "PlanUpdated"
+	EventUsageReported     = "UsageReported"
+	EventAgentFailed       = "AgentFailed"
+	EventSessionEnded      = "SessionEnded"
+)
+
+// IsSessionEvent reports whether an event type belongs to a session.
+func IsSessionEvent(eventType string) bool {
+	switch eventType {
+	case EventSessionStarted, EventPromptSent, EventAgentSpawned, EventToolCallStarted, EventToolCallCompleted,
+		EventPlanUpdated, EventUsageReported, EventAgentFailed, EventSessionEnded:
+		return true
+	}
+	return false
+}
+
+// SessionStarted records a new session in its own git worktree.
+type SessionStarted struct {
+	SessionID string `json:"sessionId"`
+	RepoID    string `json:"repoId"`
+	// Agent names the adapter the session runs on, such as "claude".
+	Agent string `json:"agent"`
+	// Model is the model the agent was asked to use, or empty for the
+	// agent's own default.
+	Model    string `json:"model,omitempty"`
+	Worktree string `json:"worktree"`
+	Branch   string `json:"branch"`
+}
+
+// PromptSent records what a person asked the session to do.
+type PromptSent struct {
+	SessionID string `json:"sessionId"`
+	Text      string `json:"text"`
+}
+
+// AgentSpawned records that the agent process is up and identified itself.
+type AgentSpawned struct {
+	SessionID string `json:"sessionId"`
+	// AgentID identifies the agent within the session. The lead agent's id
+	// is the session id.
+	AgentID string `json:"agentId"`
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+}
+
+// ToolCallStarted records a tool call the agent began, with the files it
+// touches relative to the worktree.
+type ToolCallStarted struct {
+	SessionID  string   `json:"sessionId"`
+	ToolCallID string   `json:"toolCallId"`
+	Title      string   `json:"title"`
+	Kind       string   `json:"kind,omitempty"`
+	Locations  []string `json:"locations,omitempty"`
+}
+
+// ToolCallCompleted records a tool call's end. Status is "completed" or
+// "failed".
+type ToolCallCompleted struct {
+	SessionID  string   `json:"sessionId"`
+	ToolCallID string   `json:"toolCallId"`
+	Status     string   `json:"status"`
+	Locations  []string `json:"locations,omitempty"`
+}
+
+// PlanEntry is one step of an agent's plan.
+type PlanEntry struct {
+	Content  string `json:"content"`
+	Priority string `json:"priority,omitempty"`
+	Status   string `json:"status"`
+}
+
+// PlanUpdated records the agent's whole plan as it stands.
+type PlanUpdated struct {
+	SessionID string      `json:"sessionId"`
+	Entries   []PlanEntry `json:"entries"`
+}
+
+// UsageReported records context use: Used tokens of a Size token window.
+type UsageReported struct {
+	SessionID string `json:"sessionId"`
+	Used      uint64 `json:"used"`
+	Size      uint64 `json:"size"`
+}
+
+// AgentFailed records that the agent stopped on an error.
+type AgentFailed struct {
+	SessionID string `json:"sessionId"`
+	Error     string `json:"error"`
+}
+
+// SessionEnded records that the agent finished its turn.
+type SessionEnded struct {
+	SessionID  string `json:"sessionId"`
+	StopReason string `json:"stopReason"`
+}
+
+// Session commands, sent to a daemon by request-reply.
+const CommandStartSession = "StartSession"
+
+// StartSession asks a host to run an agent on a repository with a prompt.
+// The sender chooses SessionID so it can address the session right away.
+type StartSession struct {
+	ID        string `json:"id"`
+	SessionID string `json:"sessionId"`
+	RepoID    string `json:"repoId"`
+	Agent     string `json:"agent"`
+	// Model overrides the agent's default model when set.
+	Model  string `json:"model,omitempty"`
+	Prompt string `json:"prompt"`
+}
+
+// Reply is the answer to any command: an error, or the handler's result.
+type Reply struct {
+	Error  string          `json:"error,omitempty"`
+	Result json.RawMessage `json:"result,omitempty"`
+}
+
+// StartSessionResult is the result of a StartSession command.
+type StartSessionResult struct {
+	SessionID string `json:"sessionId"`
+	Worktree  string `json:"worktree"`
+	Branch    string `json:"branch"`
+}
+
+// Fetch kinds a daemon answers.
+const (
+	// FetchTranscript returns a session's prompt and agent messages.
+	FetchTranscript = "transcript"
+	// FetchDiff returns the changes in a session's worktree.
+	FetchDiff = "diff"
+)
+
+// FetchSessionRequest asks for one session's transcript or diff.
+type FetchSessionRequest struct {
+	SessionID string `json:"sessionId"`
+}
+
+// TextResult is a fetched text, cut off at the daemon's size limit when
+// Truncated is set.
+type TextResult struct {
+	Text      string `json:"text"`
+	Truncated bool   `json:"truncated,omitempty"`
+}

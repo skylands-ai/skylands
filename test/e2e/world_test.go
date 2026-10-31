@@ -4,13 +4,16 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,9 +24,16 @@ import (
 	"github.com/skylands-ai/skylands/internal/citadel/projections"
 	"github.com/skylands-ai/skylands/internal/citadel/web"
 	"github.com/skylands-ai/skylands/internal/daemon"
+	"github.com/skylands-ai/skylands/internal/daemon/agents"
 	"github.com/skylands-ai/skylands/internal/daemon/socket"
+	"github.com/skylands-ai/skylands/internal/fakeagent"
 	"github.com/skylands-ai/skylands/internal/natsembed"
 )
+
+func TestMain(m *testing.M) {
+	fakeagent.TestMainHook()
+	os.Exit(m.Run())
+}
 
 // freeAddr picks a port that is free right now. Whoever listens on it does
 // so a moment later, which is a small race these tests accept.
@@ -102,8 +112,12 @@ func (w *world) startDaemonWithSocket(host, socketPath string) (stop func()) {
 	w.t.Helper()
 	ctx, cancel := context.WithCancel(w.ctx)
 	done := make(chan error, 1)
+	fakeCmd, fakeEnv := fakeagent.TestCommand()
 	go func() {
-		done <- daemon.Run(ctx, daemon.Config{Host: host, NATSURL: w.hub.LeafURL(), DataDir: w.t.TempDir(), SocketPath: socketPath, Version: "v0.1.0"})
+		done <- daemon.Run(ctx, daemon.Config{
+			Host: host, NATSURL: w.hub.LeafURL(), DataDir: w.t.TempDir(), SocketPath: socketPath, Version: "v0.1.0",
+			Adapters: agents.Registry{"fake": {Name: "fake", Provider: "local", Command: fakeCmd, Env: fakeEnv}},
+		})
 	}()
 	return func() {
 		cancel()
@@ -119,6 +133,7 @@ type browser struct {
 	server    web.ServerInfo
 	islands   map[string]projections.Island
 	repos     map[string]projections.Repo
+	sessions  map[string]projections.Session
 	snapshots int
 	err       error
 }
@@ -130,7 +145,7 @@ func (w *world) openBrowser() *browser {
 		w.t.Fatalf("dial: %v", err)
 	}
 	w.t.Cleanup(func() { _ = c.CloseNow() })
-	b := &browser{islands: map[string]projections.Island{}, repos: map[string]projections.Repo{}}
+	b := &browser{islands: map[string]projections.Island{}, repos: map[string]projections.Repo{}, sessions: map[string]projections.Session{}}
 	go func() {
 		for {
 			_, data, err := c.Read(w.ctx)
@@ -156,6 +171,10 @@ func (w *world) openBrowser() *browser {
 				for _, r := range m.Repos {
 					b.repos[r.ID] = r
 				}
+				b.sessions = map[string]projections.Session{}
+				for _, s := range m.Sessions {
+					b.sessions[s.ID] = s
+				}
 				if m.Server != nil {
 					b.server = *m.Server
 				}
@@ -171,6 +190,10 @@ func (w *world) openBrowser() *browser {
 				if m.Repo != nil {
 					b.repos[m.Repo.ID] = *m.Repo
 				}
+			case "session":
+				if m.Session != nil {
+					b.sessions[m.Session.ID] = *m.Session
+				}
 			}
 			b.mu.Unlock()
 		}
@@ -179,9 +202,10 @@ func (w *world) openBrowser() *browser {
 }
 
 type view struct {
-	server  web.ServerInfo
-	islands map[string]projections.Island
-	repos   map[string]projections.Repo
+	server   web.ServerInfo
+	islands  map[string]projections.Island
+	repos    map[string]projections.Repo
+	sessions map[string]projections.Session
 }
 
 // wait blocks until pred holds for the browser's state, or fails the test
@@ -197,6 +221,10 @@ func (b *browser) wait(t *testing.T, what string, timeout time.Duration, pred fu
 		}
 		for k, r := range b.repos {
 			v.repos[k] = r
+		}
+		v.sessions = make(map[string]projections.Session, len(b.sessions))
+		for k, s := range b.sessions {
+			v.sessions[k] = s
 		}
 		err := b.err
 		b.mu.Unlock()
@@ -383,5 +411,101 @@ func TestRepoRegisterMakesATerrace(t *testing.T) {
 	st, err := cli.Status(ctx)
 	if err != nil || len(st.Repos) != 1 || st.Repos[0].ID != info.ID {
 		t.Errorf("Status = %+v, %v", st, err)
+	}
+}
+
+func TestSessionStartedFromTheWorld(t *testing.T) {
+	if testing.Short() {
+		t.Skip("whole-world test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	w := startWorld(t, ctx)
+	b := w.openBrowser()
+	sock := shortSocket(t)
+	stop := w.startDaemonWithSocket("ws", sock)
+	defer stop()
+	b.wait(t, "ws reachable", 15*time.Second, func(v view) bool { return reachable(v, "ws", true) })
+
+	repoDir := gitRepo(t, "main.go", "util.go")
+	cli := socket.Dial(sock)
+	var info socket.RepoInfo
+	var err error
+	for i := 0; i < 100; i++ {
+		if info, err = cli.RegisterRepo(ctx, repoDir); err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("RegisterRepo: %v", err)
+	}
+	b.wait(t, "the terrace", 20*time.Second, func(v view) bool { _, ok := v.repos[info.ID]; return ok })
+
+	post := func(body string) (int, map[string]any) {
+		t.Helper()
+		resp, err := http.Post(w.webURL+"/api/sessions", "application/json", bytes.NewBufferString(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		data, _ := io.ReadAll(resp.Body)
+		var out map[string]any
+		_ = json.Unmarshal(data, &out)
+		return resp.StatusCode, out
+	}
+
+	// Bad orders are refused with a reason.
+	if code, out := post(`{"host":"ws","repoId":"nope","agent":"fake","prompt":"x"}`); code != http.StatusBadRequest || out["error"] == nil {
+		t.Errorf("unknown repo: %d %v", code, out)
+	}
+	if code, _ := post(`{"host":"nowhere","repoId":"x","agent":"fake","prompt":"x"}`); code != http.StatusNotFound {
+		t.Errorf("unknown host: %d", code)
+	}
+
+	// A good one starts a session on the island, and its events stream back.
+	code, out := post(`{"host":"ws","repoId":"` + info.ID + `","agent":"fake","prompt":"make it faster"}`)
+	if code != http.StatusCreated || out["sessionId"] == nil {
+		t.Fatalf("start session: %d %v", code, out)
+	}
+	id := out["sessionId"].(string)
+	v := b.wait(t, "the session to end", 30*time.Second, func(v view) bool {
+		s, ok := v.sessions[id]
+		return ok && s.Status == "ended"
+	})
+	s := v.sessions[id]
+	if s.Host != "ws" || s.RepoID != info.ID || s.Prompt != "make it faster" || s.AgentName != "skylands-fakeagent" || s.StopReason != "end_turn" {
+		t.Errorf("session = %+v", s)
+	}
+	if len(s.Recent) != 3 || s.Files["main.go"] != "edit" || s.Files["util.go"] != "read" || s.CurrentFile != "main.go" || s.Used == 0 {
+		t.Errorf("activity: recent=%+v files=%v current=%q used=%d", s.Recent, s.Files, s.CurrentFile, s.Used)
+	}
+
+	// A later browser gets the session in its snapshot.
+	b2 := w.openBrowser()
+	b2.wait(t, "a snapshot with the session", 5*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "ended" })
+
+	// The response and the diff are fetched from the host through the citadel.
+	get := func(path string) (int, string) {
+		t.Helper()
+		resp, err := http.Get(w.webURL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		data, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(data)
+	}
+	if code, body := get("/api/sessions/ws/" + id + "/transcript"); code != http.StatusOK || !strings.Contains(body, "make it faster") || !strings.Contains(body, "Done.") {
+		t.Errorf("transcript: %d %s", code, body)
+	}
+	if code, body := get("/api/sessions/ws/" + id + "/diff"); code != http.StatusOK || !strings.Contains(body, `"text"`) {
+		t.Errorf("diff: %d %s", code, body)
+	}
+	if code, _ := get("/api/sessions/ws/nope/transcript"); code != http.StatusNotFound {
+		t.Errorf("unknown session transcript: %d", code)
+	}
+	if code, _ := get("/api/sessions/nowhere/x/transcript"); code != http.StatusBadGateway {
+		t.Errorf("unknown host transcript: %d", code)
 	}
 }
