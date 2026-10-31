@@ -203,9 +203,33 @@ func TestStartSessionOverNATS(t *testing.T) {
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
+	// The edit waits on a person, and the local CLI's path answers it.
+	for {
+		reqs, err := cli.Requests(ctx)
+		if err == nil && len(reqs) == 1 {
+			if reqs[0].Tool != "Edit "+reqs[0].Locations[0] || reqs[0].Repo != repo.Name || reqs[0].Agent != "fake" || len(reqs[0].Options) != 3 {
+				t.Errorf("request = %+v", reqs[0])
+			}
+			if _, err := cli.Deny(ctx, "nope"); err == nil || !strings.Contains(err.Error(), "no such request") {
+				t.Errorf("deny an unknown request: err = %v", err)
+			}
+			if r, err := cli.Approve(ctx, reqs[0].ID); err != nil || r.ID != reqs[0].ID {
+				t.Fatalf("approve: %+v, %v", r, err)
+			}
+			break
+		}
+		if time.Now().After(deadline.Add(30 * time.Second)) {
+			t.Fatalf("no request ever waited: %+v, %v", reqs, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	waitSession("idle", 1)
+	if reqs, err := cli.Requests(ctx); err != nil || len(reqs) != 0 {
+		t.Errorf("requests after approval = %+v, %v", reqs, err)
+	}
 
-	// SendPrompt runs another turn, and StopAgent ends the session.
+	// SendPrompt runs another turn, whose edit is approved over NATS, and
+	// StopAgent ends the session.
 	command := func(typ string, body any) v1.Reply {
 		t.Helper()
 		data, _ := json.Marshal(body)
@@ -219,6 +243,20 @@ func TestStartSessionOverNATS(t *testing.T) {
 	}
 	if r := command(v1.CommandSendPrompt, v1.SendPrompt{ID: "cmd-p", Text: "once more"}); r.Error != "" {
 		t.Fatalf("SendPrompt failed: %s", r.Error)
+	}
+	for {
+		st, err := cli.Status(ctx)
+		if err == nil && len(st.Sessions) == 1 && st.Sessions[0].Pending == 1 {
+			reqs, _ := cli.Requests(ctx)
+			if r := command(v1.CommandApproveToolCall, v1.ApproveToolCall{ID: "cmd-ok", RequestID: reqs[0].ID}); r.Error != "" {
+				t.Fatalf("ApproveToolCall failed: %s", r.Error)
+			}
+			break
+		}
+		if time.Now().After(deadline.Add(30 * time.Second)) {
+			t.Fatalf("the second turn never waited: %+v, %v", st, err)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	waitSession("idle", 2)
 	if r := command(v1.CommandStopAgent, v1.StopAgent{ID: "cmd-stop"}); r.Error != "" {

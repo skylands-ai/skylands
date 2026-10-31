@@ -509,9 +509,22 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 		t.Fatalf("start session: %d %v", code, out)
 	}
 	id := out["sessionId"].(string)
-	v := b.wait(t, "the first turn to end", 30*time.Second, func(v view) bool {
+
+	// The edit waits on a person: the browser sees the request and answers it.
+	v := b.wait(t, "a request to wait", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && len(s.Pending) == 1 })
+	req := v.sessions[id].Pending[0]
+	if req.Title != "Edit main.go" || req.Kind != "edit" || len(req.Options) != 3 {
+		t.Errorf("pending request = %+v", req)
+	}
+	if code, out := post2("/api/sessions/ws/"+id+"/requests/nope/approve", `{}`); code != http.StatusBadRequest {
+		t.Errorf("approve an unknown request: %d %v", code, out)
+	}
+	if code, out := post2("/api/sessions/ws/"+id+"/requests/"+req.RequestID+"/approve", `{}`); code != http.StatusOK {
+		t.Fatalf("approve: %d %v", code, out)
+	}
+	v = b.wait(t, "the first turn to end", 30*time.Second, func(v view) bool {
 		s, ok := v.sessions[id]
-		return ok && s.Status == "idle"
+		return ok && s.Status == "idle" && len(s.Pending) == 0
 	})
 	s := v.sessions[id]
 	if s.Host != "ws" || s.RepoID != info.ID || s.Prompt != "make it faster" || s.AgentName != "skylands-fakeagent" || s.StopReason != "end_turn" || s.Turns != 1 {
@@ -520,6 +533,12 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 	if len(s.Recent) != 3 || s.Files["main.go"] != "edit" || s.Files["util.go"] != "read" || s.CurrentFile != "main.go" || s.Used == 0 {
 		t.Errorf("activity: recent=%+v files=%v current=%q used=%d", s.Recent, s.Files, s.CurrentFile, s.Used)
 	}
+
+	// A trusted session asks no one, so the next turn runs through.
+	if code, out := post2("/api/sessions/ws/"+id+"/trust", `{"trusted":true}`); code != http.StatusOK {
+		t.Fatalf("trust: %d %v", code, out)
+	}
+	b.wait(t, "the session to be trusted", 10*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Trusted })
 
 	// A browser reading the conversation hears the next turn as it is written.
 	if err := b.watch("ws", id); err != nil {

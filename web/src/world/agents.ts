@@ -3,7 +3,7 @@ import { el, reduceMotion } from '../dom'
 import { base } from '../files'
 import { airshipMesh, type Provider } from './airship'
 import type { Labels } from './labels'
-import { M } from './materials'
+import { G, M } from './materials'
 
 /** What the page knows about one running or just-finished agent. */
 export interface AgentState {
@@ -14,8 +14,10 @@ export interface AgentState {
   /** What the agent reports it is doing, for the name tag when it is not flying. */
   action: string
   status: 'running' | 'idle' | 'ended' | 'failed'
-  /** Idle with a last message nobody has seen yet. */
+  /** Idle with a last message nobody has seen yet, or a tool call waiting on a person. */
   waiting: boolean
+  /** A tool call is waiting on a person: the airship shows a beam. */
+  approval: boolean
   /** The file it is on, repo-relative, or null before the first tool call. */
   file: string | null
   kind: 'read' | 'edit'
@@ -56,6 +58,8 @@ interface AgentView {
   action: string
   status: AgentState['status']
   waiting: boolean
+  approval: boolean
+  beam: THREE.Mesh
   file: string | null
   kind: 'read' | 'edit'
   atFile: boolean
@@ -141,13 +145,19 @@ export class Agents {
     const ship = airshipMesh(s.prov)
     ship.group.userData.agentId = s.id
     ship.group.userData.terraceId = s.terrace
+    // The beam drops from the gondola to whatever is below while a tool
+    // call waits on a person. It is not pickable; the airship is.
+    const beam = new THREE.Mesh(G.beam, M.beam)
+    beam.visible = false
+    beam.raycast = () => {}
+    ship.group.add(beam)
     t.island.add(ship.group)
     const tag = el('button', { type: 'button', class: 'tag', onclick: () => this.onPick(host, s.terrace, s.id) })
     this.labelsEl.appendChild(tag)
     const pad = padSpot(t)
     const v: AgentView = {
       id: s.id, host, terrace: s.terrace, prov: s.prov, mesh: ship.group, mats: ship.mats, bags: ship.bags, tag,
-      name: s.name, action: s.action, status: s.status, waiting: s.waiting, file: s.file, kind: s.kind, atFile: s.atFile, ctx: s.ctx,
+      name: s.name, action: s.action, status: s.status, waiting: s.waiting, approval: s.approval, beam, file: s.file, kind: s.kind, atFile: s.atFile, ctx: s.ctx,
       from: pad, to: pad, phase: 'dwell', t: 0, bob: Math.random() * 6.283, dwellIdx: null,
     }
     ship.group.position.set(pad.x, pad.top + altFor(s.ctx), pad.z)
@@ -160,6 +170,7 @@ export class Agents {
     v.action = s.action
     v.status = s.status
     v.waiting = s.waiting
+    v.approval = s.approval
     v.ctx = s.ctx
     v.kind = s.kind
     v.file = s.file
@@ -215,6 +226,14 @@ export class Agents {
       const nb = Math.min(4, Math.ceil(v.ctx / 25))
       v.bags.forEach((b, i) => (b.visible = i < nb))
       const bob = reduceMotion ? 0 : Math.sin(time * 1.8 + v.bob) * 0.1
+      v.beam.visible = v.approval && v.phase !== 'leave'
+      if (v.beam.visible) {
+        // From the gondola down to the roof or the pad, pulsing a little.
+        const len = Math.max(0.3, v.mesh.position.y - v.to.top - 0.6)
+        v.beam.scale.set(1, len, 1)
+        v.beam.position.y = -0.6 - len / 2
+        ;(v.beam.material as THREE.MeshBasicMaterial).opacity = reduceMotion ? 0.85 : 0.6 + 0.3 * Math.sin(time * 4)
+      }
 
       if (v.phase === 'leave') {
         v.t += dt
@@ -317,6 +336,7 @@ export class Agents {
 
   /** What the tag says under the name: the flight, the file, or whatever else it is doing. */
   private now(v: AgentView): string {
+    if (v.approval) return 'Needs your approval'
     if (v.status === 'idle' && v.phase !== 'move') return v.waiting ? 'Waiting for you' : 'Idle'
     const f = v.file ? base(v.file) : ''
     if (v.phase === 'move') {

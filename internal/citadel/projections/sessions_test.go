@@ -57,6 +57,18 @@ func TestSessionsFollowSessionEvents(t *testing.T) {
 		t.Errorf("plan/usage = %+v %d/%d", s.Plan, s.Used, s.Size)
 	}
 
+	apply(v1.EventPermissionRequested, v1.PermissionRequested{SessionID: "s1", RequestID: "r1", ToolCallID: "e1", Title: "Edit main.go", Kind: "edit", Options: []v1.PermissionOption{{ID: "a", Name: "Allow", Kind: "allow_once"}}})
+	if s := p.List()[0]; len(s.Pending) != 1 || s.Pending[0].Title != "Edit main.go" || s.Pending[0].At.IsZero() {
+		t.Errorf("session with a request = %+v", s)
+	}
+	apply(v1.EventPermissionGranted, v1.PermissionGranted{SessionID: "s1", RequestID: "r1", OptionID: "a", By: "citadel"})
+	if s := p.List()[0]; len(s.Pending) != 0 {
+		t.Errorf("session after the grant = %+v", s)
+	}
+	apply(v1.EventSessionTrusted, v1.SessionTrusted{SessionID: "s1", Trusted: true})
+	if s := p.List()[0]; !s.Trusted {
+		t.Errorf("session after trust = %+v", s)
+	}
 	apply(v1.EventSessionTitled, v1.SessionTitled{SessionID: "s1", Title: "Fix the tests"})
 	if s := p.List()[0]; s.Title != "Fix the tests" {
 		t.Errorf("titled session = %+v", s)

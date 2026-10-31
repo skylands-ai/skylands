@@ -6,8 +6,8 @@ package agents
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,6 +73,24 @@ type Observer interface {
 	Usage(used, size uint64)
 	// Message receives agent text, which stays on the host.
 	Message(text string)
+	// Permission decides a tool call the agent asks about. It may block
+	// until a person answers; ctx ends if the agent gives up waiting.
+	Permission(ctx context.Context, req PermissionRequest) Decision
+}
+
+// PermissionRequest is a tool call the agent will not make without an
+// answer, with the options it offers.
+type PermissionRequest struct {
+	ToolCall ToolCall
+	// Input is the exact tool input the agent proposed, as JSON.
+	Input   json.RawMessage
+	Options []v1.PermissionOption
+}
+
+// Decision answers a permission request: the chosen option, or cancelled.
+type Decision struct {
+	OptionID  string
+	Cancelled bool
 }
 
 // handler answers the agent's calls to the client side of ACP.
@@ -166,33 +184,48 @@ func (h *handler) update(n *acp.SessionNotification) {
 	}
 }
 
-// RequestPermission allows every tool call for now. Rules and signed
-// approvals replace this once the Session aggregate records
-// PermissionRequested.
-func (h *handler) RequestPermission(_ context.Context, req *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
-	var pick *acp.PermissionOption
-	for i := range req.Options {
-		o := &req.Options[i]
-		if o.Kind == acp.PermissionOptionKindAllowOnce {
-			pick = o
-			break
+// RequestPermission hands a tool call the agent asks about to the
+// observer, which applies the host's rules or waits for a person. A side
+// session, such as a title request, is refused: it was told not to use
+// tools.
+func (h *handler) RequestPermission(ctx context.Context, req *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
+	h.mu.Lock()
+	_, side := h.side[req.SessionID]
+	h.mu.Unlock()
+	if side {
+		for _, o := range req.Options {
+			if o.Kind == acp.PermissionOptionKindRejectOnce || o.Kind == acp.PermissionOptionKindRejectAlways {
+				return &acp.RequestPermissionResponse{Outcome: acp.SelectedRequestPermissionOutcome(o.OptionID)}, nil
+			}
 		}
-		if o.Kind == acp.PermissionOptionKindAllowAlways && pick == nil {
-			pick = o
-		}
-	}
-	if pick == nil && len(req.Options) > 0 {
-		pick = &req.Options[0]
-	}
-	if pick == nil {
 		return &acp.RequestPermissionResponse{Outcome: acp.CancelledRequestPermissionOutcome()}, nil
 	}
-	title := ""
-	if req.ToolCall.Title != nil {
-		title = *req.ToolCall.Title
+	u := req.ToolCall
+	tc := ToolCall{ID: string(u.ToolCallID), Status: "pending"}
+	if u.Title != nil {
+		tc.Title = *u.Title
 	}
-	slog.Info("agents: permission auto-allowed", "tool", title, "option", pick.Name)
-	return &acp.RequestPermissionResponse{Outcome: acp.SelectedRequestPermissionOutcome(pick.OptionID)}, nil
+	if u.Kind != nil {
+		tc.Kind = string(*u.Kind)
+	}
+	if u.Locations != nil {
+		tc.Locations = h.relative(*u.Locations)
+	}
+	var input json.RawMessage
+	if u.RawInput != nil {
+		if data, err := json.Marshal(u.RawInput); err == nil {
+			input = data
+		}
+	}
+	options := make([]v1.PermissionOption, 0, len(req.Options))
+	for _, o := range req.Options {
+		options = append(options, v1.PermissionOption{ID: string(o.OptionID), Name: o.Name, Kind: string(o.Kind)})
+	}
+	d := h.obs.Permission(ctx, PermissionRequest{ToolCall: tc, Input: input, Options: options})
+	if d.Cancelled || d.OptionID == "" {
+		return &acp.RequestPermissionResponse{Outcome: acp.CancelledRequestPermissionOutcome()}, nil
+	}
+	return &acp.RequestPermissionResponse{Outcome: acp.SelectedRequestPermissionOutcome(acp.PermissionOptionId(d.OptionID))}, nil
 }
 
 // relative turns absolute paths inside the worktree into repo-relative

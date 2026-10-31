@@ -100,9 +100,29 @@ through its ACP adapter from npm, which `npx` fetches on first use, and needs
 a Claude Code login on that machine. The model chip overrides the model for
 that session; leave it empty for Claude Code's own default. A model alias
 such as `fable` in your Claude Code settings may not work under the adapter,
-so set a full model id in the chip if a session fails on its model. Until
-approvals land, the daemon allows every tool call an agent asks for, so run
-real agents only on repositories you would trust them with unattended.
+so set a full model id in the chip if a session fails on its model.
+
+### Approvals
+
+An agent does nothing to a repository without permission. The daemon's
+rules let tool calls that only look pass: reads, searches, and thinking.
+Everything else, an edit, a shell command, a fetch, waits for a person. A
+waiting call lights the citadel's beacon, drops a yellow beam from the
+airship, counts in the Inbox badge and the tab title, and shows in the
+conversation as a card with the tool, the exact input the agent proposed,
+and the answers the agent accepts: Allow, Always allow, Deny. "Trust this
+session", in a conversation's header, lets that session's calls through
+without asking from then on. A request nobody answers in 30 minutes
+expires, and the agent is told it was cancelled; ending the session
+cancels whatever it was asking.
+
+On the host itself, `skylands request list` shows what is waiting, and
+`skylands request approve <id>` and `skylands request deny <id>` settle it
+over the daemon's socket, which works while the citadel is unreachable.
+Every request and every answer is recorded in the session's history, with
+who answered: the host's CLI, a browser through the citadel, or trust.
+Browser approvals are not yet signed, so anyone who can reach the citadel
+can approve; passkeys come with user enrollment.
 
 ### An island on another machine
 

@@ -25,6 +25,14 @@ func shortSocket(t *testing.T) string {
 
 type fakeAPI struct{ repos []RepoInfo }
 
+func (f *fakeAPI) Requests(context.Context) []RequestInfo { return []RequestInfo{} }
+func (f *fakeAPI) Approve(_ context.Context, requestID, _ string) (RequestInfo, error) {
+	return RequestInfo{ID: requestID}, nil
+}
+func (f *fakeAPI) Deny(_ context.Context, requestID, _ string) (RequestInfo, error) {
+	return RequestInfo{ID: requestID}, nil
+}
+
 func (f *fakeAPI) Status(context.Context) StatusInfo {
 	return StatusInfo{Host: "ws", World: "nats-leaf://x:7422", Version: "v1", Started: time.Now(), Repos: f.repos}
 }

@@ -81,6 +81,19 @@ and `deny` work locally over the socket. A per-session "trust this session"
 switch is the stopgap. Signed approvals from a browser follow once passkeys
 exist.
 
+Done: a tool call the host's rules do not allow (anything but read, search,
+and think) blocks the agent until a person answers. The daemon records
+PermissionRequested with the exact input and the agent's options, then
+PermissionGranted or PermissionDenied with who answered (local, citadel,
+or trust), or PermissionExpired after 30 minutes, on stop, or on restart.
+ApproveToolCall, DenyToolCall, and TrustSession arrive over NATS from the
+citadel's API or over the socket from `request list|approve|deny`. The
+browser shows a card in the conversation with Allow, Always allow, and
+Deny, a trust switch in the header, a beam under the airship, the lit
+beacon, and the waiting count. The fake agent asks before its edit, so
+every test exercises the path. Signed approvals remain for the users
+milestone; the rule language remains a kind allow-list for now.
+
 ### Milestone 9: sessions that outlive the daemon, and landing the work
 
 The daemon resumes sessions through ACP session load after a restart, which
@@ -126,6 +139,7 @@ hand-placed rather than derived from the host.
   "Waiting on you" means idle with a last message you have not read, which
   is what the tab title and the Inbox badge count; reading it in the inbox
   makes the session idle. Approvals will join that count in milestone 8.
+- Milestone 8 is done: approvals. See the milestone for what landed.
 - Milestone 7 is done: the conversation streams. Every transcript append is
   published on the session's live subject with its byte offset, plain NATS
   with no stream; a browser watching a conversation over the WebSocket gets

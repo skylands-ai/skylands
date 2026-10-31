@@ -188,20 +188,49 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		return nil, err
 	}
 	edited := ""
+	refused := false
 	if len(files) > 0 {
 		if !pause() {
 			return done()
 		}
 		edited = files[0]
 		id := acp.ToolCallId(fmt.Sprintf("t%d-edit-0", turn))
-		if err := send(toolCall(id, "Edit "+edited, acp.ToolKindEdit, filepath.Join(s.cwd, edited), acp.ToolCallStatusInProgress)); err != nil {
+		if err := send(toolCall(id, "Edit "+edited, acp.ToolKindEdit, filepath.Join(s.cwd, edited), acp.ToolCallStatusPending)); err != nil {
 			return nil, err
 		}
-		if !pause() {
-			return done()
-		}
-		if err := send(toolCallUpdate(id, acp.ToolCallStatusCompleted)); err != nil {
+		// An edit needs permission, like a real agent's would.
+		title := "Edit " + edited
+		kind := acp.ToolKindEdit
+		locs := []acp.ToolCallLocation{{Path: filepath.Join(s.cwd, edited)}}
+		perm, err := a.conn.RequestPermission(ctx, &acp.RequestPermissionRequest{
+			SessionID: req.SessionID,
+			ToolCall:  acp.ToolCallUpdate{ToolCallID: id, Title: &title, Kind: &kind, Locations: &locs, RawInput: map[string]any{"path": edited, "change": "rewrite"}},
+			Options: []acp.PermissionOption{
+				{OptionID: "allow", Name: "Allow", Kind: acp.PermissionOptionKindAllowOnce},
+				{OptionID: "always", Name: "Always allow", Kind: acp.PermissionOptionKindAllowAlways},
+				{OptionID: "deny", Name: "Deny", Kind: acp.PermissionOptionKindRejectOnce},
+			},
+		})
+		if err != nil {
 			return nil, err
+		}
+		allowed := perm.Outcome.Outcome == acp.RequestPermissionOutcomeTypeSelected && (perm.Outcome.OptionID == "allow" || perm.Outcome.OptionID == "always")
+		if !allowed {
+			if err := send(toolCallUpdate(id, acp.ToolCallStatusFailed)); err != nil {
+				return nil, err
+			}
+			edited = ""
+			refused = true
+		} else {
+			if err := send(toolCallUpdate(id, acp.ToolCallStatusInProgress)); err != nil {
+				return nil, err
+			}
+			if !pause() {
+				return done()
+			}
+			if err := send(toolCallUpdate(id, acp.ToolCallStatusCompleted)); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -213,6 +242,8 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	msg := fmt.Sprintf("Done with %q. I read %d files", strings.TrimSpace(promptText(req)), n)
 	if edited != "" {
 		msg += " and edited " + edited
+	} else if refused {
+		msg += " and was not allowed to edit"
 	}
 	msg += ". Every tracked file was counted, every hidden one was skipped, and nothing was changed on disk."
 	// Stream the answer in small chunks with no pause, as real agents do.

@@ -230,6 +230,45 @@ func (c *commands) handle(ctx context.Context, msg *nats.Msg) {
 			return
 		}
 		c.replyResult(msg, map[string]any{"sessionId": s.ID, "status": s.Status})
+	case v1.CommandApproveToolCall:
+		var cmd v1.ApproveToolCall
+		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+			c.reply(msg, v1.Reply{Error: "bad ApproveToolCall: " + err.Error()})
+			return
+		}
+		cmd.SessionID = sessionID
+		s, err := c.sessions.Approve(ctx, cmd, "citadel")
+		if err != nil {
+			c.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		c.replyResult(msg, map[string]any{"sessionId": s.ID, "pending": len(s.Pending)})
+	case v1.CommandDenyToolCall:
+		var cmd v1.DenyToolCall
+		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+			c.reply(msg, v1.Reply{Error: "bad DenyToolCall: " + err.Error()})
+			return
+		}
+		cmd.SessionID = sessionID
+		s, err := c.sessions.Deny(ctx, cmd, "citadel")
+		if err != nil {
+			c.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		c.replyResult(msg, map[string]any{"sessionId": s.ID, "pending": len(s.Pending)})
+	case v1.CommandTrustSession:
+		var cmd v1.TrustSession
+		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+			c.reply(msg, v1.Reply{Error: "bad TrustSession: " + err.Error()})
+			return
+		}
+		cmd.SessionID = sessionID
+		s, err := c.sessions.Trust(ctx, cmd)
+		if err != nil {
+			c.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		c.replyResult(msg, map[string]any{"sessionId": s.ID, "trusted": s.Trusted, "pending": len(s.Pending)})
 	default:
 		c.reply(msg, v1.Reply{Error: "unknown command " + commandType})
 	}
@@ -273,9 +312,65 @@ func (a *localAPI) Status(context.Context) socket.StatusInfo {
 		if r, ok := a.agg.Repo(s.RepoID); ok {
 			name = r.Name
 		}
-		sessions = append(sessions, socket.SessionInfo{ID: s.ID, Repo: name, Agent: s.Agent, Status: string(s.Status), Turns: s.Turns, Title: s.Title, Prompt: s.Prompt, StartedAt: s.StartedAt})
+		sessions = append(sessions, socket.SessionInfo{ID: s.ID, Repo: name, Agent: s.Agent, Status: string(s.Status), Turns: s.Turns, Title: s.Title, Prompt: s.Prompt, Pending: len(s.Pending), StartedAt: s.StartedAt})
 	}
 	return socket.StatusInfo{Host: a.host, World: a.world, Version: a.version, Started: a.started, Repos: infos, Sessions: sessions}
+}
+
+func (a *localAPI) Requests(context.Context) []socket.RequestInfo {
+	out := []socket.RequestInfo{}
+	for _, r := range a.sessions.Requests() {
+		out = append(out, a.requestInfo(r))
+	}
+	return out
+}
+
+func (a *localAPI) requestInfo(r session.Request) socket.RequestInfo {
+	name := r.Session.RepoID
+	if repo, ok := a.agg.Repo(r.Session.RepoID); ok {
+		name = repo.Name
+	}
+	title := r.Session.Title
+	if title == "" {
+		title = r.Session.Prompt
+	}
+	options := make([]socket.OptionInfo, 0, len(r.Permission.Options))
+	for _, o := range r.Permission.Options {
+		options = append(options, socket.OptionInfo{ID: o.ID, Name: o.Name, Kind: o.Kind})
+	}
+	return socket.RequestInfo{
+		ID: r.Permission.RequestID, Session: r.Session.ID, Conversation: title, Repo: name, Agent: r.Session.Agent,
+		Tool: r.Permission.Title, Kind: r.Permission.Kind, Locations: r.Permission.Locations, Input: r.Permission.Input, Options: options, Since: r.Permission.At,
+	}
+}
+
+func (a *localAPI) Approve(ctx context.Context, requestID, commandID string) (socket.RequestInfo, error) {
+	s, ok := a.sessions.FindRequest(requestID)
+	if !ok {
+		return socket.RequestInfo{}, session.ErrUnknownRequest
+	}
+	info := a.pendingInfo(s, requestID)
+	_, err := a.sessions.Approve(ctx, v1.ApproveToolCall{ID: commandID, SessionID: s.ID, RequestID: requestID}, "local")
+	return info, err
+}
+
+func (a *localAPI) Deny(ctx context.Context, requestID, commandID string) (socket.RequestInfo, error) {
+	s, ok := a.sessions.FindRequest(requestID)
+	if !ok {
+		return socket.RequestInfo{}, session.ErrUnknownRequest
+	}
+	info := a.pendingInfo(s, requestID)
+	_, err := a.sessions.Deny(ctx, v1.DenyToolCall{ID: commandID, SessionID: s.ID, RequestID: requestID}, "local")
+	return info, err
+}
+
+func (a *localAPI) pendingInfo(s session.Session, requestID string) socket.RequestInfo {
+	for _, p := range s.Pending {
+		if p.RequestID == requestID {
+			return a.requestInfo(session.Request{Session: s, Permission: p})
+		}
+	}
+	return socket.RequestInfo{ID: requestID, Session: s.ID}
 }
 
 func (a *localAPI) RegisterRepo(ctx context.Context, path, commandID string) (socket.RepoInfo, error) {

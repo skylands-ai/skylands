@@ -27,12 +27,25 @@ type recorder struct {
 	plans    int
 	usage    []uint64
 	messages []string
+	asked    []PermissionRequest
 }
 
 func (r *recorder) Spawned(name, _ string) { r.mu.Lock(); r.name = name; r.mu.Unlock() }
 func (r *recorder) ToolCall(tc ToolCall)   { r.mu.Lock(); r.calls = append(r.calls, tc); r.mu.Unlock() }
 func (r *recorder) Plan(e []v1.PlanEntry)  { r.mu.Lock(); r.plans++; r.mu.Unlock() }
 func (r *recorder) Usage(used, _ uint64)   { r.mu.Lock(); r.usage = append(r.usage, used); r.mu.Unlock() }
+func (r *recorder) Permission(_ context.Context, req PermissionRequest) Decision {
+	r.mu.Lock()
+	r.asked = append(r.asked, req)
+	r.mu.Unlock()
+	for _, o := range req.Options {
+		if o.Kind == "allow_once" {
+			return Decision{OptionID: o.ID}
+		}
+	}
+	return Decision{Cancelled: true}
+}
+
 func (r *recorder) Message(text string) {
 	r.mu.Lock()
 	r.messages = append(r.messages, text)

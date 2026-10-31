@@ -7,11 +7,13 @@ package cli
 
 import (
 	"fmt"
+	"strings"
+	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/skylands-ai/skylands/internal/daemon/socket"
-	"github.com/skylands-ai/skylands/internal/stub"
 )
 
 // socketFlag adds the --socket flag shared by every local command.
@@ -66,9 +68,26 @@ func newRequestListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List what is waiting on a person on this host",
-		Args:  cobra.NoArgs,
+		Long: `Request list shows every tool call an agent on this host will not make
+without an answer: its id, the conversation, the agent, the tool, and how
+long it has waited. Approve or deny one by its id.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return stub.ErrUnimplemented
+			reqs, err := socket.Dial(socketPath).Requests(cmd.Context())
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if len(reqs) == 0 {
+				fmt.Fprintln(out, "Nothing is waiting on you.")
+				return nil
+			}
+			tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "REQUEST\tCONVERSATION\tAGENT\tREPO\tTOOL\tWAITING")
+			for _, r := range reqs {
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, cut(r.Conversation, 40), r.Agent, r.Repo, cut(r.Tool, 50), time.Since(r.Since).Truncate(time.Second))
+			}
+			return tw.Flush()
 		},
 	}
 	socketFlag(cmd, &socketPath)
@@ -82,7 +101,12 @@ func newRequestApproveCmd() *cobra.Command {
 		Short: "Approve a waiting request on this host",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return stub.ErrUnimplemented
+			r, err := socket.Dial(socketPath).Approve(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Approved %s for %s in %s\n", r.Tool, r.Agent, r.Repo)
+			return nil
 		},
 	}
 	socketFlag(cmd, &socketPath)
@@ -96,9 +120,23 @@ func newRequestDenyCmd() *cobra.Command {
 		Short: "Deny a waiting request on this host",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return stub.ErrUnimplemented
+			r, err := socket.Dial(socketPath).Deny(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Denied %s for %s in %s\n", r.Tool, r.Agent, r.Repo)
+			return nil
 		},
 	}
 	socketFlag(cmd, &socketPath)
 	return cmd
+}
+
+// cut shortens s to n characters with an ellipsis, on one line.
+func cut(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > n {
+		return string(r[:n-1]) + "\u2026"
+	}
+	return s
 }

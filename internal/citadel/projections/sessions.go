@@ -1,6 +1,7 @@
 package projections
 
 import (
+	"encoding/json"
 	"sort"
 	"sync"
 	"time"
@@ -10,6 +11,19 @@ import (
 
 // RecentToolCalls is how many tool calls a session keeps for display.
 const RecentToolCalls = 20
+
+// Permission is a tool call waiting on a person, with the options the
+// agent accepts as answers.
+type Permission struct {
+	RequestID  string                `json:"requestId"`
+	ToolCallID string                `json:"toolCallId"`
+	Title      string                `json:"title"`
+	Kind       string                `json:"kind,omitempty"`
+	Locations  []string              `json:"locations,omitempty"`
+	Input      json.RawMessage       `json:"input,omitempty"`
+	Options    []v1.PermissionOption `json:"options"`
+	At         time.Time             `json:"at"`
+}
 
 // ToolCall is one tool call as the session last reported it.
 type ToolCall struct {
@@ -38,9 +52,13 @@ type Session struct {
 	Error      string `json:"error,omitempty"`
 	Turns      int    `json:"turns"`
 	// Title is what the agent named the conversation, if it has yet.
-	Title     string    `json:"title,omitempty"`
-	StartedAt time.Time `json:"startedAt"`
-	EndedAt   time.Time `json:"endedAt,omitzero"`
+	Title string `json:"title,omitempty"`
+	// Trusted means the session's tool calls are allowed without asking.
+	Trusted bool `json:"trusted,omitempty"`
+	// Pending holds the tool calls waiting on a person, oldest first.
+	Pending   []Permission `json:"pending"`
+	StartedAt time.Time    `json:"startedAt"`
+	EndedAt   time.Time    `json:"endedAt,omitzero"`
 	// UpdatedAt is the time of the latest event, which is what "something
 	// new happened" means.
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -83,7 +101,7 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 	case v1.EventSessionStarted:
 		var d v1.SessionStarted
 		if ev.Decode(&d) == nil {
-			s := &Session{Host: host, ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Branch: d.Branch, Status: "running", StartedAt: ev.Time, Recent: []ToolCall{}, Files: map[string]string{}}
+			s := &Session{Host: host, ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Branch: d.Branch, Status: "running", StartedAt: ev.Time, Recent: []ToolCall{}, Files: map[string]string{}, Pending: []Permission{}}
 			p.byID[d.SessionID] = s
 			changed = s
 		}
@@ -112,6 +130,39 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 		if ev.Decode(&d) == nil {
 			if s, ok := p.byID[d.SessionID]; ok {
 				s.Title = d.Title
+				changed = s
+			}
+		}
+	case v1.EventSessionTrusted:
+		var d v1.SessionTrusted
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.Trusted = d.Trusted
+				changed = s
+			}
+		}
+	case v1.EventPermissionRequested:
+		var d v1.PermissionRequested
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.Pending = append(s.Pending, Permission{RequestID: d.RequestID, ToolCallID: d.ToolCallID, Title: d.Title, Kind: d.Kind, Locations: d.Locations, Input: d.Input, Options: d.Options, At: ev.Time})
+				changed = s
+			}
+		}
+	case v1.EventPermissionGranted, v1.EventPermissionDenied, v1.EventPermissionExpired:
+		var d struct {
+			SessionID string `json:"sessionId"`
+			RequestID string `json:"requestId"`
+		}
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				kept := make([]Permission, 0, len(s.Pending))
+				for _, q := range s.Pending {
+					if q.RequestID != d.RequestID {
+						kept = append(kept, q)
+					}
+				}
+				s.Pending = kept
 				changed = s
 			}
 		}
@@ -225,5 +276,6 @@ func cloneSession(s *Session) Session {
 		c.Files[k] = v
 	}
 	c.Plan = append(make([]v1.PlanEntry, 0, len(s.Plan)), s.Plan...)
+	c.Pending = append(make([]Permission, 0, len(s.Pending)), s.Pending...)
 	return c
 }

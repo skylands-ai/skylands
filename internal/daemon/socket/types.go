@@ -3,7 +3,10 @@
 // serves it, and the CLI dials it.
 package socket
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // RegisterRepoRequest is the body of POST /v1/repos.
 type RegisterRepoRequest struct {
@@ -33,7 +36,36 @@ type SessionInfo struct {
 	Turns     int       `json:"turns"`
 	Title     string    `json:"title,omitempty"`
 	Prompt    string    `json:"prompt"`
+	Pending   int       `json:"pending,omitempty"`
 	StartedAt time.Time `json:"startedAt"`
+}
+
+// OptionInfo is one answer a request accepts.
+type OptionInfo struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
+// RequestInfo describes one tool call waiting on a person.
+type RequestInfo struct {
+	ID           string          `json:"id"`
+	Session      string          `json:"session"`
+	Conversation string          `json:"conversation"`
+	Repo         string          `json:"repo"`
+	Agent        string          `json:"agent"`
+	Tool         string          `json:"tool"`
+	Kind         string          `json:"kind,omitempty"`
+	Locations    []string        `json:"locations,omitempty"`
+	Input        json.RawMessage `json:"input,omitempty"`
+	Options      []OptionInfo    `json:"options"`
+	Since        time.Time       `json:"since"`
+}
+
+// DecideRequest is the body of POST /v1/requests/{id}/approve and deny.
+type DecideRequest struct {
+	// CommandID identifies the decision. The client fills it in when empty.
+	CommandID string `json:"commandId,omitempty"`
 }
 
 // StatusInfo is what GET /v1/status returns.

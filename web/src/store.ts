@@ -178,12 +178,19 @@ export function isUnread(s: State, x: Session): boolean {
 }
 
 /**
- * Whether a session waits on you: its agent stopped for a reply and you have
- * not seen its last message. Once seen, it is merely idle. A pending
- * approval will count here too, when approvals exist.
+ * Whether a session waits on you: a tool call needs your approval, or its
+ * agent stopped for a reply and you have not seen its last message. Once
+ * seen, an idle session is merely idle; an approval waits until answered.
  */
 export function isWaiting(s: State, x: Session): boolean {
-  return x.status === 'idle' && isUnread(s, x)
+  return x.pending.length > 0 || (x.status === 'idle' && isUnread(s, x))
+}
+
+/** How many tool calls wait on a person across the world, which lights the beacon. */
+export function pendingCount(s: State): number {
+  let n = 0
+  for (const x of Object.values(s.sessions)) n += x.pending.length
+  return n
 }
 
 export function waitingCount(s: State): number {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/skylands-ai/skylands/internal/daemon/host"
+	"github.com/skylands-ai/skylands/internal/daemon/session"
 	"github.com/skylands-ai/skylands/internal/daemon/terrain"
 )
 
@@ -19,6 +20,10 @@ import (
 type API interface {
 	Status(ctx context.Context) StatusInfo
 	RegisterRepo(ctx context.Context, path, commandID string) (RepoInfo, error)
+	// Requests lists every tool call waiting on a person.
+	Requests(ctx context.Context) []RequestInfo
+	Approve(ctx context.Context, requestID, commandID string) (RequestInfo, error)
+	Deny(ctx context.Context, requestID, commandID string) (RequestInfo, error)
 }
 
 // Serve listens on the Unix socket at path until ctx ends. A stale socket
@@ -67,6 +72,27 @@ func Serve(ctx context.Context, path string, api API) error {
 			reply(w, http.StatusCreated, repo)
 		}
 	})
+
+	mux.HandleFunc("GET /v1/requests", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, http.StatusOK, api.Requests(r.Context()))
+	})
+	decide := func(do func(ctx context.Context, requestID, commandID string) (RequestInfo, error)) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			var req DecideRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			info, err := do(r.Context(), r.PathValue("id"), req.CommandID)
+			switch {
+			case errors.Is(err, session.ErrUnknownRequest):
+				reply(w, http.StatusNotFound, ErrorResponse{Error: err.Error()})
+			case err != nil:
+				reply(w, http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+			default:
+				reply(w, http.StatusOK, info)
+			}
+		}
+	}
+	mux.HandleFunc("POST /v1/requests/{id}/approve", decide(api.Approve))
+	mux.HandleFunc("POST /v1/requests/{id}/deny", decide(api.Deny))
 
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)

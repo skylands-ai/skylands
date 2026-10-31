@@ -50,6 +50,27 @@ func (c *Client) RegisterRepo(ctx context.Context, path string) (RepoInfo, error
 	return out, err
 }
 
+// Requests lists every tool call waiting on a person on this host.
+func (c *Client) Requests(ctx context.Context) ([]RequestInfo, error) {
+	var out []RequestInfo
+	err := c.call(ctx, http.MethodGet, "/v1/requests", nil, &out)
+	return out, err
+}
+
+// Approve answers a waiting request with the agent's first allow option.
+func (c *Client) Approve(ctx context.Context, requestID string) (RequestInfo, error) {
+	var out RequestInfo
+	err := c.call(ctx, http.MethodPost, "/v1/requests/"+requestID+"/approve", DecideRequest{CommandID: nuid.Next()}, &out)
+	return out, err
+}
+
+// Deny answers a waiting request with the agent's first reject option.
+func (c *Client) Deny(ctx context.Context, requestID string) (RequestInfo, error) {
+	var out RequestInfo
+	err := c.call(ctx, http.MethodPost, "/v1/requests/"+requestID+"/deny", DecideRequest{CommandID: nuid.Next()}, &out)
+	return out, err
+}
+
 func (c *Client) call(ctx context.Context, method, route string, in, out any) error {
 	var body io.Reader
 	if in != nil {

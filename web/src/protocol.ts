@@ -63,6 +63,26 @@ export interface ToolCall {
 }
 
 /** One agent run on one repository, as the citadel projects it. */
+/** One answer the agent accepts for a permission request. */
+export interface PermissionOption {
+  id: string
+  name: string
+  /** allow_once, allow_always, reject_once, or reject_always. */
+  kind: string
+}
+
+/** A tool call waiting on a person, with the exact input the agent proposed. */
+export interface Permission {
+  requestId: string
+  toolCallId: string
+  title: string
+  kind?: string
+  locations?: string[]
+  input?: unknown
+  options: PermissionOption[]
+  at: string
+}
+
 export interface Session {
   host: string
   id: string
@@ -79,6 +99,10 @@ export interface Session {
   turns: number
   /** What the agent named the conversation, once it has. */
   title?: string
+  /** Whether the session's tool calls are allowed without asking. */
+  trusted?: boolean
+  /** The tool calls waiting on a person, oldest first. */
+  pending: Permission[]
   startedAt: string
   endedAt?: string
   /** When the session's latest event happened. */

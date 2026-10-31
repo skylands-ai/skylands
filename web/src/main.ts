@@ -18,7 +18,7 @@ import { renderIslandPanel } from './panels/island'
 import { renderTerracePanel } from './panels/terrace'
 import { renderWorldPanel } from './panels/world'
 import { agentLabel, citadelLabelStatus, clockText, durationText, islandStatus, isStale, secondsSince } from './status'
-import { islandList, isWaiting, level, reposOn, sessionsOn, Store, waitingCount, type State } from './store'
+import { islandList, isWaiting, level, pendingCount, reposOn, sessionsOn, Store, waitingCount, type State } from './store'
 import { growLive, renderInbox, type InboxActions } from './inbox'
 import { LiveText } from './live'
 import { renderMarkdown } from './markdown'
@@ -77,7 +77,7 @@ const nav: NavActions & { selectFile(host: string, terrace: string, idx: number)
 }
 
 /** Posts a command for one session to the citadel and returns an error message, or empty. */
-async function sessionCommand(host: string, id: string, action: 'prompt' | 'stop', body: unknown): Promise<string> {
+async function sessionCommand(host: string, id: string, action: string, body: unknown): Promise<string> {
   try {
     const resp = await fetch(`/api/sessions/${encodeURIComponent(host)}/${encodeURIComponent(id)}/${action}`, {
       method: 'POST',
@@ -101,6 +101,9 @@ const inboxActions: InboxActions = {
   },
   prompt: (x, text) => sessionCommand(x.host, x.id, 'prompt', { text }),
   stop: (x) => sessionCommand(x.host, x.id, 'stop', {}),
+  approve: (x, p, optionId) => sessionCommand(x.host, x.id, `requests/${encodeURIComponent(p.requestId)}/approve`, { optionId }),
+  deny: (x, p) => sessionCommand(x.host, x.id, `requests/${encodeURIComponent(p.requestId)}/deny`, {}),
+  trust: (x, trusted) => sessionCommand(x.host, x.id, 'trust', { trusted }),
 }
 
 /** Shows the world or the inbox, and updates the switch in the header. */
@@ -267,6 +270,7 @@ store.subscribe((s0) => {
               action: x.currentAction ?? '',
               status: x.status,
               waiting: isWaiting(s, x),
+              approval: x.pending.length > 0,
               file: x.currentFile ?? null,
               kind: x.currentFile && x.files[x.currentFile] === 'edit' ? 'edit' : 'read',
               atFile: !!x.recent?.length && !!x.recent[x.recent.length - 1]?.locations?.length,
@@ -276,7 +280,7 @@ store.subscribe((s0) => {
       )
     }
     world.setLabel('cit', 'Citadel', citadelLabelStatus(s), 0)
-    world.setBeacon(false)
+    world.setBeacon(pendingCount(s) > 0)
     world.setStale(stale)
     world.setCitadelCrystal(!!s.server?.connected)
   }
@@ -307,7 +311,7 @@ setInterval(() => {
   refreshTimes(panelEl)
   refreshTimes(inboxEl)
   if (s.link === 'lost') renderVeil(s)
-  const ag = level(s) === 'agent' && s.agent ? s.sessions[s.agent] : undefined
+  const ag = s.view === 'world' && level(s) === 'agent' && s.agent ? s.sessions[s.agent] : undefined
   if (ag && ag.status === 'running') cache.get('diff', ag.host, ag.id, 2000)
   const open = s.view === 'inbox' && s.inbox ? s.sessions[s.inbox] : undefined
   if (open && open.status === 'running') cache.get('transcript', open.host, open.id, 15000)

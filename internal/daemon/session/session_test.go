@@ -98,6 +98,71 @@ func setup(t *testing.T) *fixture {
 	return &fixture{ctx: ctx, store: store, agg: agg, repo: repo, cfg: cfg}
 }
 
+// waitPending blocks until the session has n requests waiting on a person.
+func waitPending(t *testing.T, m *Manager, id string, n int) Session {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		s, ok := m.Get(id)
+		if ok && len(s.Pending) == n {
+			return s
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("session %s never had %d pending requests: %+v", id, n, s)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestPermissionExpiresAndStopCancels(t *testing.T) {
+	f := setup(t)
+	f.cfg.PermissionTimeout = 300 * time.Millisecond
+	m, err := Load(f.ctx, f.store, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Start(f.ctx, v1.StartSession{ID: "c1", SessionID: "s1", RepoID: f.repo.ID, Agent: "fake", Prompt: "tidy up"}); err != nil {
+		t.Fatal(err)
+	}
+	// Nobody answers: the request expires, the edit fails, and the turn
+	// still ends.
+	idle := waitStatus(t, m, "s1", StatusIdle)
+	if len(idle.Pending) != 0 || idle.ToolCalls[2].Status != "failed" {
+		t.Errorf("after an expiry = pending %d, tool calls %+v", len(idle.Pending), idle.ToolCalls)
+	}
+	var expired int
+	_ = f.store.Replay(f.ctx, v1.IslandStreamName("ws"), []string{v1.SessionEventFilter("ws")}, func(_ uint64, ev v1.Event) error {
+		if ev.Type == v1.EventPermissionExpired {
+			var d v1.PermissionExpired
+			_ = ev.Decode(&d)
+			if d.Reason == "timeout" {
+				expired++
+			}
+		}
+		return nil
+	})
+	if expired != 1 {
+		t.Errorf("expired events = %d, want 1 timeout", expired)
+	}
+
+	// A stop while a request waits cancels it.
+	f.cfg.PermissionTimeout = time.Hour
+	m2, err := Load(f.ctx, f.store, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m2.Start(f.ctx, v1.StartSession{ID: "c2", SessionID: "s2", RepoID: f.repo.ID, Agent: "fake", Prompt: "tidy up"}); err != nil {
+		t.Fatal(err)
+	}
+	waitPending(t, m2, "s2", 1)
+	if s, err := m2.Stop(f.ctx, v1.StopAgent{ID: "c3", SessionID: "s2"}); err != nil || s.Status != StatusEnded || len(s.Pending) != 0 {
+		t.Fatalf("Stop = %+v, %v", s, err)
+	}
+	if _, err := m2.Trust(f.ctx, v1.TrustSession{ID: "c4", SessionID: "s2", Trusted: true}); !errors.Is(err, ErrOver) {
+		t.Errorf("trust after the end: err = %v", err)
+	}
+}
+
 func waitStatus(t *testing.T, m *Manager, id string, want Status) Session {
 	t.Helper()
 	deadline := time.Now().Add(20 * time.Second)
@@ -153,6 +218,23 @@ func TestStartRunsAnAgentAndRecordsItsEvents(t *testing.T) {
 		t.Errorf("repeat = %+v, %v", again, err)
 	}
 
+	// The edit needs a person: the request waits with the exact input, and
+	// the turn goes on once it is approved.
+	asked := waitPending(t, m, "s1", 1)
+	req := asked.Pending[0]
+	if req.Title != "Edit a.go" || req.Kind != "edit" || len(req.Options) != 3 || !strings.Contains(string(req.Input), "rewrite") || req.Locations[0] != "a.go" {
+		t.Errorf("pending request = %+v", req)
+	}
+	if _, err := m.Approve(f.ctx, v1.ApproveToolCall{ID: "cmd-a1", SessionID: "s1", RequestID: "nope"}, "local"); !errors.Is(err, ErrUnknownRequest) {
+		t.Errorf("approve an unknown request: err = %v", err)
+	}
+	if s, err := m.Approve(f.ctx, v1.ApproveToolCall{ID: "cmd-a2", SessionID: "s1", RequestID: req.RequestID}, "local"); err != nil || len(s.Pending) != 0 {
+		t.Fatalf("Approve = %+v, %v", s, err)
+	}
+	if s, err := m.Approve(f.ctx, v1.ApproveToolCall{ID: "cmd-a2", SessionID: "s1", RequestID: req.RequestID}, "local"); err != nil || len(s.Pending) != 0 {
+		t.Errorf("a repeated approve = %+v, %v", s, err)
+	}
+
 	// The first turn ends and the session waits for a person.
 	idle := waitStatus(t, m, "s1", StatusIdle)
 	if idle.StopReason != "end_turn" || idle.AgentName != "skylands-fakeagent" || idle.Used == 0 || len(idle.Plan) != 3 || idle.Turns != 1 {
@@ -181,22 +263,43 @@ func TestStartRunsAnAgentAndRecordsItsEvents(t *testing.T) {
 		t.Errorf("title = %q, want \"Tidy up\"", titled.Title)
 	}
 
-	// A second prompt runs another turn on the same agent.
+	// A second prompt runs another turn on the same agent. This time the
+	// edit is denied, and the agent says so.
 	if _, err := m.Prompt(f.ctx, v1.SendPrompt{ID: "cmd-p1", SessionID: "s1", Text: "and again"}); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
 	if _, err := m.Prompt(f.ctx, v1.SendPrompt{ID: "cmd-p2", SessionID: "s1", Text: "too soon"}); !errors.Is(err, ErrNotIdle) {
 		t.Errorf("prompt during a turn: err = %v, want ErrNotIdle", err)
 	}
+	asked = waitPending(t, m, "s1", 1)
+	if s, err := m.Deny(f.ctx, v1.DenyToolCall{ID: "cmd-d1", SessionID: "s1", RequestID: asked.Pending[0].RequestID}, "citadel"); err != nil || len(s.Pending) != 0 {
+		t.Fatalf("Deny = %+v, %v", s, err)
+	}
 	second := waitStatus(t, m, "s1", StatusIdle)
 	for second.Turns < 2 {
 		time.Sleep(20 * time.Millisecond)
 		second = waitStatus(t, m, "s1", StatusIdle)
 	}
-	if second.Turns != 2 || len(second.ToolCalls) != 6 || second.Prompt != "tidy up" {
-		t.Errorf("after the second turn = turns %d, tool calls %d, prompt %q", second.Turns, len(second.ToolCalls), second.Prompt)
+	if second.Turns != 2 || len(second.ToolCalls) != 6 || second.Prompt != "tidy up" || second.ToolCalls[5].Status != "failed" {
+		t.Errorf("after the second turn = turns %d, tool calls %+v, prompt %q", second.Turns, second.ToolCalls, second.Prompt)
 	}
-	if b, err := os.ReadFile(filepath.Join(f.cfg.TranscriptsDir, "s1.md")); err != nil || !strings.Contains(string(b), "Done with \"tidy up\"") || !strings.Contains(string(b), "## You\n\nand again") || !strings.Contains(string(b), "Done with \"and again\"") {
+
+	// A trusted session asks no one.
+	if s, err := m.Trust(f.ctx, v1.TrustSession{ID: "cmd-t1", SessionID: "s1", Trusted: true}); err != nil || !s.Trusted {
+		t.Fatalf("Trust = %+v, %v", s, err)
+	}
+	if _, err := m.Prompt(f.ctx, v1.SendPrompt{ID: "cmd-p3", SessionID: "s1", Text: "once more"}); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	third := waitStatus(t, m, "s1", StatusIdle)
+	for third.Turns < 3 {
+		time.Sleep(20 * time.Millisecond)
+		third = waitStatus(t, m, "s1", StatusIdle)
+	}
+	if len(third.Pending) != 0 || third.ToolCalls[8].Status != "completed" {
+		t.Errorf("trusted turn = pending %d, tool calls %+v", len(third.Pending), third.ToolCalls[6:])
+	}
+	if b, err := os.ReadFile(filepath.Join(f.cfg.TranscriptsDir, "s1.md")); err != nil || !strings.Contains(string(b), "Done with \"tidy up\"") || !strings.Contains(string(b), "## You\n\nand again") || !strings.Contains(string(b), "Done with \"and again\". I read 2 files and was not allowed to edit") || !strings.Contains(string(b), ToolLinePrefix+"Edit a.go (denied)") {
 		t.Errorf("transcript = %q, %v", b, err)
 	} else {
 		// Tool calls sit on their own lines between the agent's words.
@@ -228,7 +331,7 @@ func TestStartRunsAnAgentAndRecordsItsEvents(t *testing.T) {
 	if again, err := m.Stop(f.ctx, v1.StopAgent{ID: "cmd-s2", SessionID: "s1"}); err != nil || again.Status != StatusEnded {
 		t.Errorf("second Stop = %+v, %v", again, err)
 	}
-	if _, err := m.Prompt(f.ctx, v1.SendPrompt{ID: "cmd-p3", SessionID: "s1", Text: "x"}); !errors.Is(err, ErrOver) {
+	if _, err := m.Prompt(f.ctx, v1.SendPrompt{ID: "cmd-p9", SessionID: "s1", Text: "x"}); !errors.Is(err, ErrOver) {
 		t.Errorf("prompt after stop: err = %v, want ErrOver", err)
 	}
 
@@ -241,12 +344,12 @@ func TestStartRunsAnAgentAndRecordsItsEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(types, " ")
-	for _, want := range []string{"SessionStarted PromptSent AgentSpawned", "ToolCallStarted", "ToolCallCompleted", "PlanUpdated", "UsageReported", "TurnEnded PromptSent", "TurnEnded SessionEnded"} {
+	for _, want := range []string{"SessionStarted PromptSent AgentSpawned", "ToolCallStarted", "ToolCallCompleted", "PlanUpdated", "UsageReported", "TurnEnded PromptSent", "TurnEnded SessionEnded", "PermissionRequested PermissionGranted", "PermissionRequested PermissionDenied", "SessionTrusted"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("event types %q lack %q", got, want)
 		}
 	}
-	if !strings.HasSuffix(got, "SessionEnded") || strings.Count(got, "SessionStarted") != 1 || strings.Count(got, "TurnEnded") != 2 {
+	if !strings.HasSuffix(got, "SessionEnded") || strings.Count(got, "SessionStarted") != 1 || strings.Count(got, "TurnEnded") != 3 || strings.Count(got, "PermissionRequested") != 2 {
 		t.Errorf("event types = %q", got)
 	}
 
@@ -255,7 +358,7 @@ func TestStartRunsAnAgentAndRecordsItsEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s2, ok := m2.Get("s1"); !ok || s2.Status != StatusEnded || len(s2.ToolCalls) != 6 || s2.Turns != 2 || s2.Title != "Tidy up" {
+	if s2, ok := m2.Get("s1"); !ok || s2.Status != StatusEnded || len(s2.ToolCalls) != 9 || s2.Turns != 3 || s2.Title != "Tidy up" || !s2.Trusted || len(s2.Pending) != 0 {
 		t.Errorf("reloaded session = %+v", s2)
 	}
 }

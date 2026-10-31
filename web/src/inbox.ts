@@ -3,7 +3,7 @@ import type { FetchCache } from './fetchcache'
 import type { LiveText } from './live'
 import { renderMarkdown } from './markdown'
 import { agentGlyph, timeNode } from './panels/parts'
-import type { Session } from './protocol'
+import type { Permission, Session } from './protocol'
 import { replyBox } from './reply'
 import { agentLabel, isOpen, sessionLabel, sessionStatus } from './status'
 import { conversationList, isUnread, isWaiting, type State } from './store'
@@ -18,6 +18,11 @@ export interface InboxActions {
   openInWorld(s: Session): void
   prompt(s: Session, text: string): Promise<string>
   stop(s: Session): Promise<string>
+  /** Answers a waiting tool call. Resolves with an error message, or empty. */
+  approve(s: Session, p: Permission, optionId: string): Promise<string>
+  deny(s: Session, p: Permission): Promise<string>
+  /** Allows every tool call in the session without asking, or asks again. */
+  trust(s: Session, trusted: boolean): Promise<string>
 }
 
 let lastDeps: unknown[] | null = null
@@ -62,6 +67,62 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live
     if (key === 'convo' && (!was || openedBefore !== open?.id || was.atEnd)) box.scrollTop = box.scrollHeight
     else if (was) box.scrollTop = was.top
   }
+}
+
+/**
+ * A tool call waiting on you: what the agent wants to do, the exact input
+ * it proposed, and the answers it accepts.
+ */
+function approvalCard(x: Session, p: Permission, actions: InboxActions): HTMLElement {
+  const note = el('span', { class: 'sub' })
+  const buttons: HTMLButtonElement[] = []
+  const decide = async (run: () => Promise<string>, saying: string): Promise<void> => {
+    for (const b of buttons) b.disabled = true
+    note.textContent = saying
+    const err = await run()
+    if (err) {
+      note.textContent = err
+      note.style.color = 'var(--bad)'
+      for (const b of buttons) b.disabled = false
+    }
+  }
+  const allows = p.options.filter((o) => o.kind.startsWith('allow'))
+  const rejects = p.options.filter((o) => o.kind.startsWith('reject'))
+  for (const o of allows) {
+    const b = el('button', { type: 'button', class: `btn small ${o.kind === 'allow_once' ? 'primary' : ''}`, text: o.name, onclick: () => void decide(() => actions.approve(x, p, o.id), 'Allowing\u2026') }) as HTMLButtonElement
+    buttons.push(b)
+  }
+  const d = el('button', { type: 'button', class: 'btn small ghost', text: rejects[0]?.name ?? 'Deny', onclick: () => void decide(() => actions.deny(x, p), 'Denying\u2026') }) as HTMLButtonElement
+  buttons.push(d)
+  const where = p.locations?.length ? el('div', { class: 'where' }, [el('code', { text: p.locations.join(', ') })]) : null
+  let input: HTMLElement | null = null
+  if (p.input !== undefined && p.input !== null) {
+    const text = typeof p.input === 'string' ? p.input : JSON.stringify(p.input, null, 2)
+    input = el('details', {}, [el('summary', { text: 'Exact input' }), el('pre', { text })])
+  }
+  return el('div', { class: 'approval', role: 'group', 'aria-label': `Approval needed: ${p.title}` }, [
+    el('div', { class: 'ask' }, [el('span', { class: 'mark', style: 'background:#E0B000' }), el('strong', { text: p.title }), p.kind ? el('span', { class: 'kindchip', text: p.kind }) : null, el('span', { class: 'muted', style: 'margin-left:auto;font-size:12px' }, ['asked ', timeNode(p.at, 'ago')])]),
+    where,
+    input,
+    el('div', { class: 'acts' }, [...buttons, note]),
+  ])
+}
+
+/** The switch that lets a session's tool calls through without asking. */
+function trustSwitch(x: Session, actions: InboxActions): HTMLElement {
+  const input = el('input', { type: 'checkbox', 'aria-label': 'Trust this session' }) as HTMLInputElement
+  input.checked = !!x.trusted
+  const label = el('label', { class: 'trust', title: 'Allow every tool call in this session without asking' }, [input, 'Trust this session'])
+  input.addEventListener('change', async () => {
+    input.disabled = true
+    const err = await actions.trust(x, input.checked)
+    input.disabled = false
+    if (err) {
+      input.checked = !input.checked
+      label.title = err
+    }
+  })
+  return label
 }
 
 /** An agent message: its words as Markdown, with each tool call it made as a chip where it happened. */
@@ -246,6 +307,7 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
     el('span', { class: 'pill' }, [el('span', { class: 'dot', style: `background:${status[1]}` }), status[0]]),
     el('span', { class: 'muted', text: `${x.turns} ${x.turns === 1 ? 'turn' : 'turns'}` }),
     el('div', { class: 'acts' }, [
+      isOpen(x) ? trustSwitch(x, actions) : null,
       el('button', { type: 'button', class: 'btn small ghost', text: 'Show in world', onclick: () => actions.openInWorld(x) }),
       el('button', { type: 'button', class: 'btn small ghost', text: 'Close', 'aria-label': 'Close the conversation', onclick: () => actions.open(null) }),
     ]),
@@ -265,6 +327,7 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
     else if (t.text) body.appendChild(el('div', { class: 'msg agent' }, [el('span', { class: 'from' }, [name, copyButton(t.text)]), agentBody(t.text)]))
   }
   if (running && !liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, '')]))
+  for (const p of x.pending) body.appendChild(approvalCard(x, p, actions))
   if (fetchError) body.appendChild(el('p', { class: 'convo-end', style: 'color:var(--bad)', text: fetchError }))
   if (x.status === 'failed') body.appendChild(el('p', { class: 'convo-end', style: 'color:var(--bad)', text: `Failed: ${x.error ?? 'unknown error'}` }))
   else if (x.status === 'ended') body.appendChild(el('p', { class: 'convo-end', text: x.stopReason === 'stopped' ? 'You ended this session.' : `This session ended (${(x.stopReason ?? 'done').replace(/_/g, ' ')}).` }))

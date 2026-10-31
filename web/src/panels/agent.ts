@@ -43,7 +43,7 @@ export function renderAgentPanel(
   const back = actions.back
   panel.appendChild(header(sessionLabel(s, 60), `${agentLabel(s.agent)}${s.model ? `, ${s.model}` : ''} \u00b7 ${repo.name} on ${island.host}`, stale ? ['Last state heard', 'var(--idle)'] : status))
   panel.appendChild(backButton('repo', repo.name, back))
-  panel.appendChild(el('button', { type: 'button', class: 'btn primary', style: 'align-self:flex-start', onclick: actions.conversation }, [chatIcon(), waiting ? 'Go to conversation, it is waiting for you' : 'Go to conversation']))
+  panel.appendChild(el('button', { type: 'button', class: 'btn primary', style: 'align-self:flex-start', onclick: actions.conversation }, [chatIcon(), s.pending.length ? 'Go to conversation, it needs your approval' : waiting ? 'Go to conversation, it is waiting for you' : 'Go to conversation']))
   panel.appendChild(
     factsBox([
       ['Status', status[0]],

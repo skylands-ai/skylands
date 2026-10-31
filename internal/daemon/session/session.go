@@ -64,6 +64,10 @@ type Session struct {
 	Error      string
 	// Title is the name the agent gave the conversation, once it has.
 	Title string
+	// Trusted means tool calls are allowed without asking.
+	Trusted bool
+	// Pending holds the tool calls waiting on a person, oldest first.
+	Pending []Permission
 	// Turns counts the prompts sent so far.
 	Turns     int
 	StartedAt time.Time
@@ -74,6 +78,18 @@ type Session struct {
 	Plan      []v1.PlanEntry
 	Used      uint64
 	Size      uint64
+}
+
+// Permission is a tool call waiting on a person.
+type Permission struct {
+	RequestID  string
+	ToolCallID string
+	Title      string
+	Kind       string
+	Locations  []string
+	Input      json.RawMessage
+	Options    []v1.PermissionOption
+	At         time.Time
 }
 
 // Repos finds registered repositories, which the Host aggregate provides.
@@ -95,7 +111,18 @@ type Config struct {
 	// Publish, when set, sends each transcript append on the session's live
 	// subject so a browser can read along.
 	Publish func(subject string, data []byte) error
+	// AllowKinds are the tool call kinds the host's rules allow without
+	// asking anyone. Nil means DefaultAllowKinds.
+	AllowKinds []string
+	// PermissionTimeout is how long a request waits for a person before it
+	// expires. Zero means 30 minutes.
+	PermissionTimeout time.Duration
 }
+
+// DefaultAllowKinds are the tool call kinds allowed without asking: what
+// only looks at the worktree. Everything else waits for a person, until
+// the session is trusted.
+var DefaultAllowKinds = []string{"read", "search", "think"}
 
 var (
 	ErrUnknownRepo    = errors.New("no such repository on this host")
@@ -104,6 +131,7 @@ var (
 	ErrUnknownSession = errors.New("no such session on this host")
 	ErrNotIdle        = errors.New("the session is not waiting for a prompt")
 	ErrOver           = errors.New("the session has ended")
+	ErrUnknownRequest = errors.New("no such request is waiting")
 )
 
 // Manager is the aggregate for every session on one island.
@@ -132,6 +160,9 @@ type live struct {
 	// so Stop can record the end after it.
 	turnDone chan struct{}
 	stopping bool
+	// asks holds, by request id, where each waiting permission request
+	// hears its decision.
+	asks map[string]chan agents.Decision
 }
 
 // Load rebuilds the aggregate from the host's stream. A session that was
@@ -151,12 +182,181 @@ func Load(ctx context.Context, store *es.Store, cfg Config) (*Manager, error) {
 	}
 	for _, s := range m.List() {
 		if s.Status == StatusRunning || s.Status == StatusIdle {
+			for _, p := range s.Pending {
+				if err := m.record(ctx, s.ID, "", v1.EventPermissionExpired, v1.PermissionExpired{SessionID: s.ID, RequestID: p.RequestID, Reason: "restart"}); err != nil {
+					return nil, err
+				}
+			}
 			if err := m.record(ctx, s.ID, "", v1.EventAgentFailed, v1.AgentFailed{SessionID: s.ID, Error: "the daemon restarted while the session was open"}); err != nil {
 				return nil, err
 			}
 		}
 	}
 	return m, nil
+}
+
+// Approve handles ApproveToolCall: it answers a waiting request with an
+// allow option and records who did. By names the path the answer came
+// over, "local" or "citadel".
+func (m *Manager) Approve(ctx context.Context, cmd v1.ApproveToolCall, by string) (Session, error) {
+	return m.decide(ctx, cmd.ID, cmd.SessionID, cmd.RequestID, by, cmd.OptionID, true)
+}
+
+// Deny handles DenyToolCall: it answers a waiting request with a reject
+// option and records who did.
+func (m *Manager) Deny(ctx context.Context, cmd v1.DenyToolCall, by string) (Session, error) {
+	return m.decide(ctx, cmd.ID, cmd.SessionID, cmd.RequestID, by, "", false)
+}
+
+func (m *Manager) decide(ctx context.Context, commandID, sessionID, requestID, by, optionID string, allow bool) (Session, error) {
+	m.cmdMu.Lock()
+	defer m.cmdMu.Unlock()
+	m.mu.Lock()
+	if id, ok := m.handled[commandID]; ok {
+		s := *m.sessions[id]
+		m.mu.Unlock()
+		return s, nil
+	}
+	s, ok := m.sessions[sessionID]
+	l := m.live[sessionID]
+	if !ok {
+		m.mu.Unlock()
+		return Session{}, fmt.Errorf("%w: %s", ErrUnknownSession, sessionID)
+	}
+	var pending *Permission
+	for i := range s.Pending {
+		if s.Pending[i].RequestID == requestID {
+			pending = &s.Pending[i]
+		}
+	}
+	var ask chan agents.Decision
+	if l != nil {
+		ask = l.asks[requestID]
+	}
+	m.mu.Unlock()
+	if pending == nil || ask == nil {
+		return *s, fmt.Errorf("%w: %s", ErrUnknownRequest, requestID)
+	}
+	option := pickOption(pending.Options, allow, optionID)
+	if option == "" {
+		if allow {
+			return *s, errors.New("the agent offers no allow option for this request")
+		}
+		// No reject option: cancelling the request is the refusal.
+		if err := m.record(ctx, sessionID, commandID, v1.EventPermissionDenied, v1.PermissionDenied{SessionID: sessionID, RequestID: requestID, By: by}); err != nil {
+			return Session{}, err
+		}
+		m.transcript(sessionID).Line(ToolLinePrefix + pending.Title + " (denied)")
+		ask <- agents.Decision{Cancelled: true}
+		out, _ := m.Get(sessionID)
+		return out, nil
+	}
+	if allow {
+		if err := m.record(ctx, sessionID, commandID, v1.EventPermissionGranted, v1.PermissionGranted{SessionID: sessionID, RequestID: requestID, OptionID: option, By: by}); err != nil {
+			return Session{}, err
+		}
+	} else {
+		if err := m.record(ctx, sessionID, commandID, v1.EventPermissionDenied, v1.PermissionDenied{SessionID: sessionID, RequestID: requestID, OptionID: option, By: by}); err != nil {
+			return Session{}, err
+		}
+		m.transcript(sessionID).Line(ToolLinePrefix + pending.Title + " (denied)")
+	}
+	slog.Info("session: request decided", "session", sessionID, "request", requestID, "allowed", allow, "by", by)
+	ask <- agents.Decision{OptionID: option}
+	out, _ := m.Get(sessionID)
+	return out, nil
+}
+
+// pickOption chooses the option to answer with: the one asked for, else
+// the first allow option (once before always) or the first reject option.
+func pickOption(options []v1.PermissionOption, allow bool, wanted string) string {
+	if wanted != "" {
+		for _, o := range options {
+			if o.ID == wanted && (strings.HasPrefix(o.Kind, "allow") == allow) {
+				return o.ID
+			}
+		}
+		return ""
+	}
+	first, second := "allow_once", "allow_always"
+	if !allow {
+		first, second = "reject_once", "reject_always"
+	}
+	for _, want := range []string{first, second} {
+		for _, o := range options {
+			if o.Kind == want {
+				return o.ID
+			}
+		}
+	}
+	return ""
+}
+
+// Trust handles TrustSession: from now on the session's tool calls are
+// allowed without asking, or asked about again. Trusting a session answers
+// whatever is waiting.
+func (m *Manager) Trust(ctx context.Context, cmd v1.TrustSession) (Session, error) {
+	m.cmdMu.Lock()
+	defer m.cmdMu.Unlock()
+	m.mu.Lock()
+	if id, ok := m.handled[cmd.ID]; ok {
+		s := *m.sessions[id]
+		m.mu.Unlock()
+		return s, nil
+	}
+	s, ok := m.sessions[cmd.SessionID]
+	if !ok {
+		m.mu.Unlock()
+		return Session{}, fmt.Errorf("%w: %s", ErrUnknownSession, cmd.SessionID)
+	}
+	if s.Status == StatusEnded || s.Status == StatusFailed {
+		m.mu.Unlock()
+		return *s, ErrOver
+	}
+	m.mu.Unlock()
+	if err := m.record(ctx, cmd.SessionID, cmd.ID, v1.EventSessionTrusted, v1.SessionTrusted{SessionID: cmd.SessionID, Trusted: cmd.Trusted}); err != nil {
+		return Session{}, err
+	}
+	if cmd.Trusted {
+		m.cmdMu.Unlock()
+		for _, p := range s.Pending {
+			_, _ = m.Approve(ctx, v1.ApproveToolCall{ID: cmd.ID + "/" + p.RequestID, SessionID: cmd.SessionID, RequestID: p.RequestID}, "trust")
+		}
+		m.cmdMu.Lock()
+	}
+	slog.Info("session: trust", "session", cmd.SessionID, "trusted", cmd.Trusted)
+	out, _ := m.Get(cmd.SessionID)
+	return out, nil
+}
+
+// Requests lists every tool call waiting on a person, across sessions.
+func (m *Manager) Requests() []Request {
+	var out []Request
+	for _, s := range m.List() {
+		for _, p := range s.Pending {
+			out = append(out, Request{Session: s, Permission: p})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Permission.At.Before(out[j].Permission.At) })
+	return out
+}
+
+// Request is a waiting tool call with its session.
+type Request struct {
+	Session    Session
+	Permission Permission
+}
+
+// FindRequest finds the session a waiting request belongs to.
+func (m *Manager) FindRequest(requestID string) (Session, bool) {
+	for _, s := range m.List() {
+		for _, p := range s.Pending {
+			if p.RequestID == requestID {
+				return s, true
+			}
+		}
+	}
+	return Session{}, false
 }
 
 // List returns every session, newest first.
@@ -252,9 +452,20 @@ func (m *Manager) Stop(ctx context.Context, cmd v1.StopAgent) (Session, error) {
 	if l != nil {
 		l.stopping = true
 	}
+	pending := append([]Permission(nil), s.Pending...)
 	m.mu.Unlock()
 
 	if l != nil {
+		// Whatever was waiting on a person is cancelled with the turn.
+		for _, p := range pending {
+			_ = m.record(ctx, cmd.SessionID, "", v1.EventPermissionExpired, v1.PermissionExpired{SessionID: cmd.SessionID, RequestID: p.RequestID, Reason: "stopped"})
+			m.mu.Lock()
+			ask := l.asks[p.RequestID]
+			m.mu.Unlock()
+			if ask != nil {
+				ask <- agents.Decision{Cancelled: true}
+			}
+		}
 		l.run.Cancel(ctx)
 		_ = l.run.Close()
 		if l.turnDone != nil {
@@ -338,7 +549,7 @@ func (m *Manager) begin(id string, adapter agents.Adapter, worktree, prompt, mod
 		}
 		return
 	}
-	l := &live{run: run, turnDone: make(chan struct{})}
+	l := &live{run: run, turnDone: make(chan struct{}), asks: map[string]chan agents.Decision{}}
 	m.mu.Lock()
 	m.live[id] = l
 	m.mu.Unlock()
@@ -549,6 +760,39 @@ func (m *Manager) apply(ev v1.Event) {
 				s.Title = d.Title
 			}
 		}
+	case v1.EventSessionTrusted:
+		var d v1.SessionTrusted
+		if ev.Decode(&d) == nil {
+			if s := touch(d.SessionID); s != nil {
+				s.Trusted = d.Trusted
+			}
+		}
+	case v1.EventPermissionRequested:
+		var d v1.PermissionRequested
+		if ev.Decode(&d) == nil {
+			if s := touch(d.SessionID); s != nil {
+				s.Pending = append(s.Pending, Permission{RequestID: d.RequestID, ToolCallID: d.ToolCallID, Title: d.Title, Kind: d.Kind, Locations: d.Locations, Input: d.Input, Options: d.Options, At: ev.Time})
+			}
+		}
+	case v1.EventPermissionGranted, v1.EventPermissionDenied, v1.EventPermissionExpired:
+		var d struct {
+			SessionID string `json:"sessionId"`
+			RequestID string `json:"requestId"`
+		}
+		if ev.Decode(&d) == nil {
+			if s := touch(d.SessionID); s != nil {
+				kept := s.Pending[:0]
+				for _, p := range s.Pending {
+					if p.RequestID != d.RequestID {
+						kept = append(kept, p)
+					}
+				}
+				s.Pending = kept
+				if ev.CommandID != "" {
+					m.handled[ev.CommandID] = d.SessionID
+				}
+			}
+		}
 	case v1.EventAgentSpawned:
 		var d v1.AgentSpawned
 		if ev.Decode(&d) == nil {
@@ -670,6 +914,81 @@ func (o *observer) Message(text string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.t.Append(text)
+}
+
+// Permission settles a tool call by the host's rules or the session's
+// trust, and otherwise records it as waiting and blocks until a person
+// answers, the request expires, or the agent gives up.
+func (o *observer) Permission(ctx context.Context, req agents.PermissionRequest) agents.Decision {
+	m := o.m
+	s, _ := m.Get(o.id)
+	if s.Trusted || m.allowedByRule(req.ToolCall.Kind) {
+		if opt := pickOption(req.Options, true, ""); opt != "" {
+			return agents.Decision{OptionID: opt}
+		}
+	}
+	requestID := nuid.Next()
+	ask := make(chan agents.Decision, 1)
+	m.mu.Lock()
+	l := m.live[o.id]
+	if l != nil {
+		l.asks[requestID] = ask
+	}
+	m.mu.Unlock()
+	if l == nil {
+		return agents.Decision{Cancelled: true}
+	}
+	defer func() {
+		m.mu.Lock()
+		delete(l.asks, requestID)
+		m.mu.Unlock()
+	}()
+	tc := req.ToolCall
+	if err := m.record(m.ctx, o.id, "", v1.EventPermissionRequested, v1.PermissionRequested{SessionID: o.id, RequestID: requestID, ToolCallID: tc.ID, Title: tc.Title, Kind: tc.Kind, Locations: tc.Locations, Input: req.Input, Options: req.Options}); err != nil {
+		return agents.Decision{Cancelled: true}
+	}
+	slog.Info("session: waiting for a person", "session", o.id, "request", requestID, "tool", tc.Title)
+	timeout := m.cfg.PermissionTimeout
+	if timeout == 0 {
+		timeout = 30 * time.Minute
+	}
+	select {
+	case d := <-ask:
+		return d
+	case <-time.After(timeout):
+		_ = m.record(m.ctx, o.id, "", v1.EventPermissionExpired, v1.PermissionExpired{SessionID: o.id, RequestID: requestID, Reason: "timeout"})
+		o.t.Line(ToolLinePrefix + tc.Title + " (nobody answered in time)")
+		return agents.Decision{Cancelled: true}
+	case <-ctx.Done():
+		// The agent stopped waiting, or the turn was cancelled; Stop records
+		// the expiry itself.
+		if _, ok := m.Get(o.id); ok {
+			m.mu.Lock()
+			still := false
+			for _, p := range m.sessions[o.id].Pending {
+				still = still || p.RequestID == requestID
+			}
+			m.mu.Unlock()
+			if still {
+				_ = m.record(m.ctx, o.id, "", v1.EventPermissionExpired, v1.PermissionExpired{SessionID: o.id, RequestID: requestID, Reason: "stopped"})
+			}
+		}
+		return agents.Decision{Cancelled: true}
+	}
+}
+
+// allowedByRule says whether a tool call of this kind needs no one's answer.
+func (m *Manager) allowedByRule(kind string) bool {
+	kinds := m.cfg.AllowKinds
+	if kinds == nil {
+		kinds = DefaultAllowKinds
+	}
+	for _, k := range kinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
 }
 
 // addWorktree checks out a new branch of repo into dir.

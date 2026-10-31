@@ -32,6 +32,9 @@ func (c *citadel) api() http.Handler {
 	mux.HandleFunc("POST /api/sessions", c.startSession)
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/prompt", c.sendPrompt)
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/stop", c.stopAgent)
+	mux.HandleFunc("POST /api/sessions/{host}/{id}/requests/{rid}/approve", c.approve)
+	mux.HandleFunc("POST /api/sessions/{host}/{id}/requests/{rid}/deny", c.deny)
+	mux.HandleFunc("POST /api/sessions/{host}/{id}/trust", c.trust)
 	mux.HandleFunc("GET /api/sessions/{host}/{id}/transcript", c.fetchText(v1.FetchTranscript))
 	mux.HandleFunc("GET /api/sessions/{host}/{id}/diff", c.fetchText(v1.FetchDiff))
 	return mux
@@ -56,6 +59,39 @@ func (c *citadel) stopAgent(w http.ResponseWriter, r *http.Request) {
 	host, id := r.PathValue("host"), r.PathValue("id")
 	cmd := v1.StopAgent{ID: nuid.Next(), SessionID: id}
 	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandStopAgent), cmd, http.StatusOK)
+}
+
+// approve answers a waiting tool call with an allow option, the agent's
+// first unless the body names one.
+func (c *citadel) approve(w http.ResponseWriter, r *http.Request) {
+	host, id, rid := r.PathValue("host"), r.PathValue("id"), r.PathValue("rid")
+	var body struct {
+		OptionID string `json:"optionId"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	cmd := v1.ApproveToolCall{ID: nuid.Next(), SessionID: id, RequestID: rid, OptionID: body.OptionID}
+	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandApproveToolCall), cmd, http.StatusOK)
+}
+
+// deny answers a waiting tool call with a reject option.
+func (c *citadel) deny(w http.ResponseWriter, r *http.Request) {
+	host, id, rid := r.PathValue("host"), r.PathValue("id"), r.PathValue("rid")
+	cmd := v1.DenyToolCall{ID: nuid.Next(), SessionID: id, RequestID: rid}
+	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandDenyToolCall), cmd, http.StatusOK)
+}
+
+// trust allows a session's tool calls without asking, or asks again.
+func (c *citadel) trust(w http.ResponseWriter, r *http.Request) {
+	host, id := r.PathValue("host"), r.PathValue("id")
+	var body struct {
+		Trusted bool `json:"trusted"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "trusted: true or false is required")
+		return
+	}
+	cmd := v1.TrustSession{ID: nuid.Next(), SessionID: id, Trusted: body.Trusted}
+	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandTrustSession), cmd, http.StatusOK)
 }
 
 // relay sends a command to a host and writes the daemon's result, or an

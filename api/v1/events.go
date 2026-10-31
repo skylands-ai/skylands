@@ -96,7 +96,8 @@ const (
 func IsSessionEvent(eventType string) bool {
 	switch eventType {
 	case EventSessionStarted, EventPromptSent, EventAgentSpawned, EventToolCallStarted, EventToolCallCompleted,
-		EventPlanUpdated, EventUsageReported, EventAgentFailed, EventSessionEnded, EventTurnEnded, EventSessionTitled:
+		EventPlanUpdated, EventUsageReported, EventAgentFailed, EventSessionEnded, EventTurnEnded, EventSessionTitled,
+		EventPermissionRequested, EventPermissionGranted, EventPermissionDenied, EventPermissionExpired, EventSessionTrusted:
 		return true
 	}
 	return false
@@ -260,11 +261,104 @@ type SessionTitled struct {
 	Title     string `json:"title"`
 }
 
+// Permission events. A tool call no rule settles becomes PermissionRequested
+// and waits for a person; a decision records PermissionGranted or
+// PermissionDenied, and PermissionExpired records that none came in time,
+// or that the session stopped or the daemon restarted while it waited.
+const (
+	EventPermissionRequested = "PermissionRequested"
+	EventPermissionGranted   = "PermissionGranted"
+	EventPermissionDenied    = "PermissionDenied"
+	EventPermissionExpired   = "PermissionExpired"
+	EventSessionTrusted      = "SessionTrusted"
+)
+
+// PermissionOption is one answer the agent offers for a permission request,
+// as ACP defines them: allow_once, allow_always, reject_once, reject_always.
+type PermissionOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
+// PermissionRequested records a tool call waiting on a person, with the
+// exact input the agent proposed.
+type PermissionRequested struct {
+	SessionID  string             `json:"sessionId"`
+	RequestID  string             `json:"requestId"`
+	ToolCallID string             `json:"toolCallId"`
+	Title      string             `json:"title"`
+	Kind       string             `json:"kind,omitempty"`
+	Locations  []string           `json:"locations,omitempty"`
+	Input      json.RawMessage    `json:"input,omitempty"`
+	Options    []PermissionOption `json:"options"`
+}
+
+// PermissionGranted records who allowed a request and which option they chose.
+type PermissionGranted struct {
+	SessionID string `json:"sessionId"`
+	RequestID string `json:"requestId"`
+	OptionID  string `json:"optionId"`
+	// By is who decided: "local" for the host's CLI, "citadel" for a browser
+	// through a citadel, or "trust" for a trusted session.
+	By string `json:"by"`
+}
+
+// PermissionDenied records who refused a request.
+type PermissionDenied struct {
+	SessionID string `json:"sessionId"`
+	RequestID string `json:"requestId"`
+	OptionID  string `json:"optionId,omitempty"`
+	By        string `json:"by"`
+}
+
+// PermissionExpired records a request nobody answered: Reason is "timeout",
+// "stopped", or "restart".
+type PermissionExpired struct {
+	SessionID string `json:"sessionId"`
+	RequestID string `json:"requestId"`
+	Reason    string `json:"reason"`
+}
+
+// SessionTrusted records whether the session's tool calls are allowed
+// without asking from now on.
+type SessionTrusted struct {
+	SessionID string `json:"sessionId"`
+	Trusted   bool   `json:"trusted"`
+}
+
 // More session commands.
 const (
-	CommandSendPrompt = "SendPrompt"
-	CommandStopAgent  = "StopAgent"
+	CommandSendPrompt      = "SendPrompt"
+	CommandStopAgent       = "StopAgent"
+	CommandApproveToolCall = "ApproveToolCall"
+	CommandDenyToolCall    = "DenyToolCall"
+	CommandTrustSession    = "TrustSession"
 )
+
+// ApproveToolCall answers a waiting request with an allow option. An empty
+// OptionID picks the agent's first allow option.
+type ApproveToolCall struct {
+	ID        string `json:"id"`
+	SessionID string `json:"sessionId"`
+	RequestID string `json:"requestId"`
+	OptionID  string `json:"optionId,omitempty"`
+}
+
+// DenyToolCall answers a waiting request with a reject option.
+type DenyToolCall struct {
+	ID        string `json:"id"`
+	SessionID string `json:"sessionId"`
+	RequestID string `json:"requestId"`
+}
+
+// TrustSession allows every tool call in a session without asking, or
+// stops doing so.
+type TrustSession struct {
+	ID        string `json:"id"`
+	SessionID string `json:"sessionId"`
+	Trusted   bool   `json:"trusted"`
+}
 
 // SendPrompt continues an idle session with another prompt.
 type SendPrompt struct {
