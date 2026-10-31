@@ -30,10 +30,12 @@ the host and sync to the world whenever the link is up. The local CLI reaches
 it over a Unix socket.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.Version = versionString()
 			return daemon.Run(cmd.Context(), cfg)
 		},
 	}
 	f := cmd.Flags()
+	f.StringVar(&cfg.Host, "host", daemon.DefaultHost(), "name of this machine's island, unique in the world")
 	f.StringVar(&cfg.NATSURL, "nats-url", "nats-leaf://127.0.0.1:7422", "URL of the world's NATS leaf node listener")
 	f.StringVar(&cfg.CredsFile, "creds", "", "path to the daemon's NATS credentials file")
 	f.StringVar(&cfg.DataDir, "data-dir", defaultDataDir(), "directory for the leaf node's JetStream store and agent worktrees")

@@ -1,0 +1,42 @@
+import type { Island, Message } from './protocol'
+import type { Store } from './store'
+
+// The browser stays on one citadel through this socket. When it drops, keep
+// trying with a growing delay so a citadel restart heals on its own.
+export function connectToCitadel(store: Store): void {
+  let retryDelay = 1000
+
+  const connect = (): void => {
+    const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
+    const ws = new WebSocket(`${scheme}://${location.host}/ws`)
+    ws.addEventListener('open', () => {
+      retryDelay = 1000
+      store.update({ link: 'connected', lastContact: Date.now() })
+    })
+    ws.addEventListener('message', (ev: MessageEvent<string>) => {
+      const m = JSON.parse(ev.data) as Message
+      store.state.lastContact = Date.now()
+      switch (m.type) {
+        case 'snapshot': {
+          const islands: Record<string, Island> = {}
+          for (const i of m.islands ?? []) islands[i.host] = i
+          store.update({ server: m.server ?? null, islands })
+          break
+        }
+        case 'server':
+          if (m.server) store.update({ server: m.server })
+          break
+        case 'island':
+          if (m.island) store.upsertIsland(m.island)
+          break
+      }
+    })
+    ws.addEventListener('close', () => {
+      store.update({ link: 'lost' })
+      setTimeout(connect, retryDelay)
+      retryDelay = Math.min(retryDelay * 2, 10000)
+    })
+  }
+
+  connect()
+}

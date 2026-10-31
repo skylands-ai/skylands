@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Skylands</title>
+<script type="module" src="/src/main.ts"></script>
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <div class="brand">
+      <svg width="34" height="34" viewBox="10 4 200 200" aria-hidden="true"><polygon points="36,95 60,105 66,142 54,128 44,112" fill="#9A7656"/><polygon points="60,105 100,110 102,176 92,166 80,156 66,142" fill="#7C5D44"/><polygon points="100,110 136,107 124,152 112,164 102,176" fill="#614836"/><polygon points="136,107 164,93 158,108 148,124 136,138 124,152" fill="#4B382B"/><path d="M36,86 C34,96 64,101 100,101 C136,101 166,94 164,84 L164,93 C164,103 136,110 100,110 C64,110 36,104 36,95 Z" fill="#8A6542"/><path d="M36,86 C40,74 70,68 100,69 C130,68 160,73 164,84 C166,94 136,101 100,101 C64,101 34,96 36,86 Z" fill="#6CB35A"/><path d="M50,82 C60,75 84,72 100,72 C120,72 144,75 152,82 C130,78 70,78 50,82 Z" fill="#86C76F"/><polygon points="54,80 61,92 47,92" fill="#2F6B3A"/><polygon points="66,74 72,86 60,86" fill="#3C7D43"/><rect x="110" y="74" width="9" height="12" fill="#EFE9D8"/><rect x="121" y="68" width="8" height="18" fill="#E2DBC7"/><rect x="131" y="77" width="8" height="9" fill="#EFE9D8"/><circle cx="102" cy="187" r="12" fill="#7FE0F0" opacity="0.35"/><polygon points="102,179 108,187 102,197 96,187" fill="#5FD3E6"/><polygon points="102,179 108,187 102,187" fill="#BDF3FA"/><path d="M150 14 Q153 31 170 34 Q153 37 150 54 Q147 37 130 34 Q147 31 150 14 Z" fill="#F5B014"/><path d="M175 51 Q176.4 58.6 184 60 Q176.4 61.4 175 69 Q173.6 61.4 166 60 Q173.6 58.6 175 51 Z" fill="#F5B014"/><path d="M124 11 Q124.8 15.2 129 16 Q124.8 16.8 124 21 Q123.2 16.8 119 16 Q123.2 15.2 124 11 Z" fill="#F5B014"/></svg>
+      <span>Skylands</span>
+    </div>
+    <nav class="crumbs" aria-label="Breadcrumb" id="crumbs"></nav>
+    <span class="muted" id="connected"></span>
+    <div class="spacer"></div>
+    <span class="pill" id="link"><span class="dot" style="background:var(--warn)"></span>Connecting to citadel</span>
+  </header>
+  <main class="main">
+    <section class="stage" id="stage" aria-label="3D world of every island">
+      <canvas id="world" tabindex="0" role="img" aria-label="A 3D sky. The citadel floats at the center of the world. Islands for each host rise around it as their daemons connect."></canvas>
+      <div class="labels" id="labels"></div>
+      <div class="veil" id="veil" hidden><p class="veilmsg" id="veilmsg" role="status"></p></div>
+      <div class="hud">
+        <button type="button" class="btn" id="overview">Whole world</button>
+        <span class="chipnote hint">Drag to orbit, scroll to zoom. Click to go deeper, Esc to go back up.</span>
+      </div>
+      <div class="legend" aria-label="Legend">
+        <span><svg width="26" height="8" viewBox="0 0 26 8" aria-hidden="true"><line x1="1" y1="4" x2="25" y2="4" stroke="var(--tether)" stroke-width="2.5"/><circle cx="8" cy="4" r="2" fill="var(--spark)"/><circle cx="18" cy="4" r="2" fill="var(--spark)"/></svg>Connected</span>
+        <span><svg width="26" height="12" viewBox="0 0 26 12" aria-hidden="true"><path d="M1 2 Q13 18 25 2" fill="none" stroke="var(--idle)" stroke-width="2" stroke-dasharray="3 3"/></svg>Unreachable</span>
+        <span><svg width="10" height="14" viewBox="0 0 10 14" aria-hidden="true"><line x1="5" y1="5" x2="5" y2="13" stroke="#E0B000" stroke-width="2.5" stroke-linecap="round"/><circle cx="5" cy="4" r="3" fill="#FFD54A"/></svg>Waiting on you</span>
+      </div>
+    </section>
+    <aside class="panel" id="panel" aria-label="Selected island"></aside>
+  </main>
+</div>
+</body>
+</html>

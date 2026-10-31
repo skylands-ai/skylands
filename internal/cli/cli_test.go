@@ -22,9 +22,6 @@ var unimplemented = []struct {
 	args []string
 	path string
 }{
-	{[]string{"devworld", "up"}, "skylands devworld up"},
-	{[]string{"citadel", "up"}, "skylands citadel up"},
-	{[]string{"daemon", "up"}, "skylands daemon up"},
 	{[]string{"daemon", "enroll", "workstation"}, "skylands daemon enroll"},
 	{[]string{"daemon", "status"}, "skylands daemon status"},
 	{[]string{"world", "init"}, "skylands world init"},
@@ -56,8 +53,11 @@ func TestCommandsReportUnimplemented(t *testing.T) {
 // here once it has a real implementation.
 func TestEveryRunnableCommandIsListed(t *testing.T) {
 	implemented := map[string]bool{
-		"skylands version": true,
-		"skylands help":    true,
+		"skylands version":     true,
+		"skylands help":        true,
+		"skylands devworld up": true,
+		"skylands citadel up":  true,
+		"skylands daemon up":   true,
 	}
 	listed := map[string]bool{}
 	for _, tc := range unimplemented {

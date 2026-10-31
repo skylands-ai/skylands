@@ -22,12 +22,16 @@ func newDevworldCmd() *cobra.Command {
 	return cmd
 }
 
+type devworldOptions struct {
+	dataDir    string
+	httpAddr   string
+	natsListen string
+	leafListen string
+	host       string
+}
+
 func newDevworldUpCmd() *cobra.Command {
-	var (
-		dataDir    string
-		httpAddr   string
-		socketPath string
-	)
+	var o devworldOptions
 	cmd := &cobra.Command{
 		Use:   "up",
 		Short: "Run embedded NATS, a citadel, and a daemon in one process",
@@ -35,23 +39,34 @@ func newDevworldUpCmd() *cobra.Command {
 a daemon that connect to it, all in one process. The daemon makes this
 machine an island and the citadel serves the web application. Daemons on
 other machines can join the world through the embedded server's leaf node
-listener.`,
+listener, which needs --leaf-listen on an address they can reach.
+
+Nothing is authenticated yet, so every listener defaults to 127.0.0.1.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDevworld(cmd.Context(), dataDir, httpAddr, socketPath)
+			return runDevworld(cmd.Context(), o)
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&dataDir, "data-dir", defaultDataDir(), "directory for the JetStream store and daemon state")
-	f.StringVar(&httpAddr, "http", ":8080", "address the web application listens on")
-	f.StringVar(&socketPath, "socket", defaultSocketPath(), "Unix socket the daemon listens on for the local CLI")
+	f.StringVar(&o.dataDir, "data-dir", defaultDataDir(), "directory for the JetStream stores and daemon state")
+	f.StringVar(&o.httpAddr, "http", "127.0.0.1:8080", "address the web application listens on")
+	f.StringVar(&o.natsListen, "nats-listen", "127.0.0.1:4222", "address the embedded NATS server accepts clients on")
+	f.StringVar(&o.leafListen, "leaf-listen", "127.0.0.1:7422", "address the embedded NATS server accepts daemon leaf nodes on")
+	f.StringVar(&o.host, "host", daemon.DefaultHost(), "name of this machine's island")
 	return cmd
 }
 
 // runDevworld starts the embedded server, then runs the citadel and the
-// daemon against it until one of them stops or ctx is cancelled.
-func runDevworld(ctx context.Context, dataDir, httpAddr, socketPath string) error {
-	srv, err := natsembed.Start(ctx, natsembed.Config{DataDir: filepath.Join(dataDir, "nats")})
+// daemon against it, the same code paths "citadel up" and "daemon up" run,
+// until one of them stops or ctx is cancelled.
+func runDevworld(ctx context.Context, o devworldOptions) error {
+	srv, err := natsembed.Start(ctx, natsembed.Config{
+		Name:       "skylands-devworld",
+		ClientAddr: o.natsListen,
+		LeafAddr:   o.leafListen,
+		StoreDir:   filepath.Join(o.dataDir, "nats"),
+		Domain:     "world",
+	})
 	if err != nil {
 		return err
 	}
@@ -61,10 +76,10 @@ func runDevworld(ctx context.Context, dataDir, httpAddr, socketPath string) erro
 	defer cancel()
 	errc := make(chan error, 2)
 	go func() {
-		errc <- citadel.Run(ctx, citadel.Config{NATSURL: srv.ClientURL(), HTTPAddr: httpAddr})
+		errc <- citadel.Run(ctx, citadel.Config{NATSURL: srv.ClientURL(), HTTPAddr: o.httpAddr})
 	}()
 	go func() {
-		errc <- daemon.Run(ctx, daemon.Config{NATSURL: srv.LeafURL(), DataDir: dataDir, SocketPath: socketPath})
+		errc <- daemon.Run(ctx, daemon.Config{Host: o.host, NATSURL: srv.LeafURL(), DataDir: o.dataDir, Version: versionString()})
 	}()
 	err = <-errc
 	cancel()

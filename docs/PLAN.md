@@ -1,0 +1,163 @@
+# Plan: first MVP
+
+The first MVP is the citadel web application showing the citadel and the
+islands around it, with islands appearing as daemons come up and going grey
+as they go down. It runs on NATS micro ping for presence, as the design
+specifies. No events, streams, or aggregates are needed for it.
+
+## Status
+
+- Milestone 1 is done: `devworld up` serves the citadel in the sky with the
+  NATS facts in the panel.
+- Milestones 2 and 3 are done: `daemon up` registers the `skylands-daemon`
+  micro service through its leaf node, the citadel polls it, and the browser
+  gets a snapshot plus island deltas.
+- The island part of milestone 4 is done: islands rise with stable placement
+  and go grey on a slack tether when unreachable. What remains of milestone 4
+  is the terrace, building, airship, and work order code.
+
+## What the MVP proves
+
+1. `skylands devworld up` on a laptop, then opening the web app, shows the
+   citadel with one island for that machine.
+2. Starting `skylands daemon up` elsewhere makes a new island rise within a
+   few seconds.
+3. Stopping that daemon turns its island grey on a slack tether within about
+   ten seconds. Restarting it brings the island back.
+4. The world panel lists islands with last-seen times and the NATS server the
+   citadel is connected to.
+
+## The prototype
+
+The mock UI is `docs/Skylands world.html`: one file of about 2,400 lines,
+vanilla JavaScript in a single closure, three.js r128 loaded as a global from
+a CDN, Google Fonts, and hard-coded hosts, agents, and queue data.
+Reachability is already modeled the way the design describes. Each island has
+a drift value that eases toward one when its host is unreachable, and that
+value drives the crystal, the tether material, and the sparks.
+
+Two things it lacks for the MVP. Islands are built once from a fixed list, so
+there is no path for a host to appear or leave. And island positions are
+hand-placed rather than derived from the host.
+
+## Milestones
+
+Each milestone is demoable on its own and builds on the last.
+
+### 1. Embedded NATS and a citadel that serves a page
+
+- `natsembed` starts nats-server in-process with JetStream on and a leaf node
+  listener. One account, no auth.
+- `citadel/web` serves the embedded `web/dist` and a WebSocket that sends the
+  connected NATS server's name, version, URL, cluster, and JetStream domain
+  on connect and whenever the connection changes.
+- `web/` is the Vite plus TypeScript client, with a `make web` target
+  feeding `web/dist` into the Go embed. The prototype's sky, citadel, camera,
+  labels, header, and world panel are ported into modules, pinned to three
+  0.128.0, with the fonts bundled. The world panel shows the NATS facts.
+- `skylands devworld up` starts the embedded server and the citadel. The
+  daemon joins in milestone 2.
+
+Demo: the browser shows the citadel in the sky, and the panel shows which
+NATS server it is on.
+
+### 2. Daemon presence over NATS micro
+
+- The daemon connects through its embedded leaf node and registers the
+  `skylands-daemon` micro service with host name, OS and architecture,
+  version, and start time as metadata.
+- A `--host` flag defaults to the machine's hostname until credentials carry
+  identity.
+- In `citadel/projections`, a reachability poller pings the service every two
+  seconds, collects replies for one second, and marks a host unreachable
+  after three misses while keeping its last state and last-seen time.
+
+Demo: the citadel log prints islands going reachable and unreachable as a
+second daemon starts and stops.
+
+### 3. Stream the projection to the browser
+
+- The WebSocket sends a full snapshot on connect, then deltas: host added,
+  reachable, unreachable.
+- Each host record carries what the prototype's panel code reads: id, name, a
+  one-line description from the metadata, reachable, and last-seen. Geometry
+  is not sent. The client derives it from the id.
+- The browser renders a flat list first and reconnects with backoff.
+
+Demo: the list updates live as daemons start and stop.
+
+### 4. Port the prototype and make it live
+
+Three parts.
+
+**Move the rest of the file into the build without changing how it looks.**
+Milestone 1 already ported the sky, citadel, camera, labels, and world panel
+into `world/` and `panels/`, pinned to three 0.128.0 with the fonts bundled.
+This step moves the island, terrace, building, airship, tether, and island
+panel code the same way, mechanically, and adds a `data/` module in place of
+the hard-coded constants. Upgrading three is a separate later step, because
+r128 to current changes color management and light intensity units and will
+need visual re-tuning.
+
+**Replace the mock data with a store fed by the WebSocket.** The `HOSTS`,
+`AGENTS`, and `QUEUE` constants become a store that starts empty.
+`reachable`, `statusOf`, `connectedCount`, and the last-heard times read from
+it. The agent, terrace, queue, and work order code stays in place and simply
+has nothing to render, so it comes back as later features arrive. The
+simulation drivers go: the laptop offline cycle, the NUC toggle, and the
+dispatch simulation.
+
+**Add islands dynamically with stable placement.** New `addIsland` and
+`retireIsland` paths build or dispose an island group and tether when the
+store changes, with the existing drift value providing the rise on arrival
+and the drift and grey crystal on loss. Angle, distance, height, radius, and
+seed derive from a hash of the host id, with a deterministic nudge when two
+hosts land in the same slot, so every host keeps its place across reloads and
+across citadels.
+
+The world panel shows islands connected and the NATS server. The island panel
+shows link state, last heard, and the daemon facts from the micro metadata.
+Levels below island render nothing yet.
+
+Demo: the MVP.
+
+### 5. Hardening and the two-machine run
+
+- An e2e test in `test/e2e` runs natsembed, a citadel, and fake daemons in
+  one process and asserts the reachable and unreachable transitions. Unit
+  tests cover the poller with a fake pinger and clock.
+- Reconnect handling for the daemon's leaf remote, the citadel's NATS client,
+  and the browser's WebSocket.
+- The web server binds `127.0.0.1` by default until auth exists, with the
+  `--http` flag to override.
+- A README quickstart for the laptop plus second machine case.
+
+## Decisions
+
+- **Leaf node from day one.** The daemon could connect as a plain client for
+  now, but the leaf node is its defining connectivity and reuses the same
+  embed code as devworld. It is the one piece that can be swapped later
+  without touching anything else.
+- **Unreachable means grey, not gone.** The design keeps islands in place so
+  people build spatial memory. Removing them is a one-line variant.
+- **No auth means local binding.** The web server and the embedded NATS
+  listeners default to `127.0.0.1` until credentials exist.
+- **Keep three.js at r128 for the MVP.** The scene is tuned for it. Upgrading
+  belongs in its own step after the MVP is visible.
+- **Strip the simulation, keep the features.** Deleting the agent and work
+  order code would save little and cost a rewrite later. Feeding it an empty
+  store costs nothing.
+- **Placement is a client concern.** The server sends identity and state. The
+  client owns geometry, so the design's rule that an island keeps its place
+  needs no server state.
+- **Libraries.** nats-server v2 and nats.go on the Go side, with nats.go's
+  micro package for the service. `coder/websocket` for the WebSocket. Vite
+  and TypeScript for the client, with three.js added at milestone 4.
+
+## Deferred past the MVP
+
+World init, accounts, credentials, and auth callout. Passkeys and user
+sessions. JetStream streams, events, and every aggregate. Agents, ACP, and
+adapters. Repos, terrain, and buildings. Rules, approvals, and push
+notifications. Work orders. Drill-down below the island level. The phone
+inbox. Packaging and goreleaser.

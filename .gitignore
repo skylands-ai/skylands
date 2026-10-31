@@ -39,3 +39,6 @@ go.work.sum
 /skylands
 /bin/
 /dist/
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
