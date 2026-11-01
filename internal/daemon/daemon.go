@@ -293,6 +293,19 @@ func (c *commands) handle(ctx context.Context, msg *nats.Msg) {
 			return
 		}
 		c.replyResult(msg, map[string]any{"sessionId": s.ID, "pending": len(s.Pending)})
+	case v1.CommandAnswerQuestion:
+		var cmd v1.AnswerQuestion
+		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+			c.reply(msg, v1.Reply{Error: "bad AnswerQuestion: " + err.Error()})
+			return
+		}
+		cmd.SessionID = sessionID
+		s, err := c.sessions.Answer(ctx, cmd, "citadel")
+		if err != nil {
+			c.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		c.replyResult(msg, map[string]any{"sessionId": s.ID, "questions": len(s.Questions)})
 	case v1.CommandTrustSession:
 		var cmd v1.TrustSession
 		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
@@ -412,7 +425,7 @@ func (a *localAPI) sessionInfo(s session.Session) socket.SessionInfo {
 		name = r.Name
 	}
 	return socket.SessionInfo{
-		ID: s.ID, Repo: name, Agent: s.Agent, Status: string(s.Status), Turns: s.Turns, Title: s.Title, Prompt: s.Prompt, Pending: len(s.Pending),
+		ID: s.ID, Repo: name, Agent: s.Agent, Status: string(s.Status), Turns: s.Turns, Title: s.Title, Prompt: s.Prompt, Pending: len(s.Pending), Questions: len(s.Questions),
 		Worktree: s.Worktree, Branch: s.Branch, Base: s.Base, InCheckout: s.InCheckout,
 		Commit: s.Commit, MergedInto: s.MergedInto, PullRequest: s.PullRequest, WorktreeRemoved: s.WorktreeRemoved,
 		StartedAt: s.StartedAt, EndedAt: s.EndedAt,
@@ -462,6 +475,41 @@ func (a *localAPI) requestInfo(r session.Request) socket.RequestInfo {
 		ID: r.Permission.RequestID, Session: r.Session.ID, Conversation: title, Repo: name, Agent: r.Session.Agent,
 		Tool: r.Permission.Title, Kind: r.Permission.Kind, Locations: r.Permission.Locations, Input: r.Permission.Input, Options: options, Since: r.Permission.At,
 	}
+}
+
+func (a *localAPI) Questions(context.Context) []socket.QuestionInfo {
+	out := []socket.QuestionInfo{}
+	for _, q := range a.sessions.Questions() {
+		out = append(out, a.questionInfo(q))
+	}
+	return out
+}
+
+func (a *localAPI) questionInfo(q session.WaitingQuestion) socket.QuestionInfo {
+	name := q.Session.RepoID
+	if repo, ok := a.agg.Repo(q.Session.RepoID); ok {
+		name = repo.Name
+	}
+	title := q.Session.Title
+	if title == "" {
+		title = q.Session.Prompt
+	}
+	return socket.QuestionInfo{ID: q.Question.QuestionID, Session: q.Session.ID, Conversation: title, Repo: name, Agent: q.Session.Agent, Message: q.Question.Message, Fields: q.Question.Fields, Since: q.Question.At}
+}
+
+func (a *localAPI) AnswerQuestion(ctx context.Context, questionID, commandID string, answers json.RawMessage, decline bool) (socket.QuestionInfo, error) {
+	s, ok := a.sessions.FindQuestion(questionID)
+	if !ok {
+		return socket.QuestionInfo{}, session.ErrUnknownQuestion
+	}
+	var info socket.QuestionInfo
+	for _, q := range s.Questions {
+		if q.QuestionID == questionID {
+			info = a.questionInfo(session.WaitingQuestion{Session: s, Question: q})
+		}
+	}
+	_, err := a.sessions.Answer(ctx, v1.AnswerQuestion{ID: commandID, SessionID: s.ID, QuestionID: questionID, Answers: answers, Decline: decline}, "local")
+	return info, err
 }
 
 func (a *localAPI) Approve(ctx context.Context, requestID, commandID string) (socket.RequestInfo, error) {

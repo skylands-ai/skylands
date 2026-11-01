@@ -2,7 +2,9 @@ package socket
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,6 +56,13 @@ func (f *fakeAPI) RemoveSession(_ context.Context, id, _ string, force bool) (Re
 	return RemoveResult{}, session.ErrUnknownSession
 }
 func (f *fakeAPI) PruneSessions(context.Context) []PruneResult { return []PruneResult{} }
+func (f *fakeAPI) Questions(context.Context) []QuestionInfo    { return []QuestionInfo{} }
+func (f *fakeAPI) AnswerQuestion(_ context.Context, id, _ string, answers json.RawMessage, decline bool) (QuestionInfo, error) {
+	if id != "q1" {
+		return QuestionInfo{}, session.ErrUnknownQuestion
+	}
+	return QuestionInfo{ID: id, Message: string(answers), Agent: fmt.Sprint(decline)}, nil
+}
 func (f *fakeAPI) Rules(context.Context) []RepoRulesInfo {
 	out := []RepoRulesInfo{}
 	for _, r := range f.repos {
@@ -153,6 +162,17 @@ func TestServerAndClient(t *testing.T) {
 	}
 	if pruned, err := c.PruneSessions(ctx); err != nil || len(pruned) != 0 {
 		t.Errorf("PruneSessions = %+v, %v", pruned, err)
+	}
+
+	// A question is answered, or declined, by its id.
+	if q, err := c.AnswerQuestion(ctx, "q1", json.RawMessage(`{"question_0":"a.go"}`)); err != nil || q.Message != `{"question_0":"a.go"}` || q.Agent != "false" {
+		t.Errorf("AnswerQuestion = %+v, %v", q, err)
+	}
+	if q, err := c.AnswerQuestion(ctx, "q1", nil); err != nil || q.Agent != "true" {
+		t.Errorf("decline = %+v, %v", q, err)
+	}
+	if _, err := c.AnswerQuestion(ctx, "nope", nil); err == nil || !strings.Contains(err.Error(), "no such question") {
+		t.Errorf("answer an unknown question: err = %v", err)
 	}
 
 	// Rules are listed per repository and replaced as a whole.

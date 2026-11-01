@@ -73,6 +73,21 @@ func (c *Client) Deny(ctx context.Context, requestID string) (RequestInfo, error
 	return out, err
 }
 
+// Questions lists every question waiting on a person on this host.
+func (c *Client) Questions(ctx context.Context) ([]QuestionInfo, error) {
+	var out []QuestionInfo
+	err := c.call(ctx, http.MethodGet, "/v1/questions", nil, &out)
+	return out, err
+}
+
+// AnswerQuestion answers a waiting question with values by field key, or
+// declines it when answers is nil.
+func (c *Client) AnswerQuestion(ctx context.Context, questionID string, answers json.RawMessage) (QuestionInfo, error) {
+	var out QuestionInfo
+	err := c.call(ctx, http.MethodPost, "/v1/questions/"+questionID+"/answer", AnswerRequest{CommandID: nuid.Next(), Answers: answers, Decline: answers == nil}, &out)
+	return out, err
+}
+
 // Sessions lists every session on this host, newest first.
 func (c *Client) Sessions(ctx context.Context) ([]SessionInfo, error) {
 	var out []SessionInfo

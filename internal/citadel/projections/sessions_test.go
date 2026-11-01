@@ -17,7 +17,7 @@ func TestEmptySessionEncodesLists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"recent":[]`, `"files":{}`, `"plan":[]`, `"rules":[]`} {
+	for _, want := range []string{`"recent":[]`, `"files":{}`, `"plan":[]`, `"rules":[]`, `"questions":[]`} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("session JSON lacks %s: %s", want, data)
 		}
@@ -69,6 +69,15 @@ func TestSessionsFollowSessionEvents(t *testing.T) {
 	apply(v1.EventSessionTrusted, v1.SessionTrusted{SessionID: "s1", Trusted: true})
 	if s := p.List()[0]; !s.Trusted {
 		t.Errorf("session after trust = %+v", s)
+	}
+	// A question waits until answered, declined, or expired.
+	apply(v1.EventQuestionAsked, v1.QuestionAsked{SessionID: "s1", QuestionID: "q1", Message: "Which file?", Fields: []v1.QuestionField{{Key: "question_0", Type: "string", Options: []v1.QuestionOption{{Value: "a.go"}}}}})
+	if s := p.List()[0]; len(s.Questions) != 1 || s.Questions[0].Message != "Which file?" || len(s.Questions[0].Fields[0].Options) != 1 || s.Questions[0].At.IsZero() {
+		t.Errorf("session with a question = %+v", s.Questions)
+	}
+	apply(v1.EventQuestionAnswered, v1.QuestionAnswered{SessionID: "s1", QuestionID: "q1", Answers: json.RawMessage(`{"question_0":"a.go"}`), By: "citadel"})
+	if s := p.List()[0]; len(s.Questions) != 0 {
+		t.Errorf("session after the answer = %+v", s.Questions)
 	}
 	apply(v1.EventSessionRulesSet, v1.SessionRulesSet{SessionID: "s1", Rules: []v1.Rule{{Decision: "deny", Kind: "execute", Pattern: "rm -rf *"}}})
 	if s := p.List()[0]; len(s.Rules) != 1 || s.Rules[0].Decision != "deny" {

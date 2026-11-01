@@ -844,3 +844,86 @@ func TestRulesSettleToolCallsAndSessionsInheritThem(t *testing.T) {
 		t.Errorf("Rules over the socket = %+v, %v", list, err)
 	}
 }
+
+func TestQuestionsReachTheBrowser(t *testing.T) {
+	if testing.Short() {
+		t.Skip("whole-world test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	w := startWorld(t, ctx)
+	b := w.openBrowser()
+	sock := shortSocket(t)
+	stop := w.startDaemonWithSocket("ws", sock)
+	defer stop()
+	b.wait(t, "ws reachable", 15*time.Second, func(v view) bool { return reachable(v, "ws", true) })
+	repoDir := gitRepo(t, "main.go", "util.go")
+	cli := socket.Dial(sock)
+	var info socket.RepoInfo
+	var err error
+	for i := 0; i < 100; i++ {
+		if info, err = cli.RegisterRepo(ctx, repoDir); err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("RegisterRepo: %v", err)
+	}
+	b.wait(t, "the terrace", 20*time.Second, func(v view) bool { _, ok := v.repos[info.ID]; return ok })
+	post := func(path, body string) (int, map[string]any) {
+		t.Helper()
+		resp, err := http.Post(w.webURL+path, "application/json", bytes.NewBufferString(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		data, _ := io.ReadAll(resp.Body)
+		var out map[string]any
+		_ = json.Unmarshal(data, &out)
+		return resp.StatusCode, out
+	}
+	code, out := post("/api/sessions", `{"host":"ws","repoId":"`+info.ID+`","agent":"fake","prompt":"ask me which file"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("start session: %d %v", code, out)
+	}
+	id := out["sessionId"].(string)
+
+	// The agent's question reaches the browser with its form, the host's
+	// CLI lists it, and the browser's answer steers the agent.
+	v := b.wait(t, "the question", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && len(s.Questions) == 1 })
+	q := v.sessions[id].Questions[0]
+	if q.Message != "Which file should I edit?" || len(q.Fields) != 2 || len(q.Fields[0].Options) != 2 || q.Fields[1].Title != "Other" {
+		t.Errorf("question = %+v", q)
+	}
+	if list, err := cli.Questions(ctx); err != nil || len(list) != 1 || list[0].ID != q.QuestionID || list[0].Repo != info.Name {
+		t.Errorf("Questions over the socket = %+v, %v", list, err)
+	}
+	if code, out := post("/api/sessions/ws/"+id+"/questions/"+q.QuestionID+"/answer", `{}`); code != http.StatusBadRequest {
+		t.Errorf("an empty answer: %d %v", code, out)
+	}
+	if code, out := post("/api/sessions/ws/"+id+"/questions/"+q.QuestionID+"/answer", `{"answers":{"question_0":"util.go"}}`); code != http.StatusOK {
+		t.Fatalf("answer: %d %v", code, out)
+	}
+	v = b.wait(t, "the edit to wait", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && len(s.Questions) == 0 && len(s.Pending) == 1 })
+	if p := v.sessions[id].Pending[0]; p.Title != "Edit util.go" {
+		t.Errorf("the agent edits %q, want util.go", p.Title)
+	}
+	if code, out := post("/api/sessions/ws/"+id+"/requests/"+v.sessions[id].Pending[0].RequestID+"/approve", `{}`); code != http.StatusOK {
+		t.Fatalf("approve: %d %v", code, out)
+	}
+	b.wait(t, "the turn to end", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "idle" })
+
+	// The next question is declined from the host.
+	if code, out := post("/api/sessions/ws/"+id+"/prompt", `{"text":"ask me again"}`); code != http.StatusOK {
+		t.Fatalf("prompt: %d %v", code, out)
+	}
+	v = b.wait(t, "the second question", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && len(s.Questions) == 1 })
+	if _, err := cli.AnswerQuestion(ctx, v.sessions[id].Questions[0].QuestionID, nil); err != nil {
+		t.Fatalf("decline over the socket: %v", err)
+	}
+	v = b.wait(t, "the edit to wait again", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && len(s.Questions) == 0 && len(s.Pending) == 1 })
+	if p := v.sessions[id].Pending[0]; p.Title != "Edit main.go" {
+		t.Errorf("after a refusal the agent edits %q, want main.go", p.Title)
+	}
+}

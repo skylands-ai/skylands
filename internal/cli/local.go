@@ -8,6 +8,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"text/tabwriter"
@@ -63,7 +64,7 @@ func newRequestCmd() *cobra.Command {
 		GroupID: groupLocal,
 		Short:   "List, approve, and deny requests waiting on a person on this host",
 	}
-	cmd.AddCommand(newRequestListCmd(), newRequestApproveCmd(), newRequestDenyCmd())
+	cmd.AddCommand(newRequestListCmd(), newRequestApproveCmd(), newRequestDenyCmd(), newRequestAnswerCmd())
 	return cmd
 }
 
@@ -77,19 +78,38 @@ without an answer: its id, the conversation, the agent, the tool, and how
 long it has waited. Approve or deny one by its id.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			reqs, err := socket.Dial(socketPath).Requests(cmd.Context())
+			cli := socket.Dial(socketPath)
+			reqs, err := cli.Requests(cmd.Context())
+			if err != nil {
+				return err
+			}
+			questions, err := cli.Questions(cmd.Context())
 			if err != nil {
 				return err
 			}
 			out := cmd.OutOrStdout()
-			if len(reqs) == 0 {
+			if len(reqs) == 0 && len(questions) == 0 {
 				fmt.Fprintln(out, "Nothing is waiting on you.")
 				return nil
 			}
 			tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(tw, "REQUEST\tCONVERSATION\tAGENT\tREPO\tTOOL\tWAITING")
-			for _, r := range reqs {
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, cut(r.Conversation, 40), r.Agent, r.Repo, cut(r.Tool, 50), time.Since(r.Since).Truncate(time.Second))
+			if len(reqs) > 0 {
+				fmt.Fprintln(tw, "REQUEST\tCONVERSATION\tAGENT\tREPO\tTOOL\tWAITING")
+				for _, r := range reqs {
+					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, cut(r.Conversation, 40), r.Agent, r.Repo, cut(r.Tool, 50), time.Since(r.Since).Truncate(time.Second))
+				}
+			}
+			if len(questions) > 0 {
+				if len(reqs) > 0 {
+					fmt.Fprintln(tw)
+				}
+				fmt.Fprintln(tw, "QUESTION\tCONVERSATION\tAGENT\tREPO\tASKS\tWAITING")
+				for _, q := range questions {
+					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", q.ID, cut(q.Conversation, 40), q.Agent, q.Repo, cut(q.Message, 50), time.Since(q.Since).Truncate(time.Second))
+					for _, f := range q.Fields {
+						fmt.Fprintf(tw, "\t\t\t\t  %s\t\n", fieldText(f))
+					}
+				}
 			}
 			return tw.Flush()
 		},
@@ -428,6 +448,97 @@ func changesOf(s socket.SessionInfo) string {
 		return "-"
 	}
 	return strings.Join(parts, ", ")
+}
+
+func newRequestAnswerCmd() *cobra.Command {
+	var socketPath string
+	var decline bool
+	cmd := &cobra.Command{
+		Use:   "answer <question> [field=value ...]",
+		Short: "Answer a question an agent is waiting on, or decline it",
+		Long: `Request answer gives a waiting question its answers, one field=value per
+field as request list shows them. A field that offers choices takes one of
+them, or several separated by commas when it allows that. With --decline
+the agent is told you will not answer.`,
+		Example: `  skylands request answer 7Fq2 question_0=a.go
+  skylands request answer 7Fq2 question_0=a.go "question_0_custom=only the header"
+  skylands request answer 7Fq2 --decline`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cli := socket.Dial(socketPath)
+			var answers json.RawMessage
+			if !decline {
+				questions, err := cli.Questions(cmd.Context())
+				if err != nil {
+					return err
+				}
+				var fields []v1.QuestionField
+				for _, q := range questions {
+					if q.ID == args[0] {
+						fields = q.Fields
+					}
+				}
+				values := map[string]any{}
+				for _, kv := range args[1:] {
+					k, v, ok := strings.Cut(kv, "=")
+					if !ok {
+						return fmt.Errorf("%q is not field=value", kv)
+					}
+					values[k] = v
+					for _, f := range fields {
+						if f.Key == k && f.Type == "array" {
+							var items []string
+							for _, it := range strings.Split(v, ",") {
+								if it = strings.TrimSpace(it); it != "" {
+									items = append(items, it)
+								}
+							}
+							values[k] = items
+						}
+					}
+				}
+				if len(values) == 0 {
+					return fmt.Errorf("give at least one field=value, or --decline")
+				}
+				answers, _ = json.Marshal(values)
+			}
+			q, err := cli.AnswerQuestion(cmd.Context(), args[0], answers)
+			if err != nil {
+				return err
+			}
+			if decline {
+				fmt.Fprintf(cmd.OutOrStdout(), "Declined %q for %s in %s\n", cut(q.Message, 60), q.Agent, q.Repo)
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "Answered %q for %s in %s\n", cut(q.Message, 60), q.Agent, q.Repo)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&decline, "decline", false, "tell the agent you will not answer")
+	socketFlag(cmd, &socketPath)
+	return cmd
+}
+
+// fieldText describes one question field: its key, what it is called, and
+// the choices it offers.
+func fieldText(f v1.QuestionField) string {
+	s := f.Key
+	if f.Title != "" {
+		s += " (" + f.Title + ")"
+	}
+	if len(f.Options) > 0 {
+		var opts []string
+		for _, o := range f.Options {
+			opts = append(opts, o.Value)
+		}
+		s += ": " + strings.Join(opts, " | ")
+		if f.Type == "array" {
+			s += " (several, comma-separated)"
+		}
+	} else {
+		s += ": free text"
+	}
+	return s
 }
 
 // cut shortens s to n characters with an ellipsis, on one line.

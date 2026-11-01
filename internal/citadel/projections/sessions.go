@@ -37,6 +37,15 @@ type Resumed struct {
 	TurnResumed bool `json:"turnResumed,omitempty"`
 }
 
+// Question is a question the agent is waiting on a person to answer.
+type Question struct {
+	QuestionID string             `json:"questionId"`
+	ToolCallID string             `json:"toolCallId,omitempty"`
+	Message    string             `json:"message"`
+	Fields     []v1.QuestionField `json:"fields"`
+	At         time.Time          `json:"at"`
+}
+
 // ToolCall is one tool call as the session last reported it.
 type ToolCall struct {
 	ID        string    `json:"id"`
@@ -85,8 +94,10 @@ type Session struct {
 	// Rules settle tool calls before they reach a person: the repository's
 	// as copied at the start, and any set on the session since.
 	Rules []v1.Rule `json:"rules"`
-	// Pending holds the tool calls waiting on a person, oldest first.
-	Pending []Permission `json:"pending"`
+	// Pending holds the tool calls waiting on a person, oldest first, and
+	// Questions the questions waiting on an answer.
+	Pending   []Permission `json:"pending"`
+	Questions []Question   `json:"questions"`
 	// Resumes counts the daemon restarts the session has lived through, and
 	// Resumed says how its agent last came back.
 	Resumes   int       `json:"resumes,omitempty"`
@@ -140,7 +151,7 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 	case v1.EventSessionStarted:
 		var d v1.SessionStarted
 		if ev.Decode(&d) == nil {
-			s := &Session{Host: host, ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Rules: append([]v1.Rule{}, d.Rules...), Status: "running", StartedAt: ev.Time, ActiveAt: ev.Time, Recent: []ToolCall{}, Files: map[string]string{}, Pending: []Permission{}}
+			s := &Session{Host: host, ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Rules: append([]v1.Rule{}, d.Rules...), Status: "running", StartedAt: ev.Time, ActiveAt: ev.Time, Recent: []ToolCall{}, Files: map[string]string{}, Pending: []Permission{}, Questions: []Question{}}
 			p.byID[d.SessionID] = s
 			changed = s
 		}
@@ -210,6 +221,35 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 					}
 				}
 				s.Pending = kept
+				changed = s
+			}
+		}
+	case v1.EventQuestionAsked:
+		var d v1.QuestionAsked
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				fields := d.Fields
+				if fields == nil {
+					fields = []v1.QuestionField{}
+				}
+				s.Questions = append(s.Questions, Question{QuestionID: d.QuestionID, ToolCallID: d.ToolCallID, Message: d.Message, Fields: fields, At: ev.Time})
+				changed = s
+			}
+		}
+	case v1.EventQuestionAnswered, v1.EventQuestionExpired:
+		var d struct {
+			SessionID  string `json:"sessionId"`
+			QuestionID string `json:"questionId"`
+		}
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				kept := make([]Question, 0, len(s.Questions))
+				for _, q := range s.Questions {
+					if q.QuestionID != d.QuestionID {
+						kept = append(kept, q)
+					}
+				}
+				s.Questions = kept
 				changed = s
 			}
 		}
@@ -351,6 +391,7 @@ func isActivity(eventType string) bool {
 	switch eventType {
 	case v1.EventSessionStarted, v1.EventPromptSent, v1.EventTurnEnded, v1.EventToolCallStarted, v1.EventToolCallCompleted,
 		v1.EventPlanUpdated, v1.EventUsageReported, v1.EventPermissionRequested, v1.EventPermissionGranted, v1.EventPermissionDenied,
+		v1.EventQuestionAsked, v1.EventQuestionAnswered,
 		v1.EventAgentFailed, v1.EventSessionEnded, v1.EventChangesCommitted, v1.EventChangesMerged, v1.EventPullRequestOpened:
 		return true
 	}
@@ -381,6 +422,7 @@ func cloneSession(s *Session) Session {
 	}
 	c.Plan = append(make([]v1.PlanEntry, 0, len(s.Plan)), s.Plan...)
 	c.Pending = append(make([]Permission, 0, len(s.Pending)), s.Pending...)
+	c.Questions = append(make([]Question, 0, len(s.Questions)), s.Questions...)
 	c.Rules = append(make([]v1.Rule, 0, len(s.Rules)), s.Rules...)
 	return c
 }

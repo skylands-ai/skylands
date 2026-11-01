@@ -158,9 +158,11 @@ func launch(ctx context.Context, ad Adapter, cwd, model string, obs Observer) (*
 	r := &Run{name: ad.Name, cwd: cwd, client: client, cancel: cancel, stderr: stderr, transport: transport, seq: h.seq, handler: h}
 
 	init, err := client.Initialize(ctx, &acp.InitializeRequest{
-		ProtocolVersion:    acp.ProtocolVersion(1),
-		ClientInfo:         &acp.Implementation{Name: "skylands", Version: "dev"},
-		ClientCapabilities: &acp.ClientCapabilities{},
+		ProtocolVersion: acp.ProtocolVersion(1),
+		ClientInfo:      &acp.Implementation{Name: "skylands", Version: "dev"},
+		// Forms are how an agent asks a person something: the daemon turns
+		// one into a question that waits like a permission request does.
+		ClientCapabilities: &acp.ClientCapabilities{Elicitation: &acp.ElicitationCapabilities{Form: &acp.ElicitationFormCapabilities{}}},
 	})
 	if err != nil {
 		_ = r.Close()

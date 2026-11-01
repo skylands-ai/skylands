@@ -174,6 +174,12 @@ remove` do the same for a repository. The most specific matching rule
 wins, a deny beats an allow among equals, and a session's own rule beats
 one it copied from the repository.
 
+When an agent needs something only you can tell it, such as Claude Code
+asking a clarifying question, the question arrives in the conversation as
+a card with its choices and a box for anything else, and in the inbox, the
+beacon, and `skylands request list` like an approval. Answer it there, or
+with `skylands request answer <id> field=value`, or decline it.
+
 ### Running the roles separately
 
 `devworld up` is the same code as the separate roles, with NATS started for

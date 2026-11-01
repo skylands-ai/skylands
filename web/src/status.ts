@@ -90,6 +90,7 @@ export function sessionStatus(s: Session, waiting = s.status === 'idle'): Status
   if (s.status === 'failed') return [`Failed: ${s.error ?? 'unknown error'}`, 'var(--bad)']
   if (s.status === 'ended') return [`Finished${s.stopReason && s.stopReason !== 'end_turn' && s.stopReason !== 'stopped' ? ` (${s.stopReason.replace(/_/g, ' ')})` : s.stopReason === 'stopped' ? ', stopped' : ''}`, 'var(--muted)']
   if (s.pending.length) return [`Needs your approval: ${s.pending[0].title}`, WAITING]
+  if (s.questions.length) return [`Asks you: ${s.questions[0].message}`, WAITING]
   if (s.status === 'idle') return waiting ? ['Waiting for you', WAITING] : ['Idle', 'var(--idle)']
   return [s.currentAction ?? (s.agentName ? 'Thinking' : 'Starting'), 'var(--ok)']
 }

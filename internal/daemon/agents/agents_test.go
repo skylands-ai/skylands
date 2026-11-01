@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,14 +22,88 @@ func TestMain(m *testing.M) {
 }
 
 type recorder struct {
-	mu       sync.Mutex
-	name     string
-	session  string
-	calls    []ToolCall
-	plans    int
-	usage    []uint64
-	messages []string
-	asked    []PermissionRequest
+	mu        sync.Mutex
+	name      string
+	session   string
+	calls     []ToolCall
+	plans     int
+	usage     []uint64
+	messages  []string
+	asked     []PermissionRequest
+	questions []Question
+	// answer, when set, answers every question; otherwise the first choice of
+	// each field is picked.
+	answer func(Question) Answer
+}
+
+func (r *recorder) Question(_ context.Context, q Question) Answer {
+	r.mu.Lock()
+	r.questions = append(r.questions, q)
+	answer := r.answer
+	r.mu.Unlock()
+	if answer != nil {
+		return answer(q)
+	}
+	values := map[string]any{}
+	for _, f := range q.Fields {
+		if len(f.Options) > 0 {
+			values[f.Key] = f.Options[0].Value
+		}
+	}
+	data, _ := json.Marshal(values)
+	return Answer{Answers: data}
+}
+
+func TestQuestionsReachTheObserver(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cwd := t.TempDir()
+	for _, f := range []string{"main.go", "README.md"} {
+		if err := os.WriteFile(filepath.Join(cwd, f), []byte(f), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd, env := fakeagent.TestCommand()
+	ad := Adapter{Name: "fake", Command: cmd, Env: env}
+
+	// The fake agent asks which file to edit; the form has the choice and
+	// an "other" box, and the answer steers the edit.
+	rec := &recorder{answer: func(q Question) Answer {
+		return Answer{Answers: json.RawMessage(`{"question_0":"main.go","question_0_custom":"just the top"}`)}
+	}}
+	if _, err := RunPrompt(ctx, ad, cwd, "ask me which file", "", rec); err != nil {
+		t.Fatalf("RunPrompt: %v", err)
+	}
+	if len(rec.questions) != 1 || rec.questions[0].Message != "Which file should I edit?" || len(rec.questions[0].Fields) != 2 {
+		t.Fatalf("questions = %+v", rec.questions)
+	}
+	if f := rec.questions[0].Fields[0]; f.Key != "question_0" || f.Title != "File" || len(f.Options) != 2 || f.Options[0].Value != "README.md" || f.Options[1].Value != "main.go" {
+		t.Errorf("choice field = %+v", f)
+	}
+	if f := rec.questions[0].Fields[1]; f.Key != "question_0_custom" || f.Title != "Other" || len(f.Options) != 0 {
+		t.Errorf("free text field = %+v", f)
+	}
+	if said := rec.said(); !strings.Contains(said, "edited main.go") || !strings.Contains(said, "You chose main.go and added: just the top.") {
+		t.Errorf("after an answer the agent said %q", said)
+	}
+
+	// A refusal is told apart from an answer.
+	rec2 := &recorder{answer: func(Question) Answer { return Answer{Declined: true} }}
+	if _, err := RunPrompt(ctx, ad, cwd, "ask me which file", "", rec2); err != nil {
+		t.Fatalf("RunPrompt: %v", err)
+	}
+	if said := rec2.said(); !strings.Contains(said, "You declined to choose, so I took README.md.") {
+		t.Errorf("after a refusal the agent said %q", said)
+	}
+
+	// Without the words that make it ask, nothing is asked.
+	rec3 := &recorder{}
+	if _, err := RunPrompt(ctx, ad, cwd, "do the thing", "", rec3); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec3.questions) != 0 {
+		t.Errorf("an unprompted question: %+v", rec3.questions)
+	}
 }
 
 func (r *recorder) Spawned(name, _, session string) {

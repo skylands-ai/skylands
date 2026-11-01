@@ -37,6 +37,7 @@ func (c *citadel) api() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/stop", c.stopAgent)
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/requests/{rid}/approve", c.approve)
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/requests/{rid}/deny", c.deny)
+	mux.HandleFunc("POST /api/sessions/{host}/{id}/questions/{qid}/answer", c.answer)
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/trust", c.trust)
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/rules", c.sessionRules)
 	mux.HandleFunc("POST /api/repos/{host}/{id}/rules", c.repoRules)
@@ -147,6 +148,22 @@ func (c *citadel) deny(w http.ResponseWriter, r *http.Request) {
 	host, id, rid := r.PathValue("host"), r.PathValue("id"), r.PathValue("rid")
 	cmd := v1.DenyToolCall{ID: nuid.Next(), SessionID: id, RequestID: rid}
 	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandDenyToolCall), cmd, http.StatusOK)
+}
+
+// answer gives a waiting question its answers, values by field key, or
+// declines it.
+func (c *citadel) answer(w http.ResponseWriter, r *http.Request) {
+	host, id, qid := r.PathValue("host"), r.PathValue("id"), r.PathValue("qid")
+	var body struct {
+		Answers json.RawMessage `json:"answers"`
+		Decline bool            `json:"decline"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || (!body.Decline && len(body.Answers) == 0) {
+		writeError(w, http.StatusBadRequest, "answers by field, or decline, are required")
+		return
+	}
+	cmd := v1.AnswerQuestion{ID: nuid.Next(), SessionID: id, QuestionID: qid, Answers: body.Answers, Decline: body.Decline}
+	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandAnswerQuestion), cmd, http.StatusOK)
 }
 
 // trust allows a session's tool calls without asking, or asks again.

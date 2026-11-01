@@ -6,6 +6,7 @@ package fakeagent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -73,14 +74,20 @@ type session struct {
 }
 
 type agent struct {
-	conn     *acp.AgentConnection
-	delay    time.Duration
-	noLoad   bool
+	conn   *acp.AgentConnection
+	delay  time.Duration
+	noLoad bool
+	// canAsk means the client fills in forms, so the agent may ask a person
+	// a question.
+	canAsk   bool
 	mu       sync.Mutex
 	sessions map[acp.SessionId]*session
 }
 
-func (a *agent) Initialize(context.Context, *acp.InitializeRequest) (*acp.InitializeResponse, error) {
+func (a *agent) Initialize(_ context.Context, req *acp.InitializeRequest) (*acp.InitializeResponse, error) {
+	a.mu.Lock()
+	a.canAsk = req.ClientCapabilities != nil && req.ClientCapabilities.Elicitation != nil && req.ClientCapabilities.Elicitation.Form != nil
+	a.mu.Unlock()
 	return &acp.InitializeResponse{
 		ProtocolVersion:   acp.ProtocolVersion(1),
 		AgentInfo:         &acp.Implementation{Name: "skylands-fakeagent", Version: "dev"},
@@ -213,6 +220,46 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	if err := send(acp.PlanSessionUpdate(plan)); err != nil {
 		return nil, err
 	}
+	// Asked to, the agent asks which file to edit, the way a real agent
+	// asks a clarifying question: a choice, and a box for anything else.
+	chosen, note, declined := "", "", false
+	a.mu.Lock()
+	canAsk := a.canAsk
+	a.mu.Unlock()
+	if canAsk && len(files) > 0 && strings.Contains(strings.ToLower(promptText(req)), "ask me") {
+		options := make([]acp.EnumOption, 0, len(files))
+		for _, f := range files {
+			options = append(options, acp.EnumOption{Const: f, Title: f})
+		}
+		fileTitle, otherTitle, otherDesc := "File", "Other", "Type your own answer, or add a note to the option you chose above (optional)."
+		resp, err := a.conn.CreateElicitation(ctx, &acp.CreateElicitationRequest{
+			Mode: acp.CreateElicitationRequestTypeForm, SessionID: req.SessionID, Message: "Which file should I edit?",
+			RequestedSchema: acp.ElicitationSchema{Type: acp.ElicitationSchemaTypeObject, Properties: map[string]acp.ElicitationPropertySchema{
+				"question_0":        {Type: acp.ElicitationPropertySchemaTypeString, Title: &fileTitle, OneOf: &options},
+				"question_0_custom": {Type: acp.ElicitationPropertySchemaTypeString, Title: &otherTitle, Description: &otherDesc},
+			}},
+		})
+		if err != nil {
+			return nil, err
+		}
+		switch resp.Action {
+		case acp.CreateElicitationResponseTypeAccept:
+			if resp.Content != nil {
+				var pick string
+				_ = json.Unmarshal((*resp.Content)["question_0"], &pick)
+				for _, f := range files {
+					if f == pick {
+						chosen = f
+					}
+				}
+				_ = json.Unmarshal((*resp.Content)["question_0_custom"], &note)
+			}
+		case acp.CreateElicitationResponseTypeDecline:
+			declined = true
+		default:
+			return done()
+		}
+	}
 	edited := ""
 	refused := false
 	if len(files) > 0 {
@@ -220,6 +267,9 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 			return done()
 		}
 		edited = files[0]
+		if chosen != "" {
+			edited = chosen
+		}
 		id := acp.ToolCallId(fmt.Sprintf("t%d-edit-0", turn))
 		if err := send(toolCall(id, "Edit "+edited, acp.ToolKindEdit, filepath.Join(s.cwd, edited), acp.ToolCallStatusPending)); err != nil {
 			return nil, err
@@ -275,6 +325,14 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	msg += ". Every tracked file was counted, every hidden one was skipped, and nothing was changed on disk."
 	if context > 0 {
 		msg += fmt.Sprintf(" The request came with %d lines of context.", context)
+	}
+	switch {
+	case declined && len(files) > 0:
+		msg += " You declined to choose, so I took " + files[0] + "."
+	case chosen != "" && note != "":
+		msg += " You chose " + chosen + " and added: " + note + "."
+	case chosen != "":
+		msg += " You chose " + chosen + "."
 	}
 	// Stream the answer in small chunks with no pause, as real agents do.
 	for _, chunk := range chunks(msg, 6) {

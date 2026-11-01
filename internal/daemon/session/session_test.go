@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -929,4 +930,123 @@ func TestRulesSettleToolCallsBeforeAnyoneIsAsked(t *testing.T) {
 		t.Errorf("session after the repo's rules were cleared = %+v, %v", fresh.Rules, err)
 	}
 	waitPending(t, m2, "s2", 1)
+}
+
+// waitQuestions blocks until the session has n questions waiting on a person.
+func waitQuestions(t *testing.T, m *Manager, id string, n int) Session {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		s, ok := m.Get(id)
+		if ok && len(s.Questions) == n {
+			return s
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("session %s never had %d questions waiting: %+v", id, n, s)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestQuestionsWaitForAPerson(t *testing.T) {
+	f := setup(t)
+	m, err := Load(f.ctx, f.store, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Start(f.ctx, v1.StartSession{ID: "c1", SessionID: "s1", RepoID: f.repo.ID, Agent: "fake", Prompt: "ask me which file"}); err != nil {
+		t.Fatal(err)
+	}
+	// The agent asks before it edits: the question waits with its form.
+	asked := waitQuestions(t, m, "s1", 1)
+	q := asked.Questions[0]
+	if q.Message != "Which file should I edit?" || len(q.Fields) != 2 || q.Fields[0].Key != "question_0" || len(q.Fields[0].Options) != 2 || q.Fields[1].Key != "question_0_custom" || q.At.IsZero() {
+		t.Fatalf("question = %+v", q)
+	}
+	if found, ok := m.FindQuestion(q.QuestionID); !ok || found.ID != "s1" || len(m.Questions()) != 1 {
+		t.Errorf("FindQuestion/Questions = %+v, %v, %d", found, ok, len(m.Questions()))
+	}
+	if _, err := m.Answer(f.ctx, v1.AnswerQuestion{ID: "a0", SessionID: "s1", QuestionID: "nope", Answers: json.RawMessage(`{}`)}, "local"); !errors.Is(err, ErrUnknownQuestion) {
+		t.Errorf("answer an unknown question: err = %v", err)
+	}
+	if _, err := m.Answer(f.ctx, v1.AnswerQuestion{ID: "a1", SessionID: "s1", QuestionID: q.QuestionID, Answers: json.RawMessage(`not json`)}, "local"); err == nil {
+		t.Error("bad answers were accepted")
+	}
+	// The answer steers the agent: it edits the chosen file, and the edit
+	// then waits for approval as usual.
+	if s, err := m.Answer(f.ctx, v1.AnswerQuestion{ID: "a2", SessionID: "s1", QuestionID: q.QuestionID, Answers: json.RawMessage(`{"question_0":"b.go","question_0_custom":"carefully"}`)}, "citadel"); err != nil || len(s.Questions) != 0 {
+		t.Fatalf("Answer = %+v, %v", s, err)
+	}
+	if s, err := m.Answer(f.ctx, v1.AnswerQuestion{ID: "a2", SessionID: "s1", QuestionID: q.QuestionID}, "citadel"); err != nil || len(s.Questions) != 0 {
+		t.Errorf("a repeated answer = %+v, %v", s, err)
+	}
+	pending := waitPending(t, m, "s1", 1)
+	if pending.Pending[0].Title != "Edit b.go" {
+		t.Errorf("the agent edits %q, want b.go", pending.Pending[0].Title)
+	}
+	if _, err := m.Approve(f.ctx, v1.ApproveToolCall{ID: "a3", SessionID: "s1", RequestID: pending.Pending[0].RequestID}, "local"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, "s1", StatusIdle)
+
+	// A refusal reaches the agent as one.
+	if _, err := m.Prompt(f.ctx, v1.SendPrompt{ID: "p1", SessionID: "s1", Text: "ask me again"}); err != nil {
+		t.Fatal(err)
+	}
+	asked = waitQuestions(t, m, "s1", 1)
+	if _, err := m.Answer(f.ctx, v1.AnswerQuestion{ID: "a4", SessionID: "s1", QuestionID: asked.Questions[0].QuestionID, Decline: true}, "local"); err != nil {
+		t.Fatal(err)
+	}
+	pending = waitPending(t, m, "s1", 1)
+	if _, err := m.Approve(f.ctx, v1.ApproveToolCall{ID: "a5", SessionID: "s1", RequestID: pending.Pending[0].RequestID}, "local"); err != nil {
+		t.Fatal(err)
+	}
+	second := waitStatus(t, m, "s1", StatusIdle)
+	for second.Turns < 2 {
+		time.Sleep(20 * time.Millisecond)
+		second = waitStatus(t, m, "s1", StatusIdle)
+	}
+
+	// A question still waiting when the session stops expires with it.
+	if _, err := m.Prompt(f.ctx, v1.SendPrompt{ID: "p2", SessionID: "s1", Text: "ask me once more"}); err != nil {
+		t.Fatal(err)
+	}
+	waitQuestions(t, m, "s1", 1)
+	if s, err := m.Stop(f.ctx, v1.StopAgent{ID: "p3", SessionID: "s1"}); err != nil || len(s.Questions) != 0 || s.Status != StatusEnded {
+		t.Fatalf("Stop = %+v, %v", s, err)
+	}
+
+	b, _ := os.ReadFile(filepath.Join(f.cfg.TranscriptsDir, "s1.md"))
+	for _, want := range []string{QuestionLinePrefix + "Which file should I edit? \u2192 File: b.go; Other: carefully", "You chose b.go and added: carefully.", QuestionLinePrefix + "Which file should I edit? (declined)", "You declined to choose, so I took a.go."} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("transcript lacks %q:\n%s", want, b)
+		}
+	}
+	counts := map[string]int{}
+	var by []string
+	_ = f.store.Replay(f.ctx, v1.IslandStreamName("ws"), []string{v1.SessionEventFilter("ws")}, func(_ uint64, ev v1.Event) error {
+		counts[ev.Type]++
+		if ev.Type == v1.EventQuestionAnswered {
+			var d v1.QuestionAnswered
+			_ = ev.Decode(&d)
+			by = append(by, fmt.Sprintf("%s:%v", d.By, d.Declined))
+		}
+		if ev.Type == v1.EventQuestionExpired {
+			var d v1.QuestionExpired
+			_ = ev.Decode(&d)
+			by = append(by, "expired:"+d.Reason)
+		}
+		return nil
+	})
+	if counts[v1.EventQuestionAsked] != 3 || strings.Join(by, " ") != "citadel:false local:true expired:stopped" {
+		t.Errorf("question events = %v, %v", counts, by)
+	}
+	// A fresh manager has no question waiting.
+	m2, err := Load(f.ctx, f.store, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := m2.Get("s1"); len(s.Questions) != 0 {
+		t.Errorf("reloaded questions = %+v", s.Questions)
+	}
 }

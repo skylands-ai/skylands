@@ -92,8 +92,10 @@ type Session struct {
 	// Resumed says how its agent last came back.
 	Resumes int
 	Resumed Resumed
-	// Pending holds the tool calls waiting on a person, oldest first.
-	Pending []Permission
+	// Pending holds the tool calls waiting on a person, oldest first, and
+	// Questions the questions the agent is waiting on an answer to.
+	Pending   []Permission
+	Questions []Question
 	// Turns counts the prompts sent so far.
 	Turns     int
 	StartedAt time.Time
@@ -113,6 +115,15 @@ type Resumed struct {
 	// How is v1.ResumedByLoad or v1.ResumedBySeed.
 	How         string
 	TurnResumed bool
+}
+
+// Question is a question the agent is waiting on a person to answer.
+type Question struct {
+	QuestionID string
+	ToolCallID string
+	Message    string
+	Fields     []v1.QuestionField
+	At         time.Time
 }
 
 // Permission is a tool call waiting on a person.
@@ -167,6 +178,7 @@ var (
 	ErrNotIdle         = errors.New("the session is not waiting for a prompt")
 	ErrOver            = errors.New("the session has ended")
 	ErrUnknownRequest  = errors.New("no such request is waiting")
+	ErrUnknownQuestion = errors.New("no such question is waiting")
 	ErrResuming        = errors.New("the agent is being brought back after a restart; try again in a moment")
 	ErrCheckoutBusy    = errors.New("another session is working in the checkout")
 	ErrBusy            = errors.New("the agent is working; wait for the turn to end or stop the session")
@@ -211,8 +223,9 @@ type live struct {
 	turnDone chan struct{}
 	stopping bool
 	// asks holds, by request id, where each waiting permission request
-	// hears its decision.
-	asks map[string]chan agents.Decision
+	// hears its decision, and answers the same for questions.
+	asks    map[string]chan agents.Decision
+	answers map[string]chan agents.Answer
 }
 
 // Load rebuilds the aggregate from the host's stream. A session that was
@@ -239,6 +252,11 @@ func Load(ctx context.Context, store *es.Store, cfg Config) (*Manager, error) {
 		}
 		for _, p := range s.Pending {
 			if err := m.record(ctx, s.ID, "", v1.EventPermissionExpired, v1.PermissionExpired{SessionID: s.ID, RequestID: p.RequestID, Reason: "restart"}); err != nil {
+				return nil, err
+			}
+		}
+		for _, q := range s.Questions {
+			if err := m.record(ctx, s.ID, "", v1.EventQuestionExpired, v1.QuestionExpired{SessionID: s.ID, QuestionID: q.QuestionID, Reason: "restart"}); err != nil {
 				return nil, err
 			}
 		}
@@ -305,7 +323,7 @@ func (m *Manager) resume(id string) {
 		return
 	}
 	midTurn := cur.Status == StatusRunning
-	l := &live{run: run, asks: map[string]chan agents.Decision{}}
+	l := &live{run: run, asks: map[string]chan agents.Decision{}, answers: map[string]chan agents.Answer{}}
 	if midTurn {
 		l.turnDone = make(chan struct{})
 	}
@@ -408,6 +426,120 @@ func (m *Manager) decide(ctx context.Context, commandID, sessionID, requestID, b
 	ask <- agents.Decision{OptionID: option}
 	out, _ := m.Get(sessionID)
 	return out, nil
+}
+
+// Answer handles AnswerQuestion: it gives a waiting question its answers,
+// or the person's refusal, and records who did.
+func (m *Manager) Answer(ctx context.Context, cmd v1.AnswerQuestion, by string) (Session, error) {
+	m.cmdMu.Lock()
+	defer m.cmdMu.Unlock()
+	m.mu.Lock()
+	if id, ok := m.handled[cmd.ID]; ok && cmd.ID != "" {
+		s := *m.sessions[id]
+		m.mu.Unlock()
+		return s, nil
+	}
+	s, ok := m.sessions[cmd.SessionID]
+	l := m.live[cmd.SessionID]
+	if !ok {
+		m.mu.Unlock()
+		return Session{}, fmt.Errorf("%w: %s", ErrUnknownSession, cmd.SessionID)
+	}
+	var waiting *Question
+	for i := range s.Questions {
+		if s.Questions[i].QuestionID == cmd.QuestionID {
+			waiting = &s.Questions[i]
+		}
+	}
+	var answer chan agents.Answer
+	if l != nil {
+		answer = l.answers[cmd.QuestionID]
+	}
+	m.mu.Unlock()
+	if waiting == nil || answer == nil {
+		return *s, fmt.Errorf("%w: %s", ErrUnknownQuestion, cmd.QuestionID)
+	}
+	answers := cmd.Answers
+	if cmd.Decline {
+		answers = nil
+	} else if len(answers) == 0 || !json.Valid(answers) {
+		return *s, errors.New("answers must be a JSON object of values by field")
+	}
+	if err := m.record(ctx, cmd.SessionID, cmd.ID, v1.EventQuestionAnswered, v1.QuestionAnswered{SessionID: cmd.SessionID, QuestionID: cmd.QuestionID, Answers: answers, Declined: cmd.Decline, By: by}); err != nil {
+		return Session{}, err
+	}
+	if cmd.Decline {
+		m.transcript(cmd.SessionID).Line(QuestionLinePrefix + waiting.Message + " (declined)")
+	} else {
+		m.transcript(cmd.SessionID).Line(QuestionLinePrefix + waiting.Message + " " + answerText(waiting.Fields, answers))
+	}
+	slog.Info("session: question answered", "session", cmd.SessionID, "question", cmd.QuestionID, "declined", cmd.Decline, "by", by)
+	answer <- agents.Answer{Answers: answers, Declined: cmd.Decline}
+	out, _ := m.Get(cmd.SessionID)
+	return out, nil
+}
+
+// QuestionLinePrefix opens a transcript line that records a question and
+// its answer.
+const QuestionLinePrefix = "\u2753 "
+
+// answerText renders answers for the transcript: each answered field's
+// title and value, in the form's order.
+func answerText(fields []v1.QuestionField, answers json.RawMessage) string {
+	var values map[string]any
+	if json.Unmarshal(answers, &values) != nil {
+		return ""
+	}
+	var parts []string
+	for _, f := range fields {
+		v, ok := values[f.Key]
+		if !ok || v == nil || v == "" {
+			continue
+		}
+		text := fmt.Sprint(v)
+		if list, ok := v.([]any); ok {
+			var items []string
+			for _, it := range list {
+				items = append(items, fmt.Sprint(it))
+			}
+			text = strings.Join(items, ", ")
+		}
+		if f.Title != "" {
+			text = f.Title + ": " + text
+		}
+		parts = append(parts, text)
+	}
+	return "\u2192 " + strings.Join(parts, "; ")
+}
+
+// Questions lists every question waiting on a person, across sessions.
+func (m *Manager) Questions() []WaitingQuestion {
+	var out []WaitingQuestion
+	for _, s := range m.List() {
+		for _, q := range s.Questions {
+			out = append(out, WaitingQuestion{Session: s, Question: q})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Question.At.Before(out[j].Question.At) })
+	return out
+}
+
+// WaitingQuestion is a waiting question with its session.
+type WaitingQuestion struct {
+	Session  Session
+	Question Question
+}
+
+// FindQuestion finds the session a waiting question belongs to.
+func (m *Manager) FindQuestion(questionID string) (Session, bool) {
+	for _, s := range m.List() {
+		for _, q := range s.Questions {
+			if q.QuestionID == questionID {
+				return s, true
+			}
+		}
+	}
+	return Session{}, false
 }
 
 // pickOption chooses the option to answer with: the one asked for, else
@@ -637,6 +769,7 @@ func (m *Manager) Stop(ctx context.Context, cmd v1.StopAgent) (Session, error) {
 		l.stopping = true
 	}
 	pending := append([]Permission(nil), s.Pending...)
+	questions := append([]Question(nil), s.Questions...)
 	m.mu.Unlock()
 
 	if l != nil {
@@ -648,6 +781,15 @@ func (m *Manager) Stop(ctx context.Context, cmd v1.StopAgent) (Session, error) {
 			m.mu.Unlock()
 			if ask != nil {
 				ask <- agents.Decision{Cancelled: true}
+			}
+		}
+		for _, q := range questions {
+			_ = m.record(ctx, cmd.SessionID, "", v1.EventQuestionExpired, v1.QuestionExpired{SessionID: cmd.SessionID, QuestionID: q.QuestionID, Reason: "stopped"})
+			m.mu.Lock()
+			answer := l.answers[q.QuestionID]
+			m.mu.Unlock()
+			if answer != nil {
+				answer <- agents.Answer{Cancelled: true}
 			}
 		}
 		// The turn is given a moment to end before the link closes: a
@@ -747,7 +889,7 @@ func (m *Manager) begin(id string, adapter agents.Adapter, worktree, prompt, mod
 		}
 		return
 	}
-	l := &live{run: run, turnDone: make(chan struct{}), asks: map[string]chan agents.Decision{}}
+	l := &live{run: run, turnDone: make(chan struct{}), asks: map[string]chan agents.Decision{}, answers: map[string]chan agents.Answer{}}
 	m.mu.Lock()
 	m.live[id] = l
 	m.mu.Unlock()
@@ -996,6 +1138,32 @@ func (m *Manager) apply(ev v1.Event) {
 					}
 				}
 				s.Pending = kept
+				if ev.CommandID != "" {
+					m.handled[ev.CommandID] = d.SessionID
+				}
+			}
+		}
+	case v1.EventQuestionAsked:
+		var d v1.QuestionAsked
+		if ev.Decode(&d) == nil {
+			if s := touch(d.SessionID); s != nil {
+				s.Questions = append(s.Questions, Question{QuestionID: d.QuestionID, ToolCallID: d.ToolCallID, Message: d.Message, Fields: d.Fields, At: ev.Time})
+			}
+		}
+	case v1.EventQuestionAnswered, v1.EventQuestionExpired:
+		var d struct {
+			SessionID  string `json:"sessionId"`
+			QuestionID string `json:"questionId"`
+		}
+		if ev.Decode(&d) == nil {
+			if s := touch(d.SessionID); s != nil {
+				kept := s.Questions[:0]
+				for _, q := range s.Questions {
+					if q.QuestionID != d.QuestionID {
+						kept = append(kept, q)
+					}
+				}
+				s.Questions = kept
 				if ev.CommandID != "" {
 					m.handled[ev.CommandID] = d.SessionID
 				}
@@ -1255,6 +1423,63 @@ func (o *observer) Permission(ctx context.Context, req agents.PermissionRequest)
 			}
 		}
 		return agents.Decision{Cancelled: true}
+	}
+}
+
+// Question records a question the agent asks and blocks until a person
+// answers or declines it, the question expires, or the agent gives up.
+func (o *observer) Question(ctx context.Context, q agents.Question) agents.Answer {
+	m := o.m
+	questionID := nuid.Next()
+	answer := make(chan agents.Answer, 1)
+	m.mu.Lock()
+	l := m.live[o.id]
+	if l != nil {
+		l.answers[questionID] = answer
+	}
+	m.mu.Unlock()
+	if l == nil {
+		return agents.Answer{Cancelled: true}
+	}
+	defer func() {
+		m.mu.Lock()
+		delete(l.answers, questionID)
+		m.mu.Unlock()
+	}()
+	fields := q.Fields
+	if fields == nil {
+		fields = []v1.QuestionField{}
+	}
+	if err := m.record(m.ctx, o.id, "", v1.EventQuestionAsked, v1.QuestionAsked{SessionID: o.id, QuestionID: questionID, ToolCallID: q.ToolCallID, Message: q.Message, Fields: fields}); err != nil {
+		return agents.Answer{Cancelled: true}
+	}
+	slog.Info("session: waiting for an answer", "session", o.id, "question", questionID, "message", q.Message)
+	timeout := m.cfg.PermissionTimeout
+	if timeout == 0 {
+		timeout = 30 * time.Minute
+	}
+	select {
+	case a := <-answer:
+		return a
+	case <-time.After(timeout):
+		_ = m.record(m.ctx, o.id, "", v1.EventQuestionExpired, v1.QuestionExpired{SessionID: o.id, QuestionID: questionID, Reason: "timeout"})
+		o.t.Line(QuestionLinePrefix + q.Message + " (nobody answered in time)")
+		return agents.Answer{Cancelled: true}
+	case <-m.ctx.Done():
+		return agents.Answer{Cancelled: true}
+	case <-ctx.Done():
+		if _, ok := m.Get(o.id); ok {
+			m.mu.Lock()
+			still := false
+			for _, w := range m.sessions[o.id].Questions {
+				still = still || w.QuestionID == questionID
+			}
+			m.mu.Unlock()
+			if still {
+				_ = m.record(m.ctx, o.id, "", v1.EventQuestionExpired, v1.QuestionExpired{SessionID: o.id, QuestionID: questionID, Reason: "stopped"})
+			}
+		}
+		return agents.Answer{Cancelled: true}
 	}
 }
 

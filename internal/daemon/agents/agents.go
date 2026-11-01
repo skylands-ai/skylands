@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -78,6 +79,27 @@ type Observer interface {
 	// Permission decides a tool call the agent asks about. It may block
 	// until a person answers; ctx ends if the agent gives up waiting.
 	Permission(ctx context.Context, req PermissionRequest) Decision
+	// Question answers a question the agent asks a person. It may block
+	// until someone answers; ctx ends if the agent gives up waiting.
+	Question(ctx context.Context, q Question) Answer
+}
+
+// Question is what an agent asks a person: a message and the form it
+// wants filled in.
+type Question struct {
+	// ToolCallID is the tool call the question belongs to, when the agent
+	// says.
+	ToolCallID string
+	Message    string
+	Fields     []v1.QuestionField
+}
+
+// Answer is a person's reply to a question: values by field key as JSON,
+// or a refusal, or nothing because nobody answered in time.
+type Answer struct {
+	Answers   json.RawMessage
+	Declined  bool
+	Cancelled bool
 }
 
 // PermissionRequest is a tool call the agent will not make without an
@@ -228,6 +250,97 @@ func (h *handler) RequestPermission(ctx context.Context, req *acp.RequestPermiss
 		return &acp.RequestPermissionResponse{Outcome: acp.CancelledRequestPermissionOutcome()}, nil
 	}
 	return &acp.RequestPermissionResponse{Outcome: acp.SelectedRequestPermissionOutcome(acp.PermissionOptionId(d.OptionID))}, nil
+}
+
+// CreateElicitation hands a question the agent asks to the observer, which
+// waits for a person. A side session, such as a title request, is refused,
+// and so is a URL elicitation, which Skylands cannot open for anyone.
+func (h *handler) CreateElicitation(ctx context.Context, req *acp.CreateElicitationRequest) (*acp.CreateElicitationResponse, error) {
+	h.mu.Lock()
+	_, side := h.side[req.SessionID]
+	h.mu.Unlock()
+	if side || req.Mode != acp.CreateElicitationRequestTypeForm {
+		return &acp.CreateElicitationResponse{Action: acp.CreateElicitationResponseTypeDecline}, nil
+	}
+	q := Question{Message: req.Message, Fields: formFields(req.RequestedSchema)}
+	if req.ToolCallID != nil {
+		q.ToolCallID = string(*req.ToolCallID)
+	}
+	a := h.obs.Question(ctx, q)
+	switch {
+	case a.Cancelled:
+		return &acp.CreateElicitationResponse{Action: acp.CreateElicitationResponseTypeCancel}, nil
+	case a.Declined:
+		return &acp.CreateElicitationResponse{Action: acp.CreateElicitationResponseTypeDecline}, nil
+	}
+	content := map[string]acp.ElicitationContentValue{}
+	if err := json.Unmarshal(a.Answers, &content); err != nil {
+		return &acp.CreateElicitationResponse{Action: acp.CreateElicitationResponseTypeCancel}, nil
+	}
+	return &acp.CreateElicitationResponse{Action: acp.CreateElicitationResponseTypeAccept, Content: &content}, nil
+}
+
+// formFields reads a form's schema into fields. The schema's properties
+// are a map, so the fields come out in key order, which keeps a question
+// and its "other" box together.
+func formFields(schema acp.ElicitationSchema) []v1.QuestionField {
+	keys := make([]string, 0, len(schema.Properties))
+	for k := range schema.Properties {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	required := map[string]bool{}
+	if schema.Required != nil {
+		for _, k := range *schema.Required {
+			required[k] = true
+		}
+	}
+	fields := make([]v1.QuestionField, 0, len(keys))
+	for _, k := range keys {
+		p := schema.Properties[k]
+		f := v1.QuestionField{Key: k, Type: string(p.Type), Required: required[k]}
+		if f.Type == "" {
+			f.Type = "string"
+		}
+		if p.Title != nil {
+			f.Title = *p.Title
+		}
+		if p.Description != nil {
+			f.Description = *p.Description
+		}
+		switch {
+		case p.OneOf != nil:
+			f.Options = enumOptions(*p.OneOf)
+		case p.Enum != nil:
+			f.Options = plainOptions(*p.Enum)
+		case len(p.Items.AnyOf) > 0:
+			f.Options = enumOptions(p.Items.AnyOf)
+		case len(p.Items.Enum) > 0:
+			f.Options = plainOptions(p.Items.Enum)
+		}
+		fields = append(fields, f)
+	}
+	return fields
+}
+
+func enumOptions(opts []acp.EnumOption) []v1.QuestionOption {
+	out := make([]v1.QuestionOption, 0, len(opts))
+	for _, o := range opts {
+		q := v1.QuestionOption{Value: o.Const, Title: o.Title}
+		if o.Description != nil {
+			q.Description = *o.Description
+		}
+		out = append(out, q)
+	}
+	return out
+}
+
+func plainOptions(values []string) []v1.QuestionOption {
+	out := make([]v1.QuestionOption, 0, len(values))
+	for _, v := range values {
+		out = append(out, v1.QuestionOption{Value: v})
+	}
+	return out
 }
 
 // relative turns absolute paths inside the worktree into repo-relative

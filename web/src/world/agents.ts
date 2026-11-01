@@ -336,7 +336,7 @@ export class Agents {
 
   /** What the tag says under the name: the flight, the file, or whatever else it is doing. */
   private now(v: AgentView): string {
-    if (v.approval) return 'Needs your approval'
+    if (v.approval) return 'Needs your answer'
     if (v.status === 'idle' && v.phase !== 'move') return v.waiting ? 'Waiting for you' : 'Idle'
     const f = v.file ? base(v.file) : ''
     if (v.phase === 'move') {

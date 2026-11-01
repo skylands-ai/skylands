@@ -3,7 +3,7 @@ import type { FetchCache, Fetched } from './fetchcache'
 import type { LiveText } from './live'
 import { renderMarkdown } from './markdown'
 import { agentGlyph, timeNode } from './panels/parts'
-import type { Permission, Session } from './protocol'
+import type { Permission, Question, QuestionField, Session } from './protocol'
 import { replyBox } from './reply'
 import { HOST_DEFAULTS, proposeRule, ruleText, rulesSheet } from './rules'
 import { agentLabel, isOpen, sessionLabel, sessionStatus } from './status'
@@ -23,6 +23,9 @@ export interface InboxActions {
   /** Answers a waiting tool call. Resolves with an error message, or empty. */
   approve(s: Session, p: Permission, optionId: string): Promise<string>
   deny(s: Session, p: Permission): Promise<string>
+  /** Answers a question the agent asked, with values by field key, or declines it. */
+  answer(s: Session, q: Question, answers: Record<string, unknown>): Promise<string>
+  decline(s: Session, q: Question): Promise<string>
   /** Allows every tool call in the session without asking, or asks again. */
   trust(s: Session, trusted: boolean): Promise<string>
   /** Commits everything in the worktree. Resolves with an error message, or empty. */
@@ -241,6 +244,83 @@ function changesCard(x: Session, f: Fetched | undefined, actions: InboxActions):
   return box
 }
 
+/** One field of a question, as a control: choices as radio buttons or checkboxes, otherwise an input. */
+function questionControl(q: Question, f: QuestionField, read: Map<string, () => unknown>): HTMLElement {
+  const name = `${q.questionId}-${f.key}`
+  const label = el('div', { class: 'qlabel' }, [el('strong', { text: f.title ?? f.key }), f.description ? el('span', { class: 'muted', text: ` ${f.description}` }) : null])
+  if (f.options?.length) {
+    const multi = f.type === 'array'
+    const inputs: HTMLInputElement[] = []
+    const choices = f.options.map((o) => {
+      const input = el('input', { type: multi ? 'checkbox' : 'radio', name, value: o.value }) as HTMLInputElement
+      inputs.push(input)
+      return el('label', { class: 'choice', title: o.description ?? '' }, [input, el('span', { text: o.title ?? o.value }), o.description ? el('span', { class: 'muted', text: o.description }) : null])
+    })
+    read.set(f.key, () => {
+      const picked = inputs.filter((i) => i.checked).map((i) => i.value)
+      return multi ? picked : picked[0]
+    })
+    return el('div', { class: 'qfield' }, [label, el('div', { class: 'choices' }, choices)])
+  }
+  if (f.type === 'boolean') {
+    const input = el('input', { type: 'checkbox', name }) as HTMLInputElement
+    read.set(f.key, () => input.checked)
+    return el('div', { class: 'qfield' }, [el('label', { class: 'choice' }, [input, label])])
+  }
+  const input = el('input', { type: f.type === 'number' || f.type === 'integer' ? 'number' : 'text', name, 'aria-label': f.title ?? f.key, placeholder: f.description ?? '' }) as HTMLInputElement
+  read.set(f.key, () => {
+    const v = input.value.trim()
+    if (v === '') return undefined
+    return f.type === 'number' || f.type === 'integer' ? Number(v) : v
+  })
+  return el('div', { class: 'qfield' }, [label, input])
+}
+
+/** A question the agent is waiting on: its message, a control per field, and the answer or the refusal. */
+function questionCard(x: Session, q: Question, actions: InboxActions): HTMLElement {
+  const note = el('span', { class: 'sub' })
+  const read = new Map<string, () => unknown>()
+  const fields = q.fields.map((f) => questionControl(q, f, read))
+  const buttons: HTMLButtonElement[] = []
+  const act = async (run: () => Promise<string>, saying: string): Promise<void> => {
+    for (const b of buttons) b.disabled = true
+    note.textContent = saying
+    note.style.color = ''
+    const err = await run()
+    if (err) {
+      note.textContent = err
+      note.style.color = 'var(--bad)'
+      for (const b of buttons) b.disabled = false
+    }
+  }
+  const answer = el('button', {
+    type: 'button',
+    class: 'btn small primary',
+    text: 'Answer',
+    onclick: () => {
+      const answers: Record<string, unknown> = {}
+      for (const [key, get] of read) {
+        const v = get()
+        if (v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0)) answers[key] = v
+      }
+      const missing = q.fields.filter((f) => f.required && answers[f.key] === undefined)
+      if (missing.length) {
+        note.textContent = `${missing[0].title ?? missing[0].key} needs an answer.`
+        note.style.color = 'var(--bad)'
+        return
+      }
+      void act(() => actions.answer(x, q, answers), 'Answering\u2026')
+    },
+  }) as HTMLButtonElement
+  const decline = el('button', { type: 'button', class: 'btn small ghost', text: 'Decline to answer', onclick: () => void act(() => actions.decline(x, q), 'Declining\u2026') }) as HTMLButtonElement
+  buttons.push(answer, decline)
+  return el('div', { class: 'approval question', role: 'group', 'aria-label': `The agent asks: ${q.message}` }, [
+    el('div', { class: 'ask' }, [el('span', { class: 'mark', style: 'background:#E0B000' }), el('strong', { text: q.message }), el('span', { class: 'muted', style: 'margin-left:auto;font-size:12px' }, ['asked ', timeNode(q.at, 'ago')])]),
+    ...fields,
+    el('div', { class: 'acts' }, [answer, decline, note]),
+  ])
+}
+
 /** The switch that lets a session's tool calls through without asking. */
 function trustSwitch(x: Session, actions: InboxActions): HTMLElement {
   const input = el('input', { type: 'checkbox', 'aria-label': 'Trust this session' }) as HTMLInputElement
@@ -279,8 +359,8 @@ function liveBody(x: Session, text: string): HTMLElement {
   return el('div', { class: 'body quiet', text: `${doing}\u2026` })
 }
 
-/** A line the daemon writes for a tool call, between the agent's words. */
-const TOOL_LINE = /^\u2699 (.*)$/
+/** A line the daemon writes between the agent's words: a tool call, or a question and its answer. */
+const TOOL_LINE = /^[\u2699\u2753] (.*)$/
 
 /** Splits an agent turn into runs of words and the tool calls between them. */
 function segments(text: string): { kind: 'text' | 'tool'; text: string }[] {
@@ -474,6 +554,7 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
   }
   if (running && !liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, '')]))
   for (const p of x.pending) body.appendChild(approvalCard(s, x, p, actions))
+  for (const q of x.questions) body.appendChild(questionCard(x, q, actions))
   if (fetchError) body.appendChild(el('p', { class: 'convo-end', style: 'color:var(--bad)', text: fetchError }))
   if (x.status === 'failed') body.appendChild(el('p', { class: 'convo-end', style: 'color:var(--bad)', text: `Failed: ${x.error ?? 'unknown error'}` }))
   else if (x.status === 'ended') body.appendChild(el('p', { class: 'convo-end', text: x.stopReason === 'stopped' ? 'You ended this session.' : `This session ended (${(x.stopReason ?? 'done').replace(/_/g, ' ')}).` }))

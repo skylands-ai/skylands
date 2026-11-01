@@ -32,6 +32,9 @@ type API interface {
 	RemoveSession(ctx context.Context, sessionID, commandID string, force bool) (RemoveResult, error)
 	// PruneSessions removes what finished sessions left behind.
 	PruneSessions(ctx context.Context) []PruneResult
+	// Questions lists every question waiting on a person.
+	Questions(ctx context.Context) []QuestionInfo
+	AnswerQuestion(ctx context.Context, questionID, commandID string, answers json.RawMessage, decline bool) (QuestionInfo, error)
 	// Rules lists every repository's rules.
 	Rules(ctx context.Context) []RepoRulesInfo
 	SetRepoRules(ctx context.Context, repoID, commandID string, rules []v1.Rule) (RepoRulesInfo, error)
@@ -105,6 +108,22 @@ func Serve(ctx context.Context, path string, api API) error {
 	mux.HandleFunc("POST /v1/requests/{id}/approve", decide(api.Approve))
 	mux.HandleFunc("POST /v1/requests/{id}/deny", decide(api.Deny))
 
+	mux.HandleFunc("GET /v1/questions", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, http.StatusOK, api.Questions(r.Context()))
+	})
+	mux.HandleFunc("POST /v1/questions/{id}/answer", func(w http.ResponseWriter, r *http.Request) {
+		var req AnswerRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		info, err := api.AnswerQuestion(r.Context(), r.PathValue("id"), req.CommandID, req.Answers, req.Decline)
+		switch {
+		case errors.Is(err, session.ErrUnknownQuestion):
+			reply(w, http.StatusNotFound, ErrorResponse{Error: err.Error()})
+		case err != nil:
+			reply(w, http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		default:
+			reply(w, http.StatusOK, info)
+		}
+	})
 	mux.HandleFunc("GET /v1/sessions", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, api.Sessions(r.Context()))
 	})

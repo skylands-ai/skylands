@@ -107,6 +107,32 @@ export interface Resumed {
   turnResumed?: boolean
 }
 
+/** One choice a question field offers. */
+export interface QuestionOption {
+  value: string
+  title?: string
+  description?: string
+}
+
+/** One field of a question's form: a choice when it has options, free text otherwise, several at once when its type is array. */
+export interface QuestionField {
+  key: string
+  title?: string
+  description?: string
+  type: 'string' | 'number' | 'integer' | 'boolean' | 'array'
+  options?: QuestionOption[]
+  required?: boolean
+}
+
+/** A question the agent is waiting on a person to answer. */
+export interface Question {
+  questionId: string
+  toolCallId?: string
+  message: string
+  fields: QuestionField[]
+  at: string
+}
+
 export interface Session {
   host: string
   id: string
@@ -138,8 +164,9 @@ export interface Session {
   trusted: boolean
   /** The rules that settle this session's tool calls: the repository's as copied, and its own. */
   rules: Rule[]
-  /** The tool calls waiting on a person, oldest first. */
+  /** The tool calls waiting on a person, oldest first, and the questions waiting on an answer. */
   pending: Permission[]
+  questions: Question[]
   /** How many daemon restarts the session has lived through, and how its agent last came back. */
   resumes?: number
   resumed?: Resumed

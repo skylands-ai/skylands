@@ -96,6 +96,16 @@ specifies. No events, streams, or aggregates are needed for it.
   conversation's Rules button. `skylands rule list|add|remove` manage a
   repository's rules on the host. A refusal by a rule is recorded as a
   request denied by "rule", so the conversation shows it.
+- Questions are done. The daemon declares ACP's form elicitation, so an
+  agent's question to a person, such as Claude Code's AskUserQuestion,
+  arrives as a form: a message and fields, each a choice or free text.
+  QuestionAsked waits like a permission request, in the conversation,
+  the inbox, the beacon, and `skylands request list`; QuestionAnswered
+  carries the values by field or a refusal, and QuestionExpired records
+  a timeout, a stop, or a restart. The conversation shows a question card
+  with the choices and a box for anything else, and `skylands request
+  answer` takes field=value pairs or --decline. The fake agent asks which
+  file to edit when its prompt says "ask me", so every path is tested.
 
 ## After the MVP
 

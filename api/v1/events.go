@@ -147,7 +147,7 @@ func IsSessionEvent(eventType string) bool {
 		EventPlanUpdated, EventUsageReported, EventAgentFailed, EventSessionEnded, EventTurnEnded, EventSessionTitled,
 		EventPermissionRequested, EventPermissionGranted, EventPermissionDenied, EventPermissionExpired, EventSessionTrusted,
 		EventSessionResumed, EventChangesCommitted, EventChangesMerged, EventPullRequestOpened, EventWorktreeRemoved,
-		EventSessionRulesSet:
+		EventSessionRulesSet, EventQuestionAsked, EventQuestionAnswered, EventQuestionExpired:
 		return true
 	}
 	return false
@@ -589,3 +589,73 @@ type SetSessionRules struct {
 
 // CommandSetSessionRules is sent to a session by request-reply.
 const CommandSetSessionRules = "SetSessionRules"
+
+// Question events. An agent that needs something only a person can tell
+// it asks a question: a message and a form of fields, each a choice or
+// free text. The question waits like a permission request does, and a
+// person answers it from the conversation, the inbox, or the host's CLI,
+// or declines it, or it expires.
+const (
+	EventQuestionAsked    = "QuestionAsked"
+	EventQuestionAnswered = "QuestionAnswered"
+	EventQuestionExpired  = "QuestionExpired"
+)
+
+// QuestionOption is one choice a field offers.
+type QuestionOption struct {
+	Value       string `json:"value"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// QuestionField is one field of a question's form. Type is string,
+// number, integer, boolean, or array for a choice of several. A field
+// with options is a choice; one without is free text.
+type QuestionField struct {
+	Key         string           `json:"key"`
+	Title       string           `json:"title,omitempty"`
+	Description string           `json:"description,omitempty"`
+	Type        string           `json:"type"`
+	Options     []QuestionOption `json:"options,omitempty"`
+	Required    bool             `json:"required,omitempty"`
+}
+
+// QuestionAsked records a question waiting on a person.
+type QuestionAsked struct {
+	SessionID  string          `json:"sessionId"`
+	QuestionID string          `json:"questionId"`
+	ToolCallID string          `json:"toolCallId,omitempty"`
+	Message    string          `json:"message"`
+	Fields     []QuestionField `json:"fields"`
+}
+
+// QuestionAnswered records the answers, by field key, or that the person
+// declined to answer. By is "local" or "citadel".
+type QuestionAnswered struct {
+	SessionID  string          `json:"sessionId"`
+	QuestionID string          `json:"questionId"`
+	Answers    json.RawMessage `json:"answers,omitempty"`
+	Declined   bool            `json:"declined,omitempty"`
+	By         string          `json:"by"`
+}
+
+// QuestionExpired records a question nobody answered: Reason is
+// "timeout", "stopped", or "restart".
+type QuestionExpired struct {
+	SessionID  string `json:"sessionId"`
+	QuestionID string `json:"questionId"`
+	Reason     string `json:"reason"`
+}
+
+// CommandAnswerQuestion is sent to a session by request-reply.
+const CommandAnswerQuestion = "AnswerQuestion"
+
+// AnswerQuestion answers a waiting question with values by field key, or
+// declines it.
+type AnswerQuestion struct {
+	ID         string          `json:"id"`
+	SessionID  string          `json:"sessionId"`
+	QuestionID string          `json:"questionId"`
+	Answers    json.RawMessage `json:"answers,omitempty"`
+	Decline    bool            `json:"decline,omitempty"`
+}

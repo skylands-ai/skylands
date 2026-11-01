@@ -39,6 +39,8 @@ type SessionInfo struct {
 	Title   string `json:"title,omitempty"`
 	Prompt  string `json:"prompt"`
 	Pending int    `json:"pending,omitempty"`
+	// Questions counts the questions waiting on an answer.
+	Questions int `json:"questions,omitempty"`
 	// Worktree is where the agent works, and Branch what it works on. A
 	// session in the checkout has InCheckout set and no base.
 	Worktree   string `json:"worktree,omitempty"`
@@ -115,6 +117,26 @@ type SetRulesRequest struct {
 	// CommandID identifies the command. The client fills it in when empty.
 	CommandID string    `json:"commandId,omitempty"`
 	Rules     []v1.Rule `json:"rules"`
+}
+
+// QuestionInfo describes one question waiting on a person.
+type QuestionInfo struct {
+	ID           string             `json:"id"`
+	Session      string             `json:"session"`
+	Conversation string             `json:"conversation"`
+	Repo         string             `json:"repo"`
+	Agent        string             `json:"agent"`
+	Message      string             `json:"message"`
+	Fields       []v1.QuestionField `json:"fields"`
+	Since        time.Time          `json:"since"`
+}
+
+// AnswerRequest is the body of POST /v1/questions/{id}/answer: values by
+// field key, or a refusal.
+type AnswerRequest struct {
+	CommandID string          `json:"commandId,omitempty"`
+	Answers   json.RawMessage `json:"answers,omitempty"`
+	Decline   bool            `json:"decline,omitempty"`
 }
 
 // DecideRequest is the body of POST /v1/requests/{id}/approve and deny.
