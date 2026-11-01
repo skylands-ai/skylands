@@ -296,7 +296,7 @@ function narrowList(s: State, openId: string, actions: InboxActions): HTMLElemen
   return box
 }
 
-/** One conversation: its turns, how it ended, and the reply box while it is open. */
+/** One conversation: its turns, the notes between them, how it ended, and the reply box while it is open. */
 function conversation(s: State, x: Session, transcript: string | undefined, fetchError: string | undefined, actions: InboxActions): HTMLElement {
   const status = sessionStatus(x, isWaiting(s, x))
   const repo = s.repos[x.repoId]
@@ -323,6 +323,7 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
   const liveTurn = running && last?.who === 'agent' ? last : null
   for (const t of conv.turns) {
     if (t.who === 'you') body.appendChild(el('div', { class: 'msg you' }, [el('span', { class: 'from', text: 'You' }), el('div', { class: 'body', text: t.text })]))
+    else if (t.who === 'note') body.appendChild(el('p', { class: 'convo-note', text: t.text }))
     else if (t === liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, t.text)]))
     else if (t.text) body.appendChild(el('div', { class: 'msg agent' }, [el('span', { class: 'from' }, [name, copyButton(t.text)]), agentBody(t.text)]))
   }

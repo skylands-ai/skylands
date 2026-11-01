@@ -63,8 +63,10 @@ type ToolCall struct {
 
 // Observer receives what the agent reports during a prompt.
 type Observer interface {
-	// Spawned runs once the agent has identified itself.
-	Spawned(name, version string)
+	// Spawned runs once the agent has identified itself and opened its
+	// session. agentSessionID is the agent's own id for it, which Resume
+	// asks the agent to load again after a restart.
+	Spawned(name, version, agentSessionID string)
 	// ToolCall runs for a new tool call and for each update to one. Status
 	// tells which: pending or in_progress at the start, then completed or
 	// failed.

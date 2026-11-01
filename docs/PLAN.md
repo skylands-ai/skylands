@@ -64,6 +64,17 @@ specifies. No events, streams, or aggregates are needed for it.
   thinking pass; everything else blocks the agent until a person answers
   from the conversation, the inbox, or `request approve` on the host, or
   the session is trusted. Every request and answer is recorded.
+- Milestone 9, first part, is done: a session survives a daemon restart.
+  On load the daemon expires what was waiting on a person and brings each
+  open session's agent back in the background, through ACP session load
+  when the agent supports it (Claude Code does; the fake agent does unless
+  told not to) and otherwise through a new session whose first prompt
+  carries the transcript. A turn the restart cut short is run again, so
+  the agent asks again for whatever it was waiting on. SessionResumed
+  records when the daemon restarted and how the agent came back, the
+  conversation shows a note at that point, and the agent panel counts
+  restarts. AgentFailed now means the agent itself failed, such as its
+  worktree being gone. Landing the work remains.
 
 ## After the MVP
 
@@ -116,9 +127,9 @@ milestone; the rule language remains a kind allow-list for now.
 ### Milestone 9: recovery from a daemon restart, and landing the work
 
 A daemon bounces for many reasons, and the one running the session is often
-the one being rebuilt. Today a restart marks every open session failed,
-expires whatever was waiting on a person, and the conversation can be read
-but not continued. After this milestone:
+the one being rebuilt. Before this milestone a restart marked every open
+session failed, expired whatever was waiting on a person, and the
+conversation could be read but not continued. After it:
 
 - **The history survives.** The events are in the host's stream and the
   transcript is on disk, so the conversation, its title, its turns, its
@@ -138,6 +149,15 @@ but not continued. After this milestone:
   worktree, the conversation offers to commit the worktree and merge or
   open a pull request, and `session` commands stop, remove, and prune
   worktrees and branches.
+
+Done, except landing the work: the first three points. The daemon keeps
+the agent's own session id from AgentSpawned, asks the agent to load it
+again after a restart, and seeds a new session with the transcript when it
+cannot. Nothing is re-asked by the daemon itself: the interrupted turn is
+continued with a prompt that says what happened, and the agent asks again
+for what it still needs. An idle session's agent comes back idle. The
+transcript gets a note at the point of the restart, which the conversation
+shows between the messages.
 
 ## What the MVP proves
 

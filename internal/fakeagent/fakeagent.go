@@ -27,6 +27,14 @@ const EnvFlag = "SKYLANDS_FAKE_AGENT"
 // EnvDelay overrides the pause between the agent's steps, as a Go duration.
 const EnvDelay = "SKYLANDS_FAKE_AGENT_DELAY"
 
+// EnvNoLoad, when set to 1, makes the fake agent one that cannot load a
+// session, so a daemon restart has to seed a new one with the transcript.
+const EnvNoLoad = "SKYLANDS_FAKE_AGENT_NOLOAD"
+
+// ReplayedLine is what the fake agent says while loading a session: the
+// history it replays, which the daemon must keep out of the transcript.
+const ReplayedLine = "(history replayed by the agent)"
+
 // Run serves the fake agent over stdio until the client closes the link.
 func Run(ctx context.Context) error {
 	delay := 150 * time.Millisecond
@@ -34,7 +42,7 @@ func Run(ctx context.Context) error {
 		delay = d
 	}
 	return acp.RunAgent(ctx, &acp.StdioTransport{}, func(conn *acp.AgentConnection) any {
-		return &agent{conn: conn, delay: delay, sessions: map[acp.SessionId]*session{}}
+		return &agent{conn: conn, delay: delay, noLoad: os.Getenv(EnvNoLoad) == "1", sessions: map[acp.SessionId]*session{}}
 	})
 }
 
@@ -67,15 +75,33 @@ type session struct {
 type agent struct {
 	conn     *acp.AgentConnection
 	delay    time.Duration
+	noLoad   bool
 	mu       sync.Mutex
 	sessions map[acp.SessionId]*session
 }
 
-func (*agent) Initialize(context.Context, *acp.InitializeRequest) (*acp.InitializeResponse, error) {
+func (a *agent) Initialize(context.Context, *acp.InitializeRequest) (*acp.InitializeResponse, error) {
 	return &acp.InitializeResponse{
-		ProtocolVersion: acp.ProtocolVersion(1),
-		AgentInfo:       &acp.Implementation{Name: "skylands-fakeagent", Version: "dev"},
+		ProtocolVersion:   acp.ProtocolVersion(1),
+		AgentInfo:         &acp.Implementation{Name: "skylands-fakeagent", Version: "dev"},
+		AgentCapabilities: &acp.AgentCapabilities{LoadSession: !a.noLoad},
 	}, nil
+}
+
+// LoadSession brings back a session from a previous process. The fake
+// agent keeps nothing on disk, so any id is accepted, and it replays a
+// line of history the way a real agent streams the conversation back.
+func (a *agent) LoadSession(ctx context.Context, req *acp.LoadSessionRequest) (*acp.LoadSessionResponse, error) {
+	if a.noLoad {
+		return nil, fmt.Errorf("this agent cannot load sessions")
+	}
+	a.mu.Lock()
+	a.sessions[req.SessionID] = &session{cwd: req.Cwd}
+	a.mu.Unlock()
+	if err := a.conn.SessionUpdate(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(ReplayedLine))}); err != nil {
+		return nil, err
+	}
+	return &acp.LoadSessionResponse{}, nil
 }
 
 func (a *agent) NewSession(_ context.Context, req *acp.NewSessionRequest) (*acp.NewSessionResponse, error) {
@@ -239,13 +265,17 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	if err := send(acp.PlanSessionUpdate(plan)); err != nil {
 		return nil, err
 	}
-	msg := fmt.Sprintf("Done with %q. I read %d files", strings.TrimSpace(promptText(req)), n)
+	request, context := requestOf(promptText(req))
+	msg := fmt.Sprintf("Done with %q. I read %d files", request, n)
 	if edited != "" {
 		msg += " and edited " + edited
 	} else if refused {
 		msg += " and was not allowed to edit"
 	}
 	msg += ". Every tracked file was counted, every hidden one was skipped, and nothing was changed on disk."
+	if context > 0 {
+		msg += fmt.Sprintf(" The request came with %d lines of context.", context)
+	}
 	// Stream the answer in small chunks with no pause, as real agents do.
 	for _, chunk := range chunks(msg, 6) {
 		if err := send(acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(chunk))); err != nil {
@@ -253,6 +283,20 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		}
 	}
 	return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
+}
+
+// requestOf reads a prompt the way the fake agent does: the request is its
+// last line, and whatever came before is context, such as the transcript a
+// daemon seeds a new session with after a restart.
+func requestOf(prompt string) (request string, contextLines int) {
+	lines := strings.Split(strings.TrimSpace(prompt), "\n")
+	request = strings.TrimSpace(lines[len(lines)-1])
+	for _, l := range lines[:len(lines)-1] {
+		if strings.TrimSpace(l) != "" {
+			contextLines++
+		}
+	}
+	return request, contextLines
 }
 
 // chunks splits s into pieces of about n bytes.

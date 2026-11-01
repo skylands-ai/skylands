@@ -25,6 +25,18 @@ type Permission struct {
 	At         time.Time             `json:"at"`
 }
 
+// Resumed says how a session's agent came back after a daemon restart.
+type Resumed struct {
+	At          time.Time `json:"at"`
+	RestartedAt time.Time `json:"restartedAt"`
+	// How is "load" when the agent loaded its own session and "seed" when
+	// a new one was given the transcript.
+	How string `json:"how"`
+	// TurnResumed means the restart cut a turn short and the agent picked
+	// it up again.
+	TurnResumed bool `json:"turnResumed,omitempty"`
+}
+
 // ToolCall is one tool call as the session last reported it.
 type ToolCall struct {
 	ID        string    `json:"id"`
@@ -57,9 +69,13 @@ type Session struct {
 	// is always sent, so a browser sees it turn back off.
 	Trusted bool `json:"trusted"`
 	// Pending holds the tool calls waiting on a person, oldest first.
-	Pending   []Permission `json:"pending"`
-	StartedAt time.Time    `json:"startedAt"`
-	EndedAt   time.Time    `json:"endedAt,omitzero"`
+	Pending []Permission `json:"pending"`
+	// Resumes counts the daemon restarts the session has lived through, and
+	// Resumed says how its agent last came back.
+	Resumes   int       `json:"resumes,omitempty"`
+	Resumed   Resumed   `json:"resumed,omitzero"`
+	StartedAt time.Time `json:"startedAt"`
+	EndedAt   time.Time `json:"endedAt,omitzero"`
 	// UpdatedAt is the time of the latest event, which is what "something
 	// new happened" means.
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -172,6 +188,15 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 		if ev.Decode(&d) == nil {
 			if s, ok := p.byID[d.SessionID]; ok {
 				s.AgentName = d.Name
+				changed = s
+			}
+		}
+	case v1.EventSessionResumed:
+		var d v1.SessionResumed
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.Resumes++
+				s.Resumed = Resumed{At: ev.Time, RestartedAt: d.RestartedAt, How: d.How, TurnResumed: d.TurnResumed}
 				changed = s
 			}
 		}

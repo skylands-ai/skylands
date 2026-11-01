@@ -23,6 +23,7 @@ func TestMain(m *testing.M) {
 type recorder struct {
 	mu       sync.Mutex
 	name     string
+	session  string
 	calls    []ToolCall
 	plans    int
 	usage    []uint64
@@ -30,10 +31,14 @@ type recorder struct {
 	asked    []PermissionRequest
 }
 
-func (r *recorder) Spawned(name, _ string) { r.mu.Lock(); r.name = name; r.mu.Unlock() }
-func (r *recorder) ToolCall(tc ToolCall)   { r.mu.Lock(); r.calls = append(r.calls, tc); r.mu.Unlock() }
-func (r *recorder) Plan(e []v1.PlanEntry)  { r.mu.Lock(); r.plans++; r.mu.Unlock() }
-func (r *recorder) Usage(used, _ uint64)   { r.mu.Lock(); r.usage = append(r.usage, used); r.mu.Unlock() }
+func (r *recorder) Spawned(name, _, session string) {
+	r.mu.Lock()
+	r.name, r.session = name, session
+	r.mu.Unlock()
+}
+func (r *recorder) ToolCall(tc ToolCall)  { r.mu.Lock(); r.calls = append(r.calls, tc); r.mu.Unlock() }
+func (r *recorder) Plan(e []v1.PlanEntry) { r.mu.Lock(); r.plans++; r.mu.Unlock() }
+func (r *recorder) Usage(used, _ uint64)  { r.mu.Lock(); r.usage = append(r.usage, used); r.mu.Unlock() }
 func (r *recorder) Permission(_ context.Context, req PermissionRequest) Decision {
 	r.mu.Lock()
 	r.asked = append(r.asked, req)
@@ -50,6 +55,86 @@ func (r *recorder) Message(text string) {
 	r.mu.Lock()
 	r.messages = append(r.messages, text)
 	r.mu.Unlock()
+}
+
+// said is everything the agent has said so far.
+func (r *recorder) said() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return strings.Join(r.messages, "")
+}
+
+func TestResumeLoadsOrSeedsASession(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cwd := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cwd, "main.go"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd, env := fakeagent.TestCommand()
+	ad := Adapter{Name: "fake", Command: cmd, Env: env}
+	transcript := "## You\n\nearlier\n\n## Agent\n\nDone with it.\n"
+
+	// An agent that loads sessions comes back under the same session id,
+	// and the history it replays while loading stays out of the observer.
+	rec := &recorder{}
+	run, how, err := Resume(ctx, ad, cwd, "", "sess-before", transcript, rec)
+	if err != nil || how != ResumedByLoad {
+		t.Fatalf("Resume = %q, %v", how, err)
+	}
+	defer func() { _ = run.Close() }()
+	if rec.session != "sess-before" || rec.name != "skylands-fakeagent" {
+		t.Errorf("spawned as %q with session %q", rec.name, rec.session)
+	}
+	if said := rec.said(); said != "" {
+		t.Errorf("the replayed history leaked: %q", said)
+	}
+	if stop, err := run.Prompt(ctx, "carry on"); err != nil || stop != "end_turn" {
+		t.Fatalf("Prompt = %q, %v", stop, err)
+	}
+	if said := rec.said(); !strings.HasPrefix(said, "Done with \"carry on\".") || strings.Contains(said, "lines of context") || strings.Contains(said, fakeagent.ReplayedLine) {
+		t.Errorf("after a load the agent said %q", said)
+	}
+
+	// An agent that cannot load gets a new session, and the transcript
+	// goes in front of its first prompt only.
+	forgetful := Adapter{Name: "fake", Command: cmd, Env: append(append([]string(nil), env...), fakeagent.EnvNoLoad+"=1")}
+	rec2 := &recorder{}
+	run2, how, err := Resume(ctx, forgetful, cwd, "", "sess-before", transcript, rec2)
+	if err != nil || how != ResumedBySeed {
+		t.Fatalf("Resume of a forgetful agent = %q, %v", how, err)
+	}
+	defer func() { _ = run2.Close() }()
+	if rec2.session == "" || rec2.session == "sess-before" {
+		t.Errorf("seeded session id = %q, want a new one", rec2.session)
+	}
+	if _, err := run2.Prompt(ctx, "carry on"); err != nil {
+		t.Fatal(err)
+	}
+	first := rec2.said()
+	if !strings.HasPrefix(first, "Done with \"carry on\".") || !strings.Contains(first, "lines of context") {
+		t.Errorf("after a seed the agent said %q", first)
+	}
+	if _, err := run2.Prompt(ctx, "once more"); err != nil {
+		t.Fatal(err)
+	}
+	if second := strings.TrimPrefix(rec2.said(), first); !strings.HasPrefix(second, "Done with \"once more\".") || strings.Contains(second, "lines of context") {
+		t.Errorf("the seed was sent twice: %q", second)
+	}
+
+	// With nothing to load and nothing to seed, Resume is a plain start.
+	rec3 := &recorder{}
+	run3, how, err := Resume(ctx, ad, cwd, "", "", "", rec3)
+	if err != nil || how != ResumedBySeed {
+		t.Fatalf("Resume with nothing = %q, %v", how, err)
+	}
+	defer func() { _ = run3.Close() }()
+	if _, err := run3.Prompt(ctx, "fresh"); err != nil {
+		t.Fatal(err)
+	}
+	if said := rec3.said(); !strings.HasPrefix(said, "Done with \"fresh\".") || strings.Contains(said, "lines of context") {
+		t.Errorf("a fresh agent said %q", said)
+	}
 }
 
 func TestRunPromptDrivesTheFakeAgent(t *testing.T) {

@@ -83,6 +83,16 @@ export interface Permission {
   at: string
 }
 
+/** How a session's agent came back after a daemon restart. */
+export interface Resumed {
+  at: string
+  restartedAt: string
+  /** 'load' when the agent loaded its own session, 'seed' when a new one was given the transcript. */
+  how: 'load' | 'seed'
+  /** The restart cut a turn short and the agent picked it up again. */
+  turnResumed?: boolean
+}
+
 export interface Session {
   host: string
   id: string
@@ -103,6 +113,9 @@ export interface Session {
   trusted: boolean
   /** The tool calls waiting on a person, oldest first. */
   pending: Permission[]
+  /** How many daemon restarts the session has lived through, and how its agent last came back. */
+  resumes?: number
+  resumed?: Resumed
   startedAt: string
   endedAt?: string
   /** When the session's latest event happened. */

@@ -97,7 +97,8 @@ func IsSessionEvent(eventType string) bool {
 	switch eventType {
 	case EventSessionStarted, EventPromptSent, EventAgentSpawned, EventToolCallStarted, EventToolCallCompleted,
 		EventPlanUpdated, EventUsageReported, EventAgentFailed, EventSessionEnded, EventTurnEnded, EventSessionTitled,
-		EventPermissionRequested, EventPermissionGranted, EventPermissionDenied, EventPermissionExpired, EventSessionTrusted:
+		EventPermissionRequested, EventPermissionGranted, EventPermissionDenied, EventPermissionExpired, EventSessionTrusted,
+		EventSessionResumed:
 		return true
 	}
 	return false
@@ -122,7 +123,9 @@ type PromptSent struct {
 	Text      string `json:"text"`
 }
 
-// AgentSpawned records that the agent process is up and identified itself.
+// AgentSpawned records that the agent process is up, identified itself,
+// and opened its session. It is recorded again when a daemon restart
+// brings the agent back.
 type AgentSpawned struct {
 	SessionID string `json:"sessionId"`
 	// AgentID identifies the agent within the session. The lead agent's id
@@ -130,6 +133,9 @@ type AgentSpawned struct {
 	AgentID string `json:"agentId"`
 	Name    string `json:"name"`
 	Version string `json:"version,omitempty"`
+	// AgentSessionID is the agent's own id for the conversation, which is
+	// what the daemon asks it to load again after a restart.
+	AgentSessionID string `json:"agentSessionId,omitempty"`
 }
 
 // ToolCallStarted records a tool call the agent began, with the files it
@@ -171,7 +177,8 @@ type UsageReported struct {
 	Size      uint64 `json:"size"`
 }
 
-// AgentFailed records that the agent stopped on an error.
+// AgentFailed records that the agent stopped on an error. A daemon restart
+// is not one: that records SessionResumed.
 type AgentFailed struct {
 	SessionID string `json:"sessionId"`
 	Error     string `json:"error"`
@@ -325,6 +332,37 @@ type PermissionExpired struct {
 type SessionTrusted struct {
 	SessionID string `json:"sessionId"`
 	Trusted   bool   `json:"trusted"`
+}
+
+// EventSessionResumed records that the daemon restarted while the session
+// was open and brought its agent back. The session's history was never in
+// danger: the events are in the host's stream and the transcript is on its
+// disk. What the restart cost was the agent process, and this says how it
+// came back.
+const EventSessionResumed = "SessionResumed"
+
+// How an agent came back after a restart.
+const (
+	// ResumedByLoad means the agent loaded its own session, so it remembers
+	// the conversation itself.
+	ResumedByLoad = "load"
+	// ResumedBySeed means the agent could not load the session, so a new
+	// one was opened and its first prompt carries the transcript so far.
+	ResumedBySeed = "seed"
+)
+
+// SessionResumed records a session's agent coming back after a daemon
+// restart.
+type SessionResumed struct {
+	SessionID string `json:"sessionId"`
+	// RestartedAt is when the daemon came back up.
+	RestartedAt time.Time `json:"restartedAt"`
+	// How is ResumedByLoad or ResumedBySeed.
+	How string `json:"how"`
+	// TurnResumed means the daemon stopped in the middle of a turn, so the
+	// agent was asked to pick that turn up again. Anything it had asked
+	// permission for, it asks again.
+	TurnResumed bool `json:"turnResumed,omitempty"`
 }
 
 // More session commands.

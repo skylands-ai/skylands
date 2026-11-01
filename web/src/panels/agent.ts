@@ -44,18 +44,22 @@ export function renderAgentPanel(
   panel.appendChild(header(sessionLabel(s, 60), `${agentLabel(s.agent)}${s.model ? `, ${s.model}` : ''} \u00b7 ${repo.name} on ${island.host}`, stale ? ['Last state heard', 'var(--idle)'] : status))
   panel.appendChild(backButton('repo', repo.name, back))
   panel.appendChild(el('button', { type: 'button', class: 'btn primary', style: 'align-self:flex-start', onclick: actions.conversation }, [chatIcon(), s.pending.length ? 'Go to conversation, it needs your approval' : waiting ? 'Go to conversation, it is waiting for you' : 'Go to conversation']))
-  panel.appendChild(
-    factsBox([
-      ['Status', status[0]],
-      ['Agent', s.agentName && s.agentName !== agentLabel(s.agent) ? `${agentLabel(s.agent)} (${s.agentName})` : agentLabel(s.agent)],
-      ['Turns', String(s.turns)],
-      ['Branch', s.branch],
-      ['Started', timeNode(s.startedAt)],
-      running ? ['Last activity', timeNode(s.updatedAt)] : s.status === 'idle' ? ['Idle since', timeNode(s.updatedAt)] : ['Ended', s.endedAt ? timeNode(s.endedAt) : 'unknown'],
-      ['Context', pct(s.used, s.size)],
-      ['Tool calls', String(s.recent.length)],
-    ]),
-  )
+  const facts: [string, string | Node][] = [
+    ['Status', status[0]],
+    ['Agent', s.agentName && s.agentName !== agentLabel(s.agent) ? `${agentLabel(s.agent)} (${s.agentName})` : agentLabel(s.agent)],
+    ['Turns', String(s.turns)],
+    ['Branch', s.branch],
+    ['Started', timeNode(s.startedAt)],
+    running ? ['Last activity', timeNode(s.updatedAt)] : s.status === 'idle' ? ['Idle since', timeNode(s.updatedAt)] : ['Ended', s.endedAt ? timeNode(s.endedAt) : 'unknown'],
+    ['Context', pct(s.used, s.size)],
+    ['Tool calls', String(s.recent.length)],
+  ]
+  if (s.resumes && s.resumed) {
+    // The daemon under the session restarted. The history was never at risk; what came back was the agent.
+    const how = s.resumed.how === 'load' ? 'the agent reloaded its own session' : 'a new agent was given the transcript'
+    facts.push(['Daemon restarts', el('span', {}, [`${s.resumes}, last `, timeNode(s.resumed.restartedAt, 'ago'), `; ${how}`])])
+  }
+  panel.appendChild(factsBox(facts))
 
   if (s.plan?.length) {
     panel.appendChild(

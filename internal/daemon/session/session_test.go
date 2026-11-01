@@ -145,7 +145,11 @@ func TestPermissionExpiresAndStopCancels(t *testing.T) {
 		t.Errorf("expired events = %d, want 1 timeout", expired)
 	}
 
-	// A stop while a request waits cancels it.
+	// A stop while a request waits cancels it. The first session is ended
+	// first, so the second manager has nothing to bring back.
+	if _, err := m.Stop(f.ctx, v1.StopAgent{ID: "c1-stop", SessionID: "s1"}); err != nil {
+		t.Fatal(err)
+	}
 	f.cfg.PermissionTimeout = time.Hour
 	m2, err := Load(f.ctx, f.store, f.cfg)
 	if err != nil {
@@ -383,7 +387,7 @@ func TestStartRejectsBadCommands(t *testing.T) {
 	}
 }
 
-func TestLoadFailsSessionsLeftRunning(t *testing.T) {
+func TestLoadFailsASessionWhoseWorktreeIsGone(t *testing.T) {
 	f := setup(t)
 	ev, _ := v1.NewEvent(v1.EventSessionStarted, "c9", v1.SessionStarted{SessionID: "left", RepoID: f.repo.ID, Agent: "fake", Worktree: "/x", Branch: "skylands/left"})
 	if _, err := f.store.Append(f.ctx, v1.SessionEventSubject("ws", "left", ev.Type), ev); err != nil {
@@ -393,11 +397,185 @@ func TestLoadFailsSessionsLeftRunning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, ok := m.Get("left")
-	if !ok || s.Status != StatusFailed || !strings.Contains(s.Error, "restarted") {
-		t.Errorf("session left running after a restart = %+v", s)
+	// The agent cannot come back without its worktree: that is a failure
+	// of its own, and it says so.
+	s := waitStatus(t, m, "left", StatusFailed)
+	if !strings.Contains(s.Error, "worktree is gone") || s.Resumes != 0 {
+		t.Errorf("session without a worktree = %+v", s)
 	}
 	if _, err := m.Prompt(f.ctx, v1.SendPrompt{ID: "c10", SessionID: "nope", Text: "x"}); !errors.Is(err, ErrUnknownSession) {
 		t.Errorf("prompt to an unknown session: err = %v", err)
+	}
+}
+
+// waitResumed blocks until the session has lived through n restarts.
+func waitResumed(t *testing.T, m *Manager, id string, n int) Session {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		s, ok := m.Get(id)
+		if ok && (s.Resumes == n || s.Status == StatusFailed) {
+			if s.Status == StatusFailed {
+				t.Fatalf("session %s failed instead of resuming: %s", id, s.Error)
+			}
+			return s
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("session %s never resumed %d times: %+v", id, n, s)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestLoadResumesOpenSessions(t *testing.T) {
+	f := setup(t)
+	// Each manager is a daemon of its own: cancelling its context is the
+	// daemon stopping, and its agents die with it.
+	ctx1, stop1 := context.WithCancel(f.ctx)
+	defer stop1()
+	m1, err := Load(ctx1, f.store, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m1.Start(f.ctx, v1.StartSession{ID: "c1", SessionID: "s1", RepoID: f.repo.ID, Agent: "fake", Prompt: "keep going"}); err != nil {
+		t.Fatal(err)
+	}
+	before := waitPending(t, m1, "s1", 1)
+	first := before.Pending[0].RequestID
+	if before.AgentSessionID == "" {
+		t.Fatalf("no agent session id recorded: %+v", before)
+	}
+	stop1()
+	m1.Wait()
+
+	// The daemon comes back mid-turn. The session is still running, what
+	// was waiting on a person has expired, and the agent is loaded again
+	// under its own session and continues the turn, which asks about the
+	// edit again.
+	ctx2, stop2 := context.WithCancel(f.ctx)
+	defer stop2()
+	m2, err := Load(ctx2, f.store, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := m2.Get("s1"); s.Status != StatusRunning || len(s.Pending) != 0 {
+		t.Errorf("right after the restart = %+v", s)
+	}
+	if _, err := m2.Prompt(f.ctx, v1.SendPrompt{ID: "c2", SessionID: "s1", Text: "x"}); !errors.Is(err, ErrResuming) && !errors.Is(err, ErrNotIdle) {
+		t.Errorf("prompt during the resume: err = %v", err)
+	}
+	resumed := waitResumed(t, m2, "s1", 1)
+	if resumed.Resumed.How != v1.ResumedByLoad || !resumed.Resumed.TurnResumed || resumed.Resumed.RestartedAt.IsZero() || resumed.AgentSessionID != before.AgentSessionID || resumed.Status != StatusRunning {
+		t.Errorf("resumed session = %+v", resumed)
+	}
+	asked := waitPending(t, m2, "s1", 1)
+	if asked.Pending[0].RequestID == first || asked.Pending[0].Title != "Edit a.go" {
+		t.Errorf("the edit was not asked again: %+v", asked.Pending)
+	}
+	if _, err := m2.Approve(f.ctx, v1.ApproveToolCall{ID: "c3", SessionID: "s1", RequestID: asked.Pending[0].RequestID}, "local"); err != nil {
+		t.Fatal(err)
+	}
+	if idle := waitStatus(t, m2, "s1", StatusIdle); idle.Turns != 1 || idle.Error != "" {
+		t.Errorf("after the resumed turn = %+v", idle)
+	}
+	b, err := os.ReadFile(filepath.Join(f.cfg.TranscriptsDir, "s1.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(b); !strings.Contains(got, "\n---\n\n*The daemon restarted at ") || !strings.Contains(got, "continues the interrupted turn.*\n\n## Agent\n\n") || strings.Contains(got, fakeagent.ReplayedLine) || strings.Count(got, "## You") != 1 || !strings.Contains(got, "Done with \"The daemon that runs this session restarted") {
+		t.Errorf("transcript after the resume = %q", got)
+	}
+
+	// Across a restart an idle session stays idle, and the next prompt runs
+	// on the agent that was brought back.
+	stop2()
+	m2.Wait()
+	ctx3, stop3 := context.WithCancel(f.ctx)
+	defer stop3()
+	m3, err := Load(ctx3, f.store, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := waitResumed(t, m3, "s1", 2); s.Status != StatusIdle || s.Resumed.TurnResumed || s.Resumed.How != v1.ResumedByLoad {
+		t.Errorf("idle session after a restart = %+v", s)
+	}
+	if _, err := m3.Prompt(f.ctx, v1.SendPrompt{ID: "c4", SessionID: "s1", Text: "and again"}); err != nil {
+		t.Fatal(err)
+	}
+	asked = waitPending(t, m3, "s1", 1)
+	if _, err := m3.Approve(f.ctx, v1.ApproveToolCall{ID: "c5", SessionID: "s1", RequestID: asked.Pending[0].RequestID}, "local"); err != nil {
+		t.Fatal(err)
+	}
+	second := waitStatus(t, m3, "s1", StatusIdle)
+	for second.Turns < 2 {
+		time.Sleep(20 * time.Millisecond)
+		second = waitStatus(t, m3, "s1", StatusIdle)
+	}
+
+	// An agent that cannot load its session gets a new one, seeded with
+	// the transcript.
+	stop3()
+	m3.Wait()
+	cmd, env := fakeagent.TestCommand()
+	seeded := f.cfg
+	seeded.Registry = agents.Registry{"fake": {Name: "fake", Provider: "local", Command: cmd, Env: append(append([]string(nil), env...), fakeagent.EnvNoLoad+"=1")}}
+	ctx4, stop4 := context.WithCancel(f.ctx)
+	defer stop4()
+	m4, err := Load(ctx4, f.store, seeded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := waitResumed(t, m4, "s1", 3); s.Status != StatusIdle || s.Resumed.How != v1.ResumedBySeed || s.AgentSessionID == before.AgentSessionID {
+		t.Errorf("seeded session = %+v", s)
+	}
+	if _, err := m4.Prompt(f.ctx, v1.SendPrompt{ID: "c6", SessionID: "s1", Text: "after a seed"}); err != nil {
+		t.Fatal(err)
+	}
+	asked = waitPending(t, m4, "s1", 1)
+	if _, err := m4.Approve(f.ctx, v1.ApproveToolCall{ID: "c7", SessionID: "s1", RequestID: asked.Pending[0].RequestID}, "local"); err != nil {
+		t.Fatal(err)
+	}
+	third := waitStatus(t, m4, "s1", StatusIdle)
+	for third.Turns < 3 {
+		time.Sleep(20 * time.Millisecond)
+		third = waitStatus(t, m4, "s1", StatusIdle)
+	}
+	b, _ = os.ReadFile(filepath.Join(f.cfg.TranscriptsDir, "s1.md"))
+	if got := string(b); !strings.Contains(got, "a new agent will be given the conversation so far.*") || !strings.Contains(got, "Done with \"after a seed\".") || !strings.Contains(got, "lines of context.") || !strings.Contains(got, "Done with \"and again\".") {
+		t.Errorf("transcript after the seed = %q", got)
+	}
+
+	// The history says what happened: three resumes, one expiry by the
+	// restart, and no failure.
+	counts := map[string]int{}
+	var expired []string
+	err = f.store.Replay(f.ctx, v1.IslandStreamName("ws"), []string{v1.SessionEventFilter("ws")}, func(_ uint64, ev v1.Event) error {
+		counts[ev.Type]++
+		if ev.Type == v1.EventPermissionExpired {
+			var d v1.PermissionExpired
+			_ = ev.Decode(&d)
+			expired = append(expired, d.Reason)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts[v1.EventSessionResumed] != 3 || counts[v1.EventAgentFailed] != 0 || counts[v1.EventAgentSpawned] != 4 || strings.Join(expired, ",") != "restart" {
+		t.Errorf("event counts = %v, expiries = %v", counts, expired)
+	}
+
+	// Once stopped, a session stays stopped through a restart.
+	if _, err := m4.Stop(f.ctx, v1.StopAgent{ID: "c8", SessionID: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	stop4()
+	m4.Wait()
+	m5, err := Load(f.ctx, f.store, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := m5.Get("s1"); s.Status != StatusEnded || s.Resumes != 3 || s.Turns != 3 {
+		t.Errorf("ended session after a restart = %+v", s)
 	}
 }

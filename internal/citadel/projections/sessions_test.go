@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
 )
@@ -21,8 +22,8 @@ func TestEmptySessionEncodesLists(t *testing.T) {
 			t.Errorf("session JSON lacks %s: %s", want, data)
 		}
 	}
-	if strings.Contains(string(data), "null") {
-		t.Errorf("session JSON has a null: %s", data)
+	if strings.Contains(string(data), "null") || strings.Contains(string(data), "resumed") {
+		t.Errorf("session JSON has a null or an empty resume: %s", data)
 	}
 }
 
@@ -76,6 +77,14 @@ func TestSessionsFollowSessionEvents(t *testing.T) {
 	apply(v1.EventTurnEnded, v1.TurnEnded{SessionID: "s1", StopReason: "end_turn"})
 	if s := p.List()[0]; s.Status != "idle" || s.Turns != 1 || s.UpdatedAt.IsZero() {
 		t.Errorf("idle session = %+v", s)
+	}
+	// A daemon restart leaves the status alone and says how the agent came back.
+	apply(v1.EventSessionResumed, v1.SessionResumed{SessionID: "s1", RestartedAt: time.Now(), How: v1.ResumedByLoad})
+	if s := p.List()[0]; s.Status != "idle" || s.Resumes != 1 || s.Resumed.How != "load" || s.Resumed.At.IsZero() || s.Resumed.RestartedAt.IsZero() {
+		t.Errorf("resumed session = %+v", s)
+	}
+	if data, _ := json.Marshal(p.List()[0]); !strings.Contains(string(data), `"resumed":{`) {
+		t.Errorf("resumed session JSON lacks the resume: %s", data)
 	}
 	apply(v1.EventPromptSent, v1.PromptSent{SessionID: "s1", Text: "more"})
 	if s := p.List()[0]; s.Status != "running" || s.Turns != 2 || s.Prompt != "fix the tests" {

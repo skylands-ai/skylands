@@ -111,13 +111,20 @@ func (w *world) startDaemon(host string) (stop func()) {
 
 // startDaemonWithSocket is startDaemon with a local API on socketPath.
 func (w *world) startDaemonWithSocket(host, socketPath string) (stop func()) {
+	return w.startDaemonIn(host, socketPath, w.t.TempDir())
+}
+
+// startDaemonIn is startDaemonWithSocket with the daemon's data in dataDir,
+// so a restart on the same directory finds its stream, worktrees, and
+// transcripts again.
+func (w *world) startDaemonIn(host, socketPath, dataDir string) (stop func()) {
 	w.t.Helper()
 	ctx, cancel := context.WithCancel(w.ctx)
 	done := make(chan error, 1)
 	fakeCmd, fakeEnv := fakeagent.TestCommand()
 	go func() {
 		done <- daemon.Run(ctx, daemon.Config{
-			Host: host, NATSURL: w.hub.LeafURL(), DataDir: w.t.TempDir(), SocketPath: socketPath, Version: "v0.1.0",
+			Host: host, NATSURL: w.hub.LeafURL(), DataDir: dataDir, SocketPath: socketPath, Version: "v0.1.0",
 			Adapters: agents.Registry{"fake": {Name: "fake", Provider: "local", Command: fakeCmd, Env: fakeEnv}},
 		})
 	}()
@@ -597,4 +604,112 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 	if code, _ := get("/api/sessions/nowhere/x/transcript"); code != http.StatusBadGateway {
 		t.Errorf("unknown host transcript: %d", code)
 	}
+}
+
+func TestSessionSurvivesDaemonRestart(t *testing.T) {
+	if testing.Short() {
+		t.Skip("whole-world test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	w := startWorld(t, ctx)
+	b := w.openBrowser()
+	sock := shortSocket(t)
+	dataDir := t.TempDir()
+	stop := w.startDaemonIn("ws", sock, dataDir)
+	b.wait(t, "ws reachable", 15*time.Second, func(v view) bool { return reachable(v, "ws", true) })
+
+	repoDir := gitRepo(t, "main.go", "util.go")
+	cli := socket.Dial(sock)
+	var info socket.RepoInfo
+	var err error
+	for i := 0; i < 100; i++ {
+		if info, err = cli.RegisterRepo(ctx, repoDir); err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("RegisterRepo: %v", err)
+	}
+	b.wait(t, "the terrace", 20*time.Second, func(v view) bool { _, ok := v.repos[info.ID]; return ok })
+
+	post := func(path, body string) (int, map[string]any) {
+		t.Helper()
+		resp, err := http.Post(w.webURL+path, "application/json", bytes.NewBufferString(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		data, _ := io.ReadAll(resp.Body)
+		var out map[string]any
+		_ = json.Unmarshal(data, &out)
+		return resp.StatusCode, out
+	}
+	code, out := post("/api/sessions", `{"host":"ws","repoId":"`+info.ID+`","agent":"fake","prompt":"keep going"}`)
+	if code != http.StatusCreated || out["sessionId"] == nil {
+		t.Fatalf("start session: %d %v", code, out)
+	}
+	id := out["sessionId"].(string)
+	v := b.wait(t, "a request to wait", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && len(s.Pending) == 1 })
+	first := v.sessions[id].Pending[0].RequestID
+
+	// The daemon goes down mid-turn with the request unanswered. The island
+	// goes grey, and the session keeps the last state heard.
+	stop()
+	v = b.wait(t, "ws unreachable", 15*time.Second, func(v view) bool { return reachable(v, "ws", false) })
+	if s := v.sessions[id]; s.Status != "running" || len(s.Pending) != 1 {
+		t.Errorf("session while the daemon is down = %+v", s)
+	}
+
+	// It comes back on the same data. The history is intact, the request
+	// has expired, the agent is loaded again and continues the turn, and
+	// it asks about the edit again.
+	stop = w.startDaemonIn("ws", sock, dataDir)
+	defer stop()
+	v = b.wait(t, "the session to resume", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Resumes == 1 })
+	s := v.sessions[id]
+	if s.Status != "running" || s.Resumed.How != "load" || !s.Resumed.TurnResumed || s.Resumed.RestartedAt.IsZero() || s.Error != "" || s.Turns != 1 || s.Prompt != "keep going" || s.AgentName != "skylands-fakeagent" {
+		t.Errorf("resumed session = %+v", s)
+	}
+	v = b.wait(t, "the edit to be asked again", 30*time.Second, func(v view) bool {
+		s, ok := v.sessions[id]
+		return ok && len(s.Pending) == 1 && s.Pending[0].RequestID != first
+	})
+	if code, out := post("/api/sessions/ws/"+id+"/requests/"+v.sessions[id].Pending[0].RequestID+"/approve", `{}`); code != http.StatusOK {
+		t.Fatalf("approve: %d %v", code, out)
+	}
+	v = b.wait(t, "the resumed turn to end", 30*time.Second, func(v view) bool {
+		s, ok := v.sessions[id]
+		return ok && s.Status == "idle" && len(s.Pending) == 0
+	})
+	if s := v.sessions[id]; s.Turns != 1 || s.Files["main.go"] != "edit" {
+		t.Errorf("after the resumed turn = %+v", s)
+	}
+
+	// The conversation goes on where it was.
+	if code, out := post("/api/sessions/ws/"+id+"/prompt", `{"text":"and again"}`); code != http.StatusOK {
+		t.Fatalf("prompt: %d %v", code, out)
+	}
+	v = b.wait(t, "the next edit to wait", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && len(s.Pending) == 1 })
+	if code, out := post("/api/sessions/ws/"+id+"/requests/"+v.sessions[id].Pending[0].RequestID+"/approve", `{}`); code != http.StatusOK {
+		t.Fatalf("approve: %d %v", code, out)
+	}
+	b.wait(t, "the second turn to end", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "idle" && s.Turns == 2 })
+	resp, err := http.Get(w.webURL + "/api/sessions/ws/" + id + "/transcript")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if text := string(body); resp.StatusCode != http.StatusOK || !strings.Contains(text, "keep going") || !strings.Contains(text, "The daemon restarted at") || !strings.Contains(text, `Done with \"and again\".`) || strings.Contains(text, "Failed") {
+		t.Errorf("transcript: %d %s", resp.StatusCode, text)
+	}
+
+	// A later browser sees the same in its snapshot.
+	b2 := w.openBrowser()
+	b2.wait(t, "a snapshot with the resumed session", 5*time.Second, func(v view) bool {
+		s, ok := v.sessions[id]
+		return ok && s.Resumes == 1 && s.Status == "idle" && s.Turns == 2
+	})
 }

@@ -2,7 +2,10 @@
 // StartSession, runs the agent over ACP in its own git worktree, turns what
 // the agent reports into session events, and records them in the host's
 // stream. The daemon is the only writer of that stream, so this manager
-// serializes its commands.
+// serializes its commands. A daemon restart kills every agent process, so
+// Load brings each open session's agent back, through the agent's own
+// session when it can load one and otherwise through a new session seeded
+// with the transcript.
 package session
 
 import (
@@ -66,6 +69,13 @@ type Session struct {
 	Title string
 	// Trusted means tool calls are allowed without asking.
 	Trusted bool
+	// AgentSessionID is the agent's own id for the conversation, which a
+	// restart asks it to load again.
+	AgentSessionID string
+	// Resumes counts the daemon restarts the session has lived through, and
+	// Resumed says how its agent last came back.
+	Resumes int
+	Resumed Resumed
 	// Pending holds the tool calls waiting on a person, oldest first.
 	Pending []Permission
 	// Turns counts the prompts sent so far.
@@ -78,6 +88,15 @@ type Session struct {
 	Plan      []v1.PlanEntry
 	Used      uint64
 	Size      uint64
+}
+
+// Resumed says how a session's agent came back after a daemon restart.
+type Resumed struct {
+	At          time.Time
+	RestartedAt time.Time
+	// How is v1.ResumedByLoad or v1.ResumedBySeed.
+	How         string
+	TurnResumed bool
 }
 
 // Permission is a tool call waiting on a person.
@@ -132,6 +151,7 @@ var (
 	ErrNotIdle        = errors.New("the session is not waiting for a prompt")
 	ErrOver           = errors.New("the session has ended")
 	ErrUnknownRequest = errors.New("no such request is waiting")
+	ErrResuming       = errors.New("the agent is being brought back after a restart; try again in a moment")
 )
 
 // Manager is the aggregate for every session on one island.
@@ -141,6 +161,9 @@ type Manager struct {
 	// ctx outlives any one command: agents run on it, and a cancelled ctx
 	// stops every agent.
 	ctx context.Context
+	// started is when this manager loaded, which a resumed session records
+	// as the daemon's restart time.
+	started time.Time
 
 	cmdMu    sync.Mutex
 	mu       sync.Mutex
@@ -148,6 +171,9 @@ type Manager struct {
 	handled  map[string]string
 	// live holds the agent process of every session that has not ended.
 	live map[string]*live
+	// resuming marks the sessions whose agent is on its way back after a
+	// restart and so has no live entry yet.
+	resuming map[string]bool
 	// transcripts holds each session's transcript writer once it is in use.
 	transcripts map[string]*transcript
 	runs        sync.WaitGroup
@@ -166,13 +192,16 @@ type live struct {
 }
 
 // Load rebuilds the aggregate from the host's stream. A session that was
-// still running when the daemon last stopped is marked failed, because its
-// agent process died with the daemon.
+// still open when the daemon last stopped lost its agent process with it,
+// so whatever it was waiting on a person for expires, and the agent is
+// brought back in the background: see resume. Until it is, the session
+// keeps the status it had, and SessionResumed or AgentFailed says how
+// that went.
 func Load(ctx context.Context, store *es.Store, cfg Config) (*Manager, error) {
 	if cfg.Registry == nil {
 		cfg.Registry = agents.DefaultRegistry()
 	}
-	m := &Manager{cfg: cfg, store: store, ctx: ctx, sessions: map[string]*Session{}, handled: map[string]string{}, live: map[string]*live{}, transcripts: map[string]*transcript{}}
+	m := &Manager{cfg: cfg, store: store, ctx: ctx, started: time.Now().UTC(), sessions: map[string]*Session{}, handled: map[string]string{}, live: map[string]*live{}, resuming: map[string]bool{}, transcripts: map[string]*transcript{}}
 	err := store.Replay(ctx, v1.IslandStreamName(cfg.Host), []string{v1.SessionEventFilter(cfg.Host)}, func(seq uint64, ev v1.Event) error {
 		m.apply(ev)
 		return nil
@@ -181,18 +210,108 @@ func Load(ctx context.Context, store *es.Store, cfg Config) (*Manager, error) {
 		return nil, fmt.Errorf("load sessions for %s: %w", cfg.Host, err)
 	}
 	for _, s := range m.List() {
-		if s.Status == StatusRunning || s.Status == StatusIdle {
-			for _, p := range s.Pending {
-				if err := m.record(ctx, s.ID, "", v1.EventPermissionExpired, v1.PermissionExpired{SessionID: s.ID, RequestID: p.RequestID, Reason: "restart"}); err != nil {
-					return nil, err
-				}
-			}
-			if err := m.record(ctx, s.ID, "", v1.EventAgentFailed, v1.AgentFailed{SessionID: s.ID, Error: "the daemon restarted while the session was open"}); err != nil {
+		if s.Status != StatusRunning && s.Status != StatusIdle {
+			continue
+		}
+		for _, p := range s.Pending {
+			if err := m.record(ctx, s.ID, "", v1.EventPermissionExpired, v1.PermissionExpired{SessionID: s.ID, RequestID: p.RequestID, Reason: "restart"}); err != nil {
 				return nil, err
 			}
 		}
+		m.mu.Lock()
+		m.resuming[s.ID] = true
+		m.mu.Unlock()
+		m.runs.Add(1)
+		go m.resume(s.ID)
 	}
 	return m, nil
+}
+
+// continuation is the prompt a resumed agent gets for a turn the restart
+// cut short.
+const continuation = "The daemon that runs this session restarted while you were working on the last request, so that turn was cut short. " +
+	"Pick up where you left off and finish the request. Anything you had asked permission for and did not get an answer to, ask again."
+
+// resume brings a session's agent back after a daemon restart: through the
+// agent's own session when it can load one, otherwise through a new
+// session seeded with the transcript. A turn the restart cut short is run
+// again, so anything that was waiting on a person is asked again. Only an
+// agent that cannot be brought back fails the session.
+func (m *Manager) resume(id string) {
+	defer m.runs.Done()
+	defer func() {
+		m.mu.Lock()
+		delete(m.resuming, id)
+		m.mu.Unlock()
+	}()
+	s, ok := m.Get(id)
+	if !ok {
+		return
+	}
+	adapter, ok := m.cfg.Registry[s.Agent]
+	if !ok {
+		m.failed(id, fmt.Errorf("%w: %s", ErrUnknownAgent, s.Agent))
+		return
+	}
+	if _, err := os.Stat(s.Worktree); err != nil {
+		m.failed(id, fmt.Errorf("the worktree is gone: %s", s.Worktree))
+		return
+	}
+	// The transcript is read before the note below is added to it, so a
+	// seeded agent sees the conversation as it was.
+	transcript, _ := os.ReadFile(m.transcriptPath(id))
+	obs := &observer{m: m, id: id, t: m.transcript(id)}
+	run, how, err := agents.Resume(m.ctx, adapter, s.Worktree, s.Model, s.AgentSessionID, string(transcript), obs)
+	if err != nil {
+		if m.ctx.Err() == nil {
+			m.failed(id, err)
+		}
+		return
+	}
+
+	// Installing the agent is a command of sorts: it must not interleave
+	// with a Stop, which would otherwise miss the agent it should close.
+	m.cmdMu.Lock()
+	m.mu.Lock()
+	cur := m.sessions[id]
+	if cur.Status == StatusEnded || cur.Status == StatusFailed {
+		m.mu.Unlock()
+		m.cmdMu.Unlock()
+		_ = run.Close()
+		return
+	}
+	midTurn := cur.Status == StatusRunning
+	l := &live{run: run, asks: map[string]chan agents.Decision{}}
+	if midTurn {
+		l.turnDone = make(chan struct{})
+	}
+	m.live[id] = l
+	m.mu.Unlock()
+	m.cmdMu.Unlock()
+
+	note := "The daemon restarted at " + m.started.Local().Format("2006-01-02 15:04") + "; "
+	switch {
+	case how == v1.ResumedByLoad && midTurn:
+		note += "the agent is back with its own memory of the conversation and continues the interrupted turn."
+	case how == v1.ResumedByLoad:
+		note += "the agent is back with its own memory of the conversation."
+	case midTurn:
+		note += "a new agent was given the conversation so far and continues the interrupted turn."
+	default:
+		note += "a new agent will be given the conversation so far."
+	}
+	m.transcript(id).Append("\n\n---\n\n*" + note + "*\n\n")
+	_ = m.record(m.ctx, id, "", v1.EventSessionResumed, v1.SessionResumed{SessionID: id, RestartedAt: m.started, How: how, TurnResumed: midTurn})
+	slog.Info("session: resumed", "session", id, "how", how, "turn", midTurn)
+	if s.Title == "" {
+		m.runs.Add(1)
+		go m.title(id, run, s.Prompt)
+	}
+	if midTurn {
+		m.transcript(id).Append("## Agent\n\n")
+		m.runs.Add(1)
+		m.turn(id, l, continuation)
+	}
 }
 
 // Approve handles ApproveToolCall: it answers a waiting request with an
@@ -405,7 +524,13 @@ func (m *Manager) Prompt(ctx context.Context, cmd v1.SendPrompt) (Session, error
 		return Session{}, fmt.Errorf("%w: %s", ErrUnknownSession, cmd.SessionID)
 	}
 	switch {
-	case s.Status == StatusEnded || s.Status == StatusFailed || l == nil:
+	case s.Status == StatusEnded || s.Status == StatusFailed:
+		m.mu.Unlock()
+		return *s, ErrOver
+	case l == nil && m.resuming[cmd.SessionID]:
+		m.mu.Unlock()
+		return *s, ErrResuming
+	case l == nil:
 		m.mu.Unlock()
 		return *s, ErrOver
 	case s.Status != StatusIdle:
@@ -428,7 +553,8 @@ func (m *Manager) Prompt(ctx context.Context, cmd v1.SendPrompt) (Session, error
 }
 
 // Stop handles StopAgent: it cancels any turn in progress, stops the agent,
-// and records SessionEnded.
+// and records SessionEnded. An agent still on its way back after a restart
+// is closed by resume when it arrives and finds the session over.
 func (m *Manager) Stop(ctx context.Context, cmd v1.StopAgent) (Session, error) {
 	m.cmdMu.Lock()
 	defer m.cmdMu.Unlock()
@@ -466,14 +592,17 @@ func (m *Manager) Stop(ctx context.Context, cmd v1.StopAgent) (Session, error) {
 				ask <- agents.Decision{Cancelled: true}
 			}
 		}
+		// The turn is given a moment to end before the link closes: a
+		// closing link refuses every write, including the answer the agent
+		// is still waiting for, and then the turn could never end.
 		l.run.Cancel(ctx)
-		_ = l.run.Close()
 		if l.turnDone != nil {
 			select {
 			case <-l.turnDone:
 			case <-time.After(10 * time.Second):
 			}
 		}
+		_ = l.run.Close()
 		m.mu.Lock()
 		delete(m.live, cmd.SessionID)
 		m.mu.Unlock()
@@ -798,6 +927,17 @@ func (m *Manager) apply(ev v1.Event) {
 		if ev.Decode(&d) == nil {
 			if s := touch(d.SessionID); s != nil {
 				s.AgentName = d.Name
+				if d.AgentSessionID != "" {
+					s.AgentSessionID = d.AgentSessionID
+				}
+			}
+		}
+	case v1.EventSessionResumed:
+		var d v1.SessionResumed
+		if ev.Decode(&d) == nil {
+			if s := touch(d.SessionID); s != nil {
+				s.Resumes++
+				s.Resumed = Resumed{At: ev.Time, RestartedAt: d.RestartedAt, How: d.How, TurnResumed: d.TurnResumed}
 			}
 		}
 	case v1.EventToolCallStarted:
@@ -863,10 +1003,10 @@ type observer struct {
 	mu sync.Mutex
 }
 
-func (o *observer) Spawned(name, version string) {
+func (o *observer) Spawned(name, version, agentSessionID string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	_ = o.m.record(o.m.ctx, o.id, "", v1.EventAgentSpawned, v1.AgentSpawned{SessionID: o.id, AgentID: o.id, Name: name, Version: version})
+	_ = o.m.record(o.m.ctx, o.id, "", v1.EventAgentSpawned, v1.AgentSpawned{SessionID: o.id, AgentID: o.id, Name: name, Version: version, AgentSessionID: agentSessionID})
 }
 
 func (o *observer) ToolCall(tc agents.ToolCall) {
@@ -958,6 +1098,9 @@ func (o *observer) Permission(ctx context.Context, req agents.PermissionRequest)
 	case <-time.After(timeout):
 		_ = m.record(m.ctx, o.id, "", v1.EventPermissionExpired, v1.PermissionExpired{SessionID: o.id, RequestID: requestID, Reason: "timeout"})
 		o.t.Line(ToolLinePrefix + tc.Title + " (nobody answered in time)")
+		return agents.Decision{Cancelled: true}
+	case <-m.ctx.Done():
+		// The daemon is stopping. The request expires at the next Load.
 		return agents.Decision{Cancelled: true}
 	case <-ctx.Done():
 		// The agent stopped waiting, or the turn was cancelled; Stop records
