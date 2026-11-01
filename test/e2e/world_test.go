@@ -544,6 +544,27 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 		t.Errorf("activity: recent=%+v files=%v current=%q used=%d", s.Recent, s.Files, s.CurrentFile, s.Used)
 	}
 
+	// Interrupting a turn keeps the session: the pending edit is withdrawn,
+	// the session goes idle with the cancelled stop reason, and the next
+	// prompt steers the same agent.
+	if code, out := post2("/api/sessions/ws/"+id+"/prompt", `{"text":"take a detour"}`); code != http.StatusOK {
+		t.Fatalf("prompt: %d %v", code, out)
+	}
+	b.wait(t, "the detour to wait on an edit", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && len(s.Pending) == 1 })
+	if code, out := post2("/api/sessions/ws/"+id+"/cancel", `{}`); code != http.StatusOK {
+		t.Fatalf("cancel: %d %v", code, out)
+	}
+	v = b.wait(t, "the interrupted turn to end", 30*time.Second, func(v view) bool {
+		s, ok := v.sessions[id]
+		return ok && s.Status == "idle" && s.StopReason == "cancelled" && len(s.Pending) == 0 && !s.Cancelling
+	})
+	if s := v.sessions[id]; s.Turns != 2 {
+		t.Errorf("interrupted session = %+v", s)
+	}
+	if code, _ := post2("/api/sessions/ws/"+id+"/cancel", `{}`); code != http.StatusBadRequest {
+		t.Errorf("cancel an idle session: %d", code)
+	}
+
 	// A trusted session asks no one, so the next turn runs through.
 	if code, out := post2("/api/sessions/ws/"+id+"/trust", `{"trusted":true}`); code != http.StatusOK {
 		t.Fatalf("trust: %d %v", code, out)
@@ -558,7 +579,7 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 	if code, out := post2("/api/sessions/ws/"+id+"/prompt", `{"text":"now make it smaller"}`); code != http.StatusOK {
 		t.Fatalf("prompt: %d %v", code, out)
 	}
-	b.wait(t, "the second turn to end", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "idle" && s.Turns == 2 })
+	b.wait(t, "the second turn to end", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "idle" && s.Turns == 3 })
 	for deadline := time.Now().Add(5 * time.Second); !strings.Contains(b.liveText(), "Done with \"now make it smaller\""); {
 		if time.Now().After(deadline) {
 			t.Fatalf("live text never carried the answer: %q", b.liveText())
@@ -582,7 +603,7 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 
 	// A later browser gets the session in its snapshot.
 	b2 := w.openBrowser()
-	b2.wait(t, "a snapshot with the session", 5*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "ended" && s.Turns == 2 })
+	b2.wait(t, "a snapshot with the session", 5*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "ended" && s.Turns == 3 })
 
 	// The response and the diff are fetched from the host through the citadel.
 	get := func(path string) (int, string) {

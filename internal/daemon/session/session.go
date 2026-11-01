@@ -82,6 +82,9 @@ type Session struct {
 	Title string
 	// Trusted means tool calls are allowed without asking.
 	Trusted bool
+	// Cancelling means a person interrupted the turn in progress and the
+	// agent has not stopped yet.
+	Cancelling bool
 	// Rules settle tool calls before they reach a person: the repository's
 	// rules as copied at the start, and any set on the session since.
 	Rules []v1.Rule
@@ -180,6 +183,7 @@ var (
 	ErrUnknownRequest  = errors.New("no such request is waiting")
 	ErrUnknownQuestion = errors.New("no such question is waiting")
 	ErrResuming        = errors.New("the agent is being brought back after a restart; try again in a moment")
+	ErrNotRunning      = errors.New("no turn is in progress")
 	ErrCheckoutBusy    = errors.New("another session is working in the checkout")
 	ErrBusy            = errors.New("the agent is working; wait for the turn to end or stop the session")
 	ErrOpen            = errors.New("the session is still open; stop it first")
@@ -816,6 +820,71 @@ func (m *Manager) Stop(ctx context.Context, cmd v1.StopAgent) (Session, error) {
 	return out, nil
 }
 
+// Cancel handles CancelTurn: it interrupts the turn in progress and leaves
+// the session open. Whatever was waiting on a person expires with the
+// turn, the agent is told to stop, and TurnEnded follows when it has,
+// with the stop reason "cancelled". The next prompt carries on.
+func (m *Manager) Cancel(ctx context.Context, cmd v1.CancelTurn, by string) (Session, error) {
+	m.cmdMu.Lock()
+	defer m.cmdMu.Unlock()
+	m.mu.Lock()
+	if id, ok := m.handled[cmd.ID]; ok && cmd.ID != "" {
+		s := *m.sessions[id]
+		m.mu.Unlock()
+		return s, nil
+	}
+	s, ok := m.sessions[cmd.SessionID]
+	l := m.live[cmd.SessionID]
+	if !ok {
+		m.mu.Unlock()
+		return Session{}, fmt.Errorf("%w: %s", ErrUnknownSession, cmd.SessionID)
+	}
+	switch {
+	case s.Status == StatusEnded || s.Status == StatusFailed:
+		m.mu.Unlock()
+		return *s, ErrOver
+	case s.Status != StatusRunning:
+		m.mu.Unlock()
+		return *s, ErrNotRunning
+	case l == nil && m.resuming[cmd.SessionID]:
+		m.mu.Unlock()
+		return *s, ErrResuming
+	case l == nil:
+		m.mu.Unlock()
+		return *s, ErrOver
+	}
+	pending := append([]Permission(nil), s.Pending...)
+	questions := append([]Question(nil), s.Questions...)
+	m.mu.Unlock()
+	if err := m.record(ctx, cmd.SessionID, cmd.ID, v1.EventTurnCancelled, v1.TurnCancelled{SessionID: cmd.SessionID, By: by}); err != nil {
+		return Session{}, err
+	}
+	// The agent hears the cancel first, so by the time a withdrawn request
+	// comes back to it, it knows the turn is over rather than refused.
+	l.run.Cancel(ctx)
+	for _, p := range pending {
+		_ = m.record(ctx, cmd.SessionID, "", v1.EventPermissionExpired, v1.PermissionExpired{SessionID: cmd.SessionID, RequestID: p.RequestID, Reason: "cancelled"})
+		m.mu.Lock()
+		ask := l.asks[p.RequestID]
+		m.mu.Unlock()
+		if ask != nil {
+			ask <- agents.Decision{Cancelled: true}
+		}
+	}
+	for _, q := range questions {
+		_ = m.record(ctx, cmd.SessionID, "", v1.EventQuestionExpired, v1.QuestionExpired{SessionID: cmd.SessionID, QuestionID: q.QuestionID, Reason: "cancelled"})
+		m.mu.Lock()
+		answer := l.answers[q.QuestionID]
+		m.mu.Unlock()
+		if answer != nil {
+			answer <- agents.Answer{Cancelled: true}
+		}
+	}
+	slog.Info("session: turn cancelled", "session", cmd.SessionID, "by", by)
+	out, _ := m.Get(cmd.SessionID)
+	return out, nil
+}
+
 // Start handles StartSession: it creates the worktree, records
 // SessionStarted and PromptSent, and launches the agent in the background. A
 // command id already in the history gets its original session back.
@@ -936,7 +1005,11 @@ func (m *Manager) turn(id string, l *live, text string) {
 		return
 	}
 	slog.Info("session: turn ended", "session", id, "stop", stop)
-	m.transcript(id).Append("\n\n")
+	if stop == "cancelled" {
+		m.transcript(id).Append("\n\n---\n\n*Interrupted. The agent stopped before finishing the turn; the next reply steers it.*\n\n")
+	} else {
+		m.transcript(id).Append("\n\n")
+	}
 	_ = m.record(m.ctx, id, "", v1.EventTurnEnded, v1.TurnEnded{SessionID: id, StopReason: stop})
 }
 
@@ -1081,6 +1154,7 @@ func (m *Manager) apply(ev v1.Event) {
 				}
 				s.Turns++
 				s.Status = StatusRunning
+				s.Cancelling = false
 				if ev.CommandID != "" {
 					m.handled[ev.CommandID] = d.SessionID
 				}
@@ -1090,7 +1164,19 @@ func (m *Manager) apply(ev v1.Event) {
 		var d v1.TurnEnded
 		if ev.Decode(&d) == nil {
 			if s := touch(d.SessionID); s != nil && s.Status == StatusRunning {
-				s.Status, s.StopReason = StatusIdle, d.StopReason
+				s.Status, s.StopReason, s.Cancelling = StatusIdle, d.StopReason, false
+			}
+		}
+	case v1.EventTurnCancelled:
+		var d v1.TurnCancelled
+		if ev.Decode(&d) == nil {
+			if s := touch(d.SessionID); s != nil {
+				if s.Status == StatusRunning {
+					s.Cancelling = true
+				}
+				if ev.CommandID != "" {
+					m.handled[ev.CommandID] = d.SessionID
+				}
 			}
 		}
 	case v1.EventSessionTitled:
@@ -1267,14 +1353,14 @@ func (m *Manager) apply(ev v1.Event) {
 		var d v1.AgentFailed
 		if ev.Decode(&d) == nil {
 			if s := touch(d.SessionID); s != nil {
-				s.Status, s.Error, s.EndedAt = StatusFailed, d.Error, ev.Time
+				s.Status, s.Error, s.EndedAt, s.Cancelling = StatusFailed, d.Error, ev.Time, false
 			}
 		}
 	case v1.EventSessionEnded:
 		var d v1.SessionEnded
 		if ev.Decode(&d) == nil {
 			if s := touch(d.SessionID); s != nil {
-				s.Status, s.StopReason, s.EndedAt = StatusEnded, d.StopReason, ev.Time
+				s.Status, s.StopReason, s.EndedAt, s.Cancelling = StatusEnded, d.StopReason, ev.Time, false
 				if ev.CommandID != "" {
 					m.handled[ev.CommandID] = d.SessionID
 				}
@@ -1402,8 +1488,13 @@ func (o *observer) Permission(ctx context.Context, req agents.PermissionRequest)
 	case d := <-ask:
 		return d
 	case <-time.After(timeout):
+		// Nobody answered: that is a refusal of this one call, not the end
+		// of the turn, so the agent gets its reject option when it has one.
 		_ = m.record(m.ctx, o.id, "", v1.EventPermissionExpired, v1.PermissionExpired{SessionID: o.id, RequestID: requestID, Reason: "timeout"})
 		o.t.Line(ToolLinePrefix + tc.Title + " (nobody answered in time)")
+		if opt := pickOption(req.Options, false, ""); opt != "" {
+			return agents.Decision{OptionID: opt}
+		}
 		return agents.Decision{Cancelled: true}
 	case <-m.ctx.Done():
 		// The daemon is stopping. The request expires at the next Load.

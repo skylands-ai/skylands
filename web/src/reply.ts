@@ -4,6 +4,8 @@ import type { Session } from './protocol'
 export interface ReplyActions {
   /** Sends another prompt to an idle session. Resolves with an error message, or empty on success. */
   prompt(text: string): Promise<string>
+  /** Interrupts the turn in progress and leaves the session open. */
+  cancel(): Promise<string>
   /** Ends the session. Resolves with an error message, or empty on success. */
   stop(): Promise<string>
 }
@@ -23,7 +25,12 @@ export function replyBox(s: Session, actions: ReplyActions): HTMLElement {
   input.addEventListener('input', () => drafts.set(s.id, input.value))
   const send = el('button', { type: 'button', class: 'btn small primary', text: 'Send' }) as HTMLButtonElement
   send.disabled = !idle
-  const stop = el('button', { type: 'button', class: 'btn small ghost', text: s.status === 'running' ? 'Stop' : 'End session' }) as HTMLButtonElement
+  // While the agent works, Interrupt stops the turn and keeps the session;
+  // End session is the way out in either state.
+  const cancel = el('button', { type: 'button', class: 'btn small', text: s.cancelling ? 'Stopping\u2026' : 'Interrupt', title: 'Stop what the agent is doing and keep the conversation' }) as HTMLButtonElement
+  cancel.hidden = s.status !== 'running'
+  cancel.disabled = !!s.cancelling
+  const stop = el('button', { type: 'button', class: 'btn small ghost', text: 'End session' }) as HTMLButtonElement
   const note = el('span', { class: 'sub' })
   const submit = async (): Promise<void> => {
     const text = input.value.trim()
@@ -50,9 +57,21 @@ export function replyBox(s: Session, actions: ReplyActions): HTMLElement {
       void submit()
     }
   })
+  cancel.addEventListener('click', async () => {
+    cancel.disabled = true
+    note.textContent = 'Interrupting\u2026'
+    note.style.color = ''
+    const err = await actions.cancel()
+    if (err) {
+      note.textContent = err
+      note.style.color = 'var(--bad)'
+      cancel.disabled = false
+    }
+  })
   stop.addEventListener('click', async () => {
     stop.disabled = true
-    note.textContent = 'Stopping\u2026'
+    note.textContent = 'Ending\u2026'
+    note.style.color = ''
     const err = await actions.stop()
     if (err) {
       note.textContent = err
@@ -61,5 +80,5 @@ export function replyBox(s: Session, actions: ReplyActions): HTMLElement {
     }
   })
   const hint = el('span', { class: 'muted', style: 'font-size:12px', text: idle ? '\u2318 Enter sends' : '' })
-  return el('div', { class: 'reply' }, [input, el('div', { class: 'acts' }, [send, stop, hint, note])])
+  return el('div', { class: 'reply' }, [input, el('div', { class: 'acts' }, [send, cancel, stop, hint, note])])
 }

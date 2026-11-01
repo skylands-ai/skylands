@@ -19,6 +19,8 @@ export interface InboxActions {
   /** Shows the session in the world instead. */
   openInWorld(s: Session): void
   prompt(s: Session, text: string): Promise<string>
+  /** Interrupts the turn in progress and keeps the session. */
+  cancel(s: Session): Promise<string>
   stop(s: Session): Promise<string>
   /** Answers a waiting tool call. Resolves with an error message, or empty. */
   approve(s: Session, p: Permission, optionId: string): Promise<string>
@@ -561,7 +563,7 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
 
   const foot = el('div', { class: 'convo-foot' })
   if (x.status !== 'running') foot.appendChild(changesCard(x, changes, actions))
-  if (isOpen(x)) foot.appendChild(replyBox(x, { prompt: (text) => actions.prompt(x, text), stop: () => actions.stop(x) }))
+  if (isOpen(x)) foot.appendChild(replyBox(x, { prompt: (text) => actions.prompt(x, text), cancel: () => actions.cancel(x), stop: () => actions.stop(x) }))
   else foot.appendChild(el('p', { class: 'muted', style: 'margin:0;font-size:13px', text: 'This session is over. Start a new one from its terrace in the world.' }))
 
   const hint = isOpen(x) && x.trusted ? el('p', { class: 'trust-hint', text: 'Tool calls in this session run without asking.' }) : null

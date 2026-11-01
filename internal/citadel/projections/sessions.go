@@ -91,6 +91,9 @@ type Session struct {
 	// Trusted means the session's tool calls are allowed without asking. It
 	// is always sent, so a browser sees it turn back off.
 	Trusted bool `json:"trusted"`
+	// Cancelling means a person interrupted the turn and the agent has not
+	// stopped yet.
+	Cancelling bool `json:"cancelling,omitempty"`
 	// Rules settle tool calls before they reach a person: the repository's
 	// as copied at the start, and any set on the session since.
 	Rules []v1.Rule `json:"rules"`
@@ -164,6 +167,7 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 				}
 				s.Turns++
 				s.Status = "running"
+				s.Cancelling = false
 				changed = s
 			}
 		}
@@ -171,7 +175,15 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 		var d v1.TurnEnded
 		if ev.Decode(&d) == nil {
 			if s, ok := p.byID[d.SessionID]; ok && s.Status == "running" {
-				s.Status, s.StopReason = "idle", d.StopReason
+				s.Status, s.StopReason, s.Cancelling = "idle", d.StopReason, false
+				changed = s
+			}
+		}
+	case v1.EventTurnCancelled:
+		var d v1.TurnCancelled
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok && s.Status == "running" {
+				s.Cancelling = true
 				changed = s
 			}
 		}
@@ -356,7 +368,7 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 		var d v1.AgentFailed
 		if ev.Decode(&d) == nil {
 			if s, ok := p.byID[d.SessionID]; ok {
-				s.Status, s.Error, s.EndedAt = "failed", d.Error, ev.Time
+				s.Status, s.Error, s.EndedAt, s.Cancelling = "failed", d.Error, ev.Time, false
 				changed = s
 			}
 		}
@@ -364,7 +376,7 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 		var d v1.SessionEnded
 		if ev.Decode(&d) == nil {
 			if s, ok := p.byID[d.SessionID]; ok {
-				s.Status, s.StopReason, s.EndedAt = "ended", d.StopReason, ev.Time
+				s.Status, s.StopReason, s.EndedAt, s.Cancelling = "ended", d.StopReason, ev.Time, false
 				changed = s
 			}
 		}
@@ -391,7 +403,7 @@ func isActivity(eventType string) bool {
 	switch eventType {
 	case v1.EventSessionStarted, v1.EventPromptSent, v1.EventTurnEnded, v1.EventToolCallStarted, v1.EventToolCallCompleted,
 		v1.EventPlanUpdated, v1.EventUsageReported, v1.EventPermissionRequested, v1.EventPermissionGranted, v1.EventPermissionDenied,
-		v1.EventQuestionAsked, v1.EventQuestionAnswered,
+		v1.EventQuestionAsked, v1.EventQuestionAnswered, v1.EventTurnCancelled,
 		v1.EventAgentFailed, v1.EventSessionEnded, v1.EventChangesCommitted, v1.EventChangesMerged, v1.EventPullRequestOpened:
 		return true
 	}

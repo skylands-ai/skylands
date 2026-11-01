@@ -41,6 +41,9 @@ type SessionInfo struct {
 	Pending int    `json:"pending,omitempty"`
 	// Questions counts the questions waiting on an answer.
 	Questions int `json:"questions,omitempty"`
+	// Cancelling means the turn was interrupted and the agent has not
+	// stopped yet.
+	Cancelling bool `json:"cancelling,omitempty"`
 	// Worktree is where the agent works, and Branch what it works on. A
 	// session in the checkout has InCheckout set and no base.
 	Worktree   string `json:"worktree,omitempty"`

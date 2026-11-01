@@ -115,6 +115,17 @@ func TestSessionsFollowSessionEvents(t *testing.T) {
 	if s := p.List()[0]; s.Status != "running" || s.Turns != 2 || s.Prompt != "fix the tests" {
 		t.Errorf("second turn = %+v", s)
 	}
+	// An interrupted turn stays running until the agent stops, then the
+	// session is idle with the cancelled stop reason.
+	apply(v1.EventTurnCancelled, v1.TurnCancelled{SessionID: "s1", By: "citadel"})
+	if s := p.List()[0]; s.Status != "running" || !s.Cancelling {
+		t.Errorf("cancelling turn = %+v", s)
+	}
+	apply(v1.EventTurnEnded, v1.TurnEnded{SessionID: "s1", StopReason: "cancelled"})
+	if s := p.List()[0]; s.Status != "idle" || s.Cancelling || s.StopReason != "cancelled" {
+		t.Errorf("interrupted session = %+v", s)
+	}
+	apply(v1.EventPromptSent, v1.PromptSent{SessionID: "s1", Text: "steer"})
 	apply(v1.EventSessionEnded, v1.SessionEnded{SessionID: "s1", StopReason: "stopped"})
 	if s := p.List()[0]; s.Status != "ended" || s.StopReason != "stopped" || s.EndedAt.IsZero() {
 		t.Errorf("ended session = %+v", s)

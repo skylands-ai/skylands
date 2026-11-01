@@ -102,6 +102,14 @@ func (c *Client) StopSession(ctx context.Context, sessionID string) (SessionInfo
 	return out, err
 }
 
+// CancelTurn interrupts the turn in progress and leaves the session open
+// for the next prompt.
+func (c *Client) CancelTurn(ctx context.Context, sessionID string) (SessionInfo, error) {
+	var out SessionInfo
+	err := c.call(ctx, http.MethodPost, "/v1/sessions/"+sessionID+"/cancel", SessionCommand{CommandID: nuid.Next()}, &out)
+	return out, err
+}
+
 // RemoveSession deletes a finished session's worktree and branch. With
 // force, uncommitted changes and unmerged commits go too.
 func (c *Client) RemoveSession(ctx context.Context, sessionID string, force bool) (RemoveResult, error) {

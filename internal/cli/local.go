@@ -162,7 +162,7 @@ func newSessionCmd() *cobra.Command {
 		GroupID: groupLocal,
 		Short:   "List, stop, and clean up agent sessions on this host",
 	}
-	cmd.AddCommand(newSessionListCmd(), newSessionStopCmd(), newSessionRemoveCmd(), newSessionPruneCmd())
+	cmd.AddCommand(newSessionListCmd(), newSessionCancelCmd(), newSessionStopCmd(), newSessionRemoveCmd(), newSessionPruneCmd())
 	return cmd
 }
 
@@ -191,6 +191,28 @@ its changes. Stop, remove, or prune sessions by id.`,
 				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", s.ID, cut(conversationOf(s), 36), s.Agent, s.Repo, s.Status, whereOf(s), changesOf(s))
 			}
 			return tw.Flush()
+		},
+	}
+	socketFlag(cmd, &socketPath)
+	return cmd
+}
+
+func newSessionCancelCmd() *cobra.Command {
+	var socketPath string
+	cmd := &cobra.Command{
+		Use:   "cancel <session>",
+		Short: "Interrupt the turn in progress without ending the session",
+		Long: `Session cancel tells the agent to stop what it is doing. The session stays
+open and goes idle once the agent has stopped, so the next reply can steer
+it. Anything the turn was waiting on a person for is withdrawn.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			s, err := socket.Dial(socketPath).CancelTurn(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Interrupted %s (%s). It goes idle once the agent stops; reply to steer it.\n", s.ID, cut(conversationOf(s), 50))
+			return nil
 		},
 	}
 	socketFlag(cmd, &socketPath)

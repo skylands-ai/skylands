@@ -34,6 +34,7 @@ func (c *citadel) api() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/sessions", c.startSession)
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/prompt", c.sendPrompt)
+	mux.HandleFunc("POST /api/sessions/{host}/{id}/cancel", c.cancelTurn)
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/stop", c.stopAgent)
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/requests/{rid}/approve", c.approve)
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/requests/{rid}/deny", c.deny)
@@ -122,6 +123,14 @@ func (c *citadel) sendPrompt(w http.ResponseWriter, r *http.Request) {
 	}
 	cmd := v1.SendPrompt{ID: nuid.Next(), SessionID: id, Text: strings.TrimSpace(body.Text)}
 	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandSendPrompt), cmd, http.StatusOK)
+}
+
+// cancelTurn interrupts a session's turn on its island and leaves the
+// session open.
+func (c *citadel) cancelTurn(w http.ResponseWriter, r *http.Request) {
+	host, id := r.PathValue("host"), r.PathValue("id")
+	cmd := v1.CancelTurn{ID: nuid.Next(), SessionID: id}
+	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandCancelTurn), cmd, http.StatusOK)
 }
 
 // stopAgent ends a session on its island.

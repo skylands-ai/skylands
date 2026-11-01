@@ -99,6 +99,7 @@ const inboxActions: InboxActions = {
     nav.selectAgent(x.host, x.repoId, x.id)
   },
   prompt: (x, text) => sessionCommand(x.host, x.id, 'prompt', { text }),
+  cancel: (x) => sessionCommand(x.host, x.id, 'cancel', {}),
   stop: (x) => sessionCommand(x.host, x.id, 'stop', {}),
   approve: (x, p, optionId) => sessionCommand(x.host, x.id, `requests/${encodeURIComponent(p.requestId)}/approve`, { optionId }),
   deny: (x, p) => sessionCommand(x.host, x.id, `requests/${encodeURIComponent(p.requestId)}/deny`, {}),

@@ -43,6 +43,18 @@ func (f *fakeAPI) StopSession(_ context.Context, id, _ string) (SessionInfo, err
 	}
 	return SessionInfo{}, session.ErrUnknownSession
 }
+func (f *fakeAPI) CancelTurn(_ context.Context, id, _ string) (SessionInfo, error) {
+	for i := range f.sessions {
+		if f.sessions[i].ID == id {
+			if f.sessions[i].Status != "running" {
+				return SessionInfo{}, session.ErrNotRunning
+			}
+			f.sessions[i].Cancelling = true
+			return f.sessions[i], nil
+		}
+	}
+	return SessionInfo{}, session.ErrUnknownSession
+}
 func (f *fakeAPI) RemoveSession(_ context.Context, id, _ string, force bool) (RemoveResult, error) {
 	for i := range f.sessions {
 		if f.sessions[i].ID == id {
@@ -151,6 +163,14 @@ func TestServerAndClient(t *testing.T) {
 	if _, err := c.RemoveSession(ctx, "s1", false); err == nil || !strings.Contains(err.Error(), "still open") {
 		t.Errorf("remove an open session: err = %v", err)
 	}
+	if _, err := c.CancelTurn(ctx, "s1"); err == nil || !strings.Contains(err.Error(), "no turn") {
+		t.Errorf("cancel an idle session: err = %v", err)
+	}
+	api.sessions[0].Status = "running"
+	if s, err := c.CancelTurn(ctx, "s1"); err != nil || !s.Cancelling {
+		t.Errorf("CancelTurn = %+v, %v", s, err)
+	}
+	api.sessions[0].Status = "idle"
 	if s, err := c.StopSession(ctx, "s1"); err != nil || s.Status != "ended" {
 		t.Errorf("StopSession = %+v, %v", s, err)
 	}

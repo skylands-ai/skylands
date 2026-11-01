@@ -147,7 +147,7 @@ func IsSessionEvent(eventType string) bool {
 		EventPlanUpdated, EventUsageReported, EventAgentFailed, EventSessionEnded, EventTurnEnded, EventSessionTitled,
 		EventPermissionRequested, EventPermissionGranted, EventPermissionDenied, EventPermissionExpired, EventSessionTrusted,
 		EventSessionResumed, EventChangesCommitted, EventChangesMerged, EventPullRequestOpened, EventWorktreeRemoved,
-		EventSessionRulesSet, EventQuestionAsked, EventQuestionAnswered, EventQuestionExpired:
+		EventSessionRulesSet, EventQuestionAsked, EventQuestionAnswered, EventQuestionExpired, EventTurnCancelled:
 		return true
 	}
 	return false
@@ -403,7 +403,7 @@ type PermissionDenied struct {
 }
 
 // PermissionExpired records a request nobody answered: Reason is "timeout",
-// "stopped", or "restart".
+// "stopped", "cancelled", or "restart".
 type PermissionExpired struct {
 	SessionID string `json:"sessionId"`
 	RequestID string `json:"requestId"`
@@ -640,7 +640,7 @@ type QuestionAnswered struct {
 }
 
 // QuestionExpired records a question nobody answered: Reason is
-// "timeout", "stopped", or "restart".
+// "timeout", "stopped", "cancelled", or "restart".
 type QuestionExpired struct {
 	SessionID  string `json:"sessionId"`
 	QuestionID string `json:"questionId"`
@@ -658,4 +658,26 @@ type AnswerQuestion struct {
 	QuestionID string          `json:"questionId"`
 	Answers    json.RawMessage `json:"answers,omitempty"`
 	Decline    bool            `json:"decline,omitempty"`
+}
+
+// EventTurnCancelled records that a person interrupted the turn in
+// progress. The session stays open: the agent stops, TurnEnded follows
+// with the stop reason "cancelled", and the next prompt steers it. By is
+// "local" or "citadel".
+const EventTurnCancelled = "TurnCancelled"
+
+// TurnCancelled carries who interrupted the turn.
+type TurnCancelled struct {
+	SessionID string `json:"sessionId"`
+	By        string `json:"by"`
+}
+
+// CommandCancelTurn is sent to a session by request-reply, or over the
+// host's socket.
+const CommandCancelTurn = "CancelTurn"
+
+// CancelTurn interrupts the turn in progress without ending the session.
+type CancelTurn struct {
+	ID        string `json:"id"`
+	SessionID string `json:"sessionId"`
 }

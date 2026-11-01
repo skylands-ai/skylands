@@ -150,6 +150,8 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	s, ok := a.sessions[req.SessionID]
 	if ok {
 		s.turns++
+		// A cancel ends one turn, not every turn after it.
+		s.cancelled = false
 	}
 	turn := 0
 	if ok {
@@ -289,6 +291,11 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		})
 		if err != nil {
 			return nil, err
+		}
+		// A cancelled outcome means the client ended the turn while the
+		// request waited, as ACP defines it; a refusal is a reject option.
+		if perm.Outcome.Outcome == acp.RequestPermissionOutcomeTypeCancelled || a.cancelled(req.SessionID) {
+			return done()
 		}
 		allowed := perm.Outcome.Outcome == acp.RequestPermissionOutcomeTypeSelected && (perm.Outcome.OptionID == "allow" || perm.Outcome.OptionID == "always")
 		if !allowed {

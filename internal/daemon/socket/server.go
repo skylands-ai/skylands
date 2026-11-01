@@ -28,6 +28,8 @@ type API interface {
 	// Sessions lists every session on this host, newest first.
 	Sessions(ctx context.Context) []SessionInfo
 	StopSession(ctx context.Context, sessionID, commandID string) (SessionInfo, error)
+	// CancelTurn interrupts the turn in progress and leaves the session open.
+	CancelTurn(ctx context.Context, sessionID, commandID string) (SessionInfo, error)
 	// RemoveSession deletes a finished session's worktree and branch.
 	RemoveSession(ctx context.Context, sessionID, commandID string, force bool) (RemoveResult, error)
 	// PruneSessions removes what finished sessions left behind.
@@ -141,6 +143,16 @@ func Serve(ctx context.Context, path string, api API) error {
 		var req SessionCommand
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		info, err := api.StopSession(r.Context(), r.PathValue("id"), req.CommandID)
+		if err != nil {
+			reply(w, sessionStatus(err), ErrorResponse{Error: err.Error()})
+			return
+		}
+		reply(w, http.StatusOK, info)
+	})
+	mux.HandleFunc("POST /v1/sessions/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		var req SessionCommand
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		info, err := api.CancelTurn(r.Context(), r.PathValue("id"), req.CommandID)
 		if err != nil {
 			reply(w, sessionStatus(err), ErrorResponse{Error: err.Error()})
 			return

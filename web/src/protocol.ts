@@ -162,6 +162,8 @@ export interface Session {
   title?: string
   /** Whether the session's tool calls are allowed without asking. */
   trusted: boolean
+  /** A person interrupted the turn and the agent has not stopped yet. */
+  cancelling?: boolean
   /** The rules that settle this session's tool calls: the repository's as copied, and its own. */
   rules: Rule[]
   /** The tool calls waiting on a person, oldest first, and the questions waiting on an answer. */

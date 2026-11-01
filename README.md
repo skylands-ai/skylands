@@ -180,6 +180,11 @@ a card with its choices and a box for anything else, and in the inbox, the
 beacon, and `skylands request list` like an approval. Answer it there, or
 with `skylands request answer <id> field=value`, or decline it.
 
+To change course while the agent is working, press Interrupt in the
+conversation, or run `skylands session cancel <id>` on the host. The agent
+stops, the session stays open, and your next reply steers it. End session
+is the way out when you are done with the conversation.
+
 ### Running the roles separately
 
 `devworld up` is the same code as the separate roles, with NATS started for

@@ -60,6 +60,7 @@ func TestEveryRunnableCommandIsListed(t *testing.T) {
 		"skylands request deny":    true,
 		"skylands request answer":  true,
 		"skylands session list":    true,
+		"skylands session cancel":  true,
 		"skylands session stop":    true,
 		"skylands session remove":  true,
 		"skylands session prune":   true,

@@ -254,6 +254,19 @@ func (c *commands) handle(ctx context.Context, msg *nats.Msg) {
 			return
 		}
 		c.replyResult(msg, map[string]any{"sessionId": s.ID, "turns": s.Turns, "status": s.Status})
+	case v1.CommandCancelTurn:
+		var cmd v1.CancelTurn
+		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+			c.reply(msg, v1.Reply{Error: "bad CancelTurn: " + err.Error()})
+			return
+		}
+		cmd.SessionID = sessionID
+		s, err := c.sessions.Cancel(ctx, cmd, "citadel")
+		if err != nil {
+			c.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		c.replyResult(msg, map[string]any{"sessionId": s.ID, "status": s.Status, "cancelling": s.Cancelling})
 	case v1.CommandStopAgent:
 		var cmd v1.StopAgent
 		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
@@ -425,7 +438,7 @@ func (a *localAPI) sessionInfo(s session.Session) socket.SessionInfo {
 		name = r.Name
 	}
 	return socket.SessionInfo{
-		ID: s.ID, Repo: name, Agent: s.Agent, Status: string(s.Status), Turns: s.Turns, Title: s.Title, Prompt: s.Prompt, Pending: len(s.Pending), Questions: len(s.Questions),
+		ID: s.ID, Repo: name, Agent: s.Agent, Status: string(s.Status), Turns: s.Turns, Title: s.Title, Prompt: s.Prompt, Pending: len(s.Pending), Questions: len(s.Questions), Cancelling: s.Cancelling,
 		Worktree: s.Worktree, Branch: s.Branch, Base: s.Base, InCheckout: s.InCheckout,
 		Commit: s.Commit, MergedInto: s.MergedInto, PullRequest: s.PullRequest, WorktreeRemoved: s.WorktreeRemoved,
 		StartedAt: s.StartedAt, EndedAt: s.EndedAt,
@@ -434,6 +447,11 @@ func (a *localAPI) sessionInfo(s session.Session) socket.SessionInfo {
 
 func (a *localAPI) StopSession(ctx context.Context, sessionID, commandID string) (socket.SessionInfo, error) {
 	s, err := a.sessions.Stop(ctx, v1.StopAgent{ID: commandID, SessionID: sessionID})
+	return a.sessionInfo(s), err
+}
+
+func (a *localAPI) CancelTurn(ctx context.Context, sessionID, commandID string) (socket.SessionInfo, error) {
+	s, err := a.sessions.Cancel(ctx, v1.CancelTurn{ID: commandID, SessionID: sessionID}, "local")
 	return a.sessionInfo(s), err
 }
 

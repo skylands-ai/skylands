@@ -1050,3 +1050,92 @@ func TestQuestionsWaitForAPerson(t *testing.T) {
 		t.Errorf("reloaded questions = %+v", s.Questions)
 	}
 }
+
+func TestCancelInterruptsTheTurnAndKeepsTheSession(t *testing.T) {
+	f := setup(t)
+	m, err := Load(f.ctx, f.store, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Start(f.ctx, v1.StartSession{ID: "c1", SessionID: "s1", RepoID: f.repo.ID, Agent: "fake", Prompt: "tidy up"}); err != nil {
+		t.Fatal(err)
+	}
+	// Mid-turn, with the edit waiting on a person, a cancel withdraws the
+	// request, stops the agent, and leaves the session idle with the
+	// cancelled stop reason. The agent process is still there.
+	waitPending(t, m, "s1", 1)
+	s, err := m.Cancel(f.ctx, v1.CancelTurn{ID: "k1", SessionID: "s1"}, "citadel")
+	if err != nil || len(s.Pending) != 0 || !s.Cancelling || s.Status != StatusRunning {
+		t.Fatalf("Cancel = %+v, %v", s, err)
+	}
+	idle := waitStatus(t, m, "s1", StatusIdle)
+	if idle.StopReason != "cancelled" || idle.Cancelling || idle.Turns != 1 {
+		t.Errorf("after the cancel = %+v", idle)
+	}
+	if again, err := m.Cancel(f.ctx, v1.CancelTurn{ID: "k1", SessionID: "s1"}, "citadel"); err != nil || again.Status != StatusIdle {
+		t.Errorf("a repeated cancel = %+v, %v", again, err)
+	}
+	if _, err := m.Cancel(f.ctx, v1.CancelTurn{ID: "k2", SessionID: "s1"}, "local"); !errors.Is(err, ErrNotRunning) {
+		t.Errorf("cancel an idle session: err = %v", err)
+	}
+	// The next prompt steers the same agent, and that turn runs to the end.
+	if _, err := m.Prompt(f.ctx, v1.SendPrompt{ID: "p1", SessionID: "s1", Text: "do it differently"}); err != nil {
+		t.Fatal(err)
+	}
+	asked := waitPending(t, m, "s1", 1)
+	if _, err := m.Approve(f.ctx, v1.ApproveToolCall{ID: "a1", SessionID: "s1", RequestID: asked.Pending[0].RequestID}, "local"); err != nil {
+		t.Fatal(err)
+	}
+	second := waitStatus(t, m, "s1", StatusIdle)
+	for second.Turns < 2 {
+		time.Sleep(20 * time.Millisecond)
+		second = waitStatus(t, m, "s1", StatusIdle)
+	}
+	if second.StopReason != "end_turn" || second.Cancelling {
+		t.Errorf("after the steering turn = %+v", second)
+	}
+	// A cancel while a question waits withdraws the question too.
+	if _, err := m.Prompt(f.ctx, v1.SendPrompt{ID: "p2", SessionID: "s1", Text: "ask me which file"}); err != nil {
+		t.Fatal(err)
+	}
+	waitQuestions(t, m, "s1", 1)
+	if s, err := m.Cancel(f.ctx, v1.CancelTurn{ID: "k3", SessionID: "s1"}, "local"); err != nil || len(s.Questions) != 0 {
+		t.Fatalf("Cancel with a question = %+v, %v", s, err)
+	}
+	third := waitStatus(t, m, "s1", StatusIdle)
+	for third.Turns < 3 {
+		time.Sleep(20 * time.Millisecond)
+		third = waitStatus(t, m, "s1", StatusIdle)
+	}
+	if third.StopReason != "cancelled" {
+		t.Errorf("after the second cancel = %+v", third)
+	}
+
+	b, _ := os.ReadFile(filepath.Join(f.cfg.TranscriptsDir, "s1.md"))
+	if got := string(b); strings.Count(got, "*Interrupted. The agent stopped before finishing the turn") != 2 || !strings.Contains(got, "Done with \"do it differently\"") {
+		t.Errorf("transcript = %q", got)
+	}
+	counts := map[string]int{}
+	var reasons []string
+	_ = f.store.Replay(f.ctx, v1.IslandStreamName("ws"), []string{v1.SessionEventFilter("ws")}, func(_ uint64, ev v1.Event) error {
+		counts[ev.Type]++
+		switch ev.Type {
+		case v1.EventPermissionExpired:
+			var d v1.PermissionExpired
+			_ = ev.Decode(&d)
+			reasons = append(reasons, "p:"+d.Reason)
+		case v1.EventQuestionExpired:
+			var d v1.QuestionExpired
+			_ = ev.Decode(&d)
+			reasons = append(reasons, "q:"+d.Reason)
+		case v1.EventTurnEnded:
+			var d v1.TurnEnded
+			_ = ev.Decode(&d)
+			reasons = append(reasons, "t:"+d.StopReason)
+		}
+		return nil
+	})
+	if counts[v1.EventTurnCancelled] != 2 || counts[v1.EventSessionEnded] != 0 || counts[v1.EventAgentFailed] != 0 || strings.Join(reasons, " ") != "p:cancelled t:cancelled t:end_turn q:cancelled t:cancelled" {
+		t.Errorf("events = %v, reasons = %v", counts, reasons)
+	}
+}

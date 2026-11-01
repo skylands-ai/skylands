@@ -96,6 +96,12 @@ specifies. No events, streams, or aggregates are needed for it.
   conversation's Rules button. `skylands rule list|add|remove` manage a
   repository's rules on the host. A refusal by a rule is recorded as a
   request denied by "rule", so the conversation shows it.
+- Interrupting a turn is done. CancelTurn withdraws whatever the turn was
+  waiting on a person for, tells the agent to stop, and leaves the session
+  open; TurnEnded follows with the stop reason "cancelled" and the next
+  prompt steers the same agent. TurnCancelled records who interrupted.
+  The conversation has an Interrupt button beside End session, and
+  `skylands session cancel` does the same on the host.
 - Questions are done. The daemon declares ACP's form elicitation, so an
   agent's question to a person, such as Claude Code's AskUserQuestion,
   arrives as a form: a message and fields, each a choice or free text.
