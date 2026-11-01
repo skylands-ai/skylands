@@ -25,12 +25,12 @@ export function refreshTimes(root: ParentNode): void {
   }
 }
 
-/** A panel heading with an optional status pill and a one-line description. */
-export function header(title: string, kind: string | null, status: Status | null): HTMLElement {
+/** A panel heading with an optional status pill and a one-line description, and the glyph of the place it names when given one. */
+export function header(title: string, kind: string | null, status: Status | null, place?: Place): HTMLElement {
   return el('div', { class: 'ph' }, [
     el('div', { style: 'flex:1;min-width:0' }, [
       el('div', { style: 'display:flex;flex-wrap:wrap;align-items:center;gap:10px' }, [
-        el('h2', { text: title }),
+        el('h2', {}, [place ? placeIcon(place) : null, title]),
         status ? el('span', { class: 'pill' }, [el('span', { class: 'dot', style: `background:${status[1]}` }), status[0]]) : null,
       ]),
       kind ? el('p', { class: 'muted', style: 'margin:4px 0 0;font-size:13px', text: kind }) : null,

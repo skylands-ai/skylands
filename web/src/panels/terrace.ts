@@ -1,5 +1,5 @@
 import { el } from '../dom'
-import { fmtBytes, shortCommit, sortedFiles } from '../files'
+import { shortCommit } from '../files'
 import type { Island, Repo, Session } from '../protocol'
 import { agentLabel, isOpen } from '../status'
 import { agentGlyph, backButton, factsBox, header, hint, note, section, timeNode } from './parts'
@@ -13,7 +13,6 @@ export function renderTerracePanel(
   shown: number,
   sessions: Session[],
   waiting: (s: Session) => boolean,
-  selectFile: (idx: number) => void,
   backToIsland: () => void,
 ): void {
   panel.textContent = ''
@@ -28,6 +27,7 @@ export function renderTerracePanel(
         : running
           ? [`${running} ${running === 1 ? 'agent' : 'agents'}`, 'var(--ok)']
           : [sessions.length ? 'No agents running' : 'No agents yet', 'var(--idle)'],
+      'repo',
     ),
   )
   panel.appendChild(backButton('island', island.host, backToIsland))
@@ -40,27 +40,7 @@ export function renderTerracePanel(
   if (shown < repo.totalFiles) facts.push(['Buildings shown', `${shown} largest`])
   facts.push(['Registered', timeNode(repo.registeredAt)], ['Terrain snapshot', timeNode(repo.snapshottedAt)])
   panel.appendChild(factsBox(facts))
-
-  const files = sortedFiles(repo)
-  if (files.length) {
-    panel.appendChild(
-      section(
-        'Largest files',
-        files.slice(0, 8).map((f, idx) => {
-          const clickable = idx < shown
-          return el(
-            clickable ? 'button' : 'div',
-            { type: clickable ? 'button' : null, class: 'row', style: 'text-align:left;width:100%', onclick: clickable ? () => selectFile(idx) : null },
-            [
-              el('span', { class: 'grow' }, [el('code', { text: f.path }), el('span', { class: 'sub', text: fmtBytes(f.size) })]),
-            ],
-          )
-        }),
-      ),
-    )
-  } else {
-    panel.appendChild(note('This repository has no tracked files yet.'))
-  }
+  if (!repo.files.length) panel.appendChild(note('This repository has no tracked files yet.'))
   panel.appendChild(hint(sessions.length ? 'Click an airship to follow its agent, or a building to look closer. Conversations are in the inbox.' : 'Click a building to look closer.'))
 }
 

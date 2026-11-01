@@ -68,11 +68,10 @@ try {
 
 // Navigation goes through the world when it runs, so the camera moves, and
 // straight to the store otherwise.
-const nav: NavActions & { selectFile(host: string, terrace: string, idx: number): void } = {
+const nav: NavActions = {
   overview: () => (world ? world.overview() : store.update({ selected: 'cit', terrace: null, file: null, agent: null })),
   select: (host) => (world ? world.select(host) : store.update({ selected: host, terrace: null, file: null, agent: null })),
   land: (host, terrace) => (world ? world.land(host, terrace) : store.update({ selected: host, terrace, file: null, agent: null })),
-  selectFile: (host, terrace, idx) => (world ? world.selectFile(host, terrace, idx) : store.update({ selected: host, terrace, file: idx, agent: null })),
   selectAgent: (host, terrace, agent) => (world ? world.selectAgent(host, terrace, agent) : store.update({ selected: host, terrace, file: null, agent })),
 }
 
@@ -221,7 +220,6 @@ function renderPanelContent(s: State, stale: boolean): void {
           shown,
           sessionsOn(s, repo.id),
           (x) => isWaiting(s, x),
-          (idx) => nav.selectFile(island.host, repo.id, idx),
           () => nav.select(island.host),
         )
         return
