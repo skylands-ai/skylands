@@ -172,9 +172,9 @@ export function sessionsOn(s: State, repoId: string): Session[] {
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
 }
 
-/** Whether something happened in a session since it was last looked at here. */
+/** Whether the agent or a person did something in a session since it was last looked at here. Bookkeeping, such as a daemon restart, does not count. */
 export function isUnread(s: State, x: Session): boolean {
-  return Date.parse(x.updatedAt) > (s.viewed[x.id] ?? 0)
+  return Date.parse(x.activeAt) > (s.viewed[x.id] ?? 0)
 }
 
 /**
@@ -199,7 +199,7 @@ export function waitingCount(s: State): number {
 
 /** Every session, most recently active first. */
 export function conversationList(s: State): Session[] {
-  return Object.values(s.sessions).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  return Object.values(s.sessions).sort((a, b) => b.activeAt.localeCompare(a.activeAt))
 }
 
 /** What the level of the current navigation is. */

@@ -110,3 +110,55 @@ func TestRegisterRepoRecordsAndReloads(t *testing.T) {
 		t.Errorf("reloaded host forgot cmd-1: %v", err)
 	}
 }
+
+func TestSetRulesRecordsAndReloads(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	srv, err := natsembed.Start(ctx, natsembed.Config{Name: "host", ClientAddr: "127.0.0.1:0", StoreDir: t.TempDir(), Domain: "ws"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Shutdown()
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+	store, err := es.New(nc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.EnsureStream(ctx, v1.IslandStreamName("ws"), v1.IslandSubjects("ws")); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Load(ctx, store, "ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := h.RegisterRepo(ctx, v1.RegisterRepo{ID: "c1", Path: gitRepo(t, "a.go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.SetRules(ctx, v1.SetRepoRules{ID: "c2", RepoID: "nope", Rules: nil}); !errors.Is(err, ErrUnknownRepo) {
+		t.Errorf("rules for an unknown repo: err = %v", err)
+	}
+	if _, err := h.SetRules(ctx, v1.SetRepoRules{ID: "c3", RepoID: repo.ID, Rules: []v1.Rule{{Decision: "allow", Kind: "nope"}}}); err == nil {
+		t.Error("a bad kind was accepted")
+	}
+	// Rules are normalized and lose any source: the repository is the source.
+	set, err := h.SetRules(ctx, v1.SetRepoRules{ID: "c4", RepoID: repo.ID, Rules: []v1.Rule{{Decision: "Allow", Kind: "", Pattern: " go test * ", Source: "repo"}}})
+	if err != nil || len(set.Rules) != 1 || set.Rules[0].Decision != "allow" || set.Rules[0].Kind != "*" || set.Rules[0].Pattern != "go test *" || set.Rules[0].Source != "" {
+		t.Fatalf("SetRules = %+v, %v", set.Rules, err)
+	}
+	// The same command id changes nothing more.
+	if again, err := h.SetRules(ctx, v1.SetRepoRules{ID: "c4", RepoID: repo.ID, Rules: nil}); err != nil || len(again.Rules) != 1 {
+		t.Errorf("repeated SetRules = %+v, %v", again.Rules, err)
+	}
+	h2, err := Load(ctx, store, "ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, ok := h2.Repo(repo.ID); !ok || len(r.Rules) != 1 || r.Rules[0].Pattern != "go test *" {
+		t.Errorf("reloaded rules = %+v", r.Rules)
+	}
+}

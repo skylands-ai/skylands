@@ -7,6 +7,7 @@ package cli
 // agents even while the host is offline.
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"text/tabwriter"
@@ -14,7 +15,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	v1 "github.com/skylands-ai/skylands/api/v1"
 	"github.com/skylands-ai/skylands/internal/daemon/socket"
+	"github.com/skylands-ai/skylands/internal/rules"
 )
 
 // socketFlag adds the --socket flag shared by every local command.
@@ -257,6 +260,131 @@ commits its base lacks, and says which.`,
 	}
 	socketFlag(cmd, &socketPath)
 	return cmd
+}
+
+func newRuleCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "rule",
+		GroupID: groupLocal,
+		Short:   "List, add, and remove the rules that settle tool calls in a repository's sessions",
+		Long: `Rules settle what an agent may do before anyone is asked. A rule is a
+decision, allow, ask, or deny; a tool call kind, read, edit, delete, move,
+search, execute, think, fetch, other, or * for any; and an optional
+pattern: a command pattern for execute such as "go test *", a URL pattern
+for fetch, and a path pattern for the rest, where "worktree" means
+everything inside the session's worktree. The most specific matching rule
+wins, a deny beats an allow among equals, and no match asks a person. A
+session copies its repository's rules when it starts.`,
+	}
+	cmd.AddCommand(newRuleListCmd(), newRuleAddCmd(), newRuleRemoveCmd())
+	return cmd
+}
+
+func newRuleListCmd() *cobra.Command {
+	var socketPath string
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List every repository's rules on this host",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repos, err := socket.Dial(socketPath).Rules(cmd.Context())
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if len(repos) == 0 {
+				fmt.Fprintln(out, "No repositories are registered on this host.")
+				return nil
+			}
+			tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "REPO\t#\tDECISION\tKIND\tPATTERN")
+			for _, r := range repos {
+				if len(r.Rules) == 0 {
+					fmt.Fprintf(tw, "%s\t-\t(no rules; reads, searches, and thinking pass, the rest asks)\t\t\n", r.Repo)
+				}
+				for i, rule := range r.Rules {
+					fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\n", r.Repo, i+1, rule.Decision, rule.Kind, rule.Pattern)
+				}
+			}
+			return tw.Flush()
+		},
+	}
+	socketFlag(cmd, &socketPath)
+	return cmd
+}
+
+func newRuleAddCmd() *cobra.Command {
+	var socketPath string
+	cmd := &cobra.Command{
+		Use:   "add <repo> <allow|ask|deny> <kind> [pattern]",
+		Short: "Add a rule to a repository on this host",
+		Example: `  skylands rule add skylands allow edit worktree
+  skylands rule add skylands allow execute "go test *"
+  skylands rule add skylands deny execute "rm -rf *"`,
+		Args: cobra.RangeArgs(3, 4),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cli := socket.Dial(socketPath)
+			r, err := repoRulesNamed(cmd.Context(), cli, args[0])
+			if err != nil {
+				return err
+			}
+			rule := v1.Rule{Decision: args[1], Kind: args[2]}
+			if len(args) == 4 {
+				rule.Pattern = args[3]
+			}
+			info, err := cli.SetRepoRules(cmd.Context(), r.RepoID, append(r.Rules, rule))
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Added rule %d to %s: %s. New sessions on it start with %d rules.\n", len(info.Rules), info.Repo, rules.Text(info.Rules[len(info.Rules)-1]), len(info.Rules))
+			return nil
+		},
+	}
+	socketFlag(cmd, &socketPath)
+	return cmd
+}
+
+func newRuleRemoveCmd() *cobra.Command {
+	var socketPath string
+	cmd := &cobra.Command{
+		Use:   "remove <repo> <number>",
+		Short: "Remove a rule from a repository on this host, by its number in rule list",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cli := socket.Dial(socketPath)
+			r, err := repoRulesNamed(cmd.Context(), cli, args[0])
+			if err != nil {
+				return err
+			}
+			var n int
+			if _, err := fmt.Sscan(args[1], &n); err != nil || n < 1 || n > len(r.Rules) {
+				return fmt.Errorf("%s has %d rules; give a number from rule list", r.Repo, len(r.Rules))
+			}
+			removed := r.Rules[n-1]
+			info, err := cli.SetRepoRules(cmd.Context(), r.RepoID, append(append([]v1.Rule{}, r.Rules[:n-1]...), r.Rules[n:]...))
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Removed from %s: %s. %d rules remain.\n", info.Repo, rules.Text(removed), len(info.Rules))
+			return nil
+		},
+	}
+	socketFlag(cmd, &socketPath)
+	return cmd
+}
+
+// repoRulesNamed finds a repository's rules by the repository's name or id.
+func repoRulesNamed(ctx context.Context, cli *socket.Client, name string) (socket.RepoRulesInfo, error) {
+	repos, err := cli.Rules(ctx)
+	if err != nil {
+		return socket.RepoRulesInfo{}, err
+	}
+	for _, r := range repos {
+		if r.Repo == name || r.RepoID == name {
+			return r, nil
+		}
+	}
+	return socket.RepoRulesInfo{}, fmt.Errorf("no repository named %s is registered on this host", name)
 }
 
 // conversationOf names a session the way the inbox does: by its title, or

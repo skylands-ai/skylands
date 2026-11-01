@@ -33,6 +33,18 @@ export interface TerrainFile {
   size: number
 }
 
+/**
+ * A rule settles tool calls before they reach a person: a decision, a tool
+ * call kind or '*' for any, and an optional pattern. A session's rule copied
+ * from its repository has source 'repo'; one set on the session has none.
+ */
+export interface Rule {
+  decision: 'allow' | 'ask' | 'deny'
+  kind: string
+  pattern?: string
+  source?: string
+}
+
 /** One registered repository on one host: a terrace, with a building for each of its largest files. */
 export interface Repo {
   host: string
@@ -43,6 +55,8 @@ export interface Repo {
   /** Every tracked file, while files holds at most the largest 64. */
   totalFiles: number
   files: TerrainFile[]
+  /** The rules a new session on this repository starts with. */
+  rules: Rule[]
   registeredAt: string
   snapshottedAt: string
 }
@@ -122,6 +136,8 @@ export interface Session {
   title?: string
   /** Whether the session's tool calls are allowed without asking. */
   trusted: boolean
+  /** The rules that settle this session's tool calls: the repository's as copied, and its own. */
+  rules: Rule[]
   /** The tool calls waiting on a person, oldest first. */
   pending: Permission[]
   /** How many daemon restarts the session has lived through, and how its agent last came back. */
@@ -129,8 +145,10 @@ export interface Session {
   resumed?: Resumed
   startedAt: string
   endedAt?: string
-  /** When the session's latest event happened. */
+  /** When the session's latest event of any kind happened: when fetched text about it went stale. */
   updatedAt: string
+  /** When the agent or a person last did something in the conversation. A restart, a title, a trust switch, or a rule change does not move it. */
+  activeAt: string
   currentFile?: string
   currentAction?: string
   recent: ToolCall[]

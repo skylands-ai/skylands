@@ -11,6 +11,7 @@ import (
 	"os"
 	"time"
 
+	v1 "github.com/skylands-ai/skylands/api/v1"
 	"github.com/skylands-ai/skylands/internal/daemon/host"
 	"github.com/skylands-ai/skylands/internal/daemon/session"
 	"github.com/skylands-ai/skylands/internal/daemon/terrain"
@@ -31,6 +32,9 @@ type API interface {
 	RemoveSession(ctx context.Context, sessionID, commandID string, force bool) (RemoveResult, error)
 	// PruneSessions removes what finished sessions left behind.
 	PruneSessions(ctx context.Context) []PruneResult
+	// Rules lists every repository's rules.
+	Rules(ctx context.Context) []RepoRulesInfo
+	SetRepoRules(ctx context.Context, repoID, commandID string, rules []v1.Rule) (RepoRulesInfo, error)
 }
 
 // Serve listens on the Unix socket at path until ctx ends. A stale socket
@@ -136,6 +140,26 @@ func Serve(ctx context.Context, path string, api API) error {
 	})
 	mux.HandleFunc("POST /v1/sessions/prune", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, api.PruneSessions(r.Context()))
+	})
+
+	mux.HandleFunc("GET /v1/rules", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, http.StatusOK, api.Rules(r.Context()))
+	})
+	mux.HandleFunc("PUT /v1/repos/{id}/rules", func(w http.ResponseWriter, r *http.Request) {
+		var req SetRulesRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			reply(w, http.StatusBadRequest, ErrorResponse{Error: "a list of rules is required"})
+			return
+		}
+		info, err := api.SetRepoRules(r.Context(), r.PathValue("id"), req.CommandID, req.Rules)
+		switch {
+		case errors.Is(err, host.ErrUnknownRepo):
+			reply(w, http.StatusNotFound, ErrorResponse{Error: err.Error()})
+		case err != nil:
+			reply(w, http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+		default:
+			reply(w, http.StatusOK, info)
+		}
 	})
 
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}

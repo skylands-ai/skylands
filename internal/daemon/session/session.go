@@ -27,6 +27,7 @@ import (
 	"github.com/skylands-ai/skylands/internal/daemon/agents"
 	"github.com/skylands-ai/skylands/internal/daemon/host"
 	"github.com/skylands-ai/skylands/internal/es"
+	"github.com/skylands-ai/skylands/internal/rules"
 )
 
 // Status is where a session is in its life.
@@ -81,6 +82,9 @@ type Session struct {
 	Title string
 	// Trusted means tool calls are allowed without asking.
 	Trusted bool
+	// Rules settle tool calls before they reach a person: the repository's
+	// rules as copied at the start, and any set on the session since.
+	Rules []v1.Rule
 	// AgentSessionID is the agent's own id for the conversation, which a
 	// restart asks it to load again.
 	AgentSessionID string
@@ -142,17 +146,17 @@ type Config struct {
 	// Publish, when set, sends each transcript append on the session's live
 	// subject so a browser can read along.
 	Publish func(subject string, data []byte) error
-	// AllowKinds are the tool call kinds the host's rules allow without
-	// asking anyone. Nil means DefaultAllowKinds.
+	// AllowKinds are the tool call kinds the host allows when no rule of
+	// the session's applies. Nil means DefaultAllowKinds.
 	AllowKinds []string
 	// PermissionTimeout is how long a request waits for a person before it
 	// expires. Zero means 30 minutes.
 	PermissionTimeout time.Duration
 }
 
-// DefaultAllowKinds are the tool call kinds allowed without asking: what
-// only looks at the worktree. Everything else waits for a person, until
-// the session is trusted.
+// DefaultAllowKinds are the tool call kinds a host allows when no rule
+// applies: what only looks at the worktree. Everything else waits for a
+// person, unless a rule or the session's trust settles it.
 var DefaultAllowKinds = []string{"read", "search", "think"}
 
 var (
@@ -468,6 +472,40 @@ func (m *Manager) Trust(ctx context.Context, cmd v1.TrustSession) (Session, erro
 	return out, nil
 }
 
+// SetRules handles SetSessionRules: the session's rules become the given
+// list. Rules copied from the repository keep their source when sent
+// back unchanged; an edited one is the session's own.
+func (m *Manager) SetRules(ctx context.Context, cmd v1.SetSessionRules) (Session, error) {
+	m.cmdMu.Lock()
+	defer m.cmdMu.Unlock()
+	m.mu.Lock()
+	if id, ok := m.handled[cmd.ID]; ok && cmd.ID != "" {
+		s := *m.sessions[id]
+		m.mu.Unlock()
+		return s, nil
+	}
+	s, ok := m.sessions[cmd.SessionID]
+	if !ok {
+		m.mu.Unlock()
+		return Session{}, fmt.Errorf("%w: %s", ErrUnknownSession, cmd.SessionID)
+	}
+	if s.Status == StatusEnded || s.Status == StatusFailed {
+		m.mu.Unlock()
+		return *s, ErrOver
+	}
+	m.mu.Unlock()
+	list, err := rules.Validate(cmd.Rules)
+	if err != nil {
+		return *s, err
+	}
+	if err := m.record(ctx, cmd.SessionID, cmd.ID, v1.EventSessionRulesSet, v1.SessionRulesSet{SessionID: cmd.SessionID, Rules: list}); err != nil {
+		return Session{}, err
+	}
+	slog.Info("session: rules set", "session", cmd.SessionID, "rules", len(list))
+	out, _ := m.Get(cmd.SessionID)
+	return out, nil
+}
+
 // Requests lists every tool call waiting on a person, across sessions.
 func (m *Manager) Requests() []Request {
 	var out []Request
@@ -683,7 +721,7 @@ func (m *Manager) Start(ctx context.Context, cmd v1.StartSession) (Session, erro
 		return Session{}, err
 	}
 
-	if err := m.record(ctx, id, cmd.ID, v1.EventSessionStarted, v1.SessionStarted{SessionID: id, RepoID: repo.ID, Agent: cmd.Agent, Model: cmd.Model, Worktree: worktree, Branch: branch, Base: base, InCheckout: cmd.InCheckout}); err != nil {
+	if err := m.record(ctx, id, cmd.ID, v1.EventSessionStarted, v1.SessionStarted{SessionID: id, RepoID: repo.ID, Agent: cmd.Agent, Model: cmd.Model, Worktree: worktree, Branch: branch, Base: base, InCheckout: cmd.InCheckout, Rules: rules.Inherit(repo.Rules)}); err != nil {
 		return Session{}, err
 	}
 	if err := m.record(ctx, id, cmd.ID, v1.EventPromptSent, v1.PromptSent{SessionID: id, Text: cmd.Prompt}); err != nil {
@@ -888,7 +926,7 @@ func (m *Manager) apply(ev v1.Event) {
 		if ev.Decode(&d) != nil {
 			return
 		}
-		m.sessions[d.SessionID] = &Session{ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Worktree: d.Worktree, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Status: StatusRunning, StartedAt: ev.Time, UpdatedAt: ev.Time}
+		m.sessions[d.SessionID] = &Session{ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Worktree: d.Worktree, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Rules: d.Rules, Status: StatusRunning, StartedAt: ev.Time, UpdatedAt: ev.Time}
 		if ev.CommandID != "" {
 			m.handled[ev.CommandID] = d.SessionID
 		}
@@ -925,6 +963,16 @@ func (m *Manager) apply(ev v1.Event) {
 		if ev.Decode(&d) == nil {
 			if s := touch(d.SessionID); s != nil {
 				s.Trusted = d.Trusted
+			}
+		}
+	case v1.EventSessionRulesSet:
+		var d v1.SessionRulesSet
+		if ev.Decode(&d) == nil {
+			if s := touch(d.SessionID); s != nil {
+				s.Rules = d.Rules
+				if ev.CommandID != "" {
+					m.handled[ev.CommandID] = d.SessionID
+				}
 			}
 		}
 	case v1.EventPermissionRequested:
@@ -1128,16 +1176,35 @@ func (o *observer) Message(text string) {
 	o.t.Append(text)
 }
 
-// Permission settles a tool call by the host's rules or the session's
-// trust, and otherwise records it as waiting and blocks until a person
-// answers, the request expires, or the agent gives up.
+// Permission settles a tool call by the session's trust or its rules,
+// and otherwise records it as waiting and blocks until a person answers,
+// the request expires, or the agent gives up. A rule's refusal is
+// recorded too, so the conversation shows what the agent was not allowed
+// to do.
 func (o *observer) Permission(ctx context.Context, req agents.PermissionRequest) agents.Decision {
 	m := o.m
 	s, _ := m.Get(o.id)
-	if s.Trusted || m.allowedByRule(req.ToolCall.Kind) {
+	tc := req.ToolCall
+	decision := v1.RuleAllow
+	if !s.Trusted {
+		decision = rules.Decide(append(append([]v1.Rule{}, s.Rules...), m.hostRules()...), rules.Call{Kind: tc.Kind, Title: tc.Title, Locations: tc.Locations, Input: req.Input})
+	}
+	switch decision {
+	case v1.RuleAllow:
 		if opt := pickOption(req.Options, true, ""); opt != "" {
 			return agents.Decision{OptionID: opt}
 		}
+	case v1.RuleDeny:
+		requestID := nuid.Next()
+		option := pickOption(req.Options, false, "")
+		_ = m.record(m.ctx, o.id, "", v1.EventPermissionRequested, v1.PermissionRequested{SessionID: o.id, RequestID: requestID, ToolCallID: tc.ID, Title: tc.Title, Kind: tc.Kind, Locations: tc.Locations, Input: req.Input, Options: req.Options})
+		_ = m.record(m.ctx, o.id, "", v1.EventPermissionDenied, v1.PermissionDenied{SessionID: o.id, RequestID: requestID, OptionID: option, By: "rule"})
+		o.t.Line(ToolLinePrefix + tc.Title + " (denied by a rule)")
+		slog.Info("session: denied by a rule", "session", o.id, "tool", tc.Title)
+		if option != "" {
+			return agents.Decision{OptionID: option}
+		}
+		return agents.Decision{Cancelled: true}
 	}
 	requestID := nuid.Next()
 	ask := make(chan agents.Decision, 1)
@@ -1155,7 +1222,6 @@ func (o *observer) Permission(ctx context.Context, req agents.PermissionRequest)
 		delete(l.asks, requestID)
 		m.mu.Unlock()
 	}()
-	tc := req.ToolCall
 	if err := m.record(m.ctx, o.id, "", v1.EventPermissionRequested, v1.PermissionRequested{SessionID: o.id, RequestID: requestID, ToolCallID: tc.ID, Title: tc.Title, Kind: tc.Kind, Locations: tc.Locations, Input: req.Input, Options: req.Options}); err != nil {
 		return agents.Decision{Cancelled: true}
 	}
@@ -1192,18 +1258,13 @@ func (o *observer) Permission(ctx context.Context, req agents.PermissionRequest)
 	}
 }
 
-// allowedByRule says whether a tool call of this kind needs no one's answer.
-func (m *Manager) allowedByRule(kind string) bool {
+// hostRules are the rules that apply when none of the session's do.
+func (m *Manager) hostRules() []v1.Rule {
 	kinds := m.cfg.AllowKinds
 	if kinds == nil {
 		kinds = DefaultAllowKinds
 	}
-	for _, k := range kinds {
-		if k == kind {
-			return true
-		}
-	}
-	return false
+	return rules.Defaults(kinds)
 }
 
 // addWorktree checks out a new branch of repo into dir.

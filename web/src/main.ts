@@ -106,6 +106,25 @@ const inboxActions: InboxActions = {
   commit: (x, message) => sessionCommand(x.host, x.id, 'commit', { message }),
   merge: (x) => sessionCommand(x.host, x.id, 'merge', {}),
   pullRequest: (x) => sessionCommand(x.host, x.id, 'pull-request', {}),
+  setSessionRules: (x, rules) => sessionCommand(x.host, x.id, 'rules', { rules }),
+  setRepoRules: (host, repoId, rules) => repoCommand(host, repoId, 'rules', { rules }),
+  refresh: () => store.touch(),
+}
+
+/** Posts a command for one repository to the citadel and returns an error message, or empty. */
+async function repoCommand(host: string, id: string, action: string, body: unknown): Promise<string> {
+  try {
+    const resp = await fetch(`/api/repos/${encodeURIComponent(host)}/${encodeURIComponent(id)}/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (resp.ok) return ''
+    const out = (await resp.json().catch(() => ({}))) as { error?: string }
+    return out.error ?? `The citadel answered ${resp.status}.`
+  } catch (err) {
+    return `Could not reach the citadel: ${(err as Error).message}`
+  }
 }
 
 /** Shows the world or the inbox, and updates the switch in the header. */
@@ -224,6 +243,7 @@ function renderPanelContent(s: State, stale: boolean): void {
           sessionsOn(s, repo.id),
           (x) => isWaiting(s, x),
           () => nav.select(island.host),
+          (rules) => repoCommand(island.host, repo.id, 'rules', { rules }),
         )
         return
       }

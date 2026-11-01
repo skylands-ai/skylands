@@ -18,10 +18,13 @@ type Repo struct {
 	Commit string `json:"commit,omitempty"`
 	// TotalFiles counts every tracked file. Files holds at most
 	// v1.MaxBuildings of them, largest first.
-	TotalFiles    int              `json:"totalFiles"`
-	Files         []v1.TerrainFile `json:"files"`
-	RegisteredAt  time.Time        `json:"registeredAt"`
-	SnapshottedAt time.Time        `json:"snapshottedAt"`
+	TotalFiles int              `json:"totalFiles"`
+	Files      []v1.TerrainFile `json:"files"`
+	// Rules settle tool calls in sessions on this repository; a new session
+	// copies them when it starts. Never null, so browsers can index it.
+	Rules         []v1.Rule `json:"rules"`
+	RegisteredAt  time.Time `json:"registeredAt"`
+	SnapshottedAt time.Time `json:"snapshottedAt"`
 }
 
 // Terrain is the projection of every host's repositories, built from host
@@ -55,9 +58,20 @@ func (t *Terrain) Apply(host string, ev v1.Event) {
 	case v1.EventRepoRegistered:
 		var d v1.RepoRegistered
 		if ev.Decode(&d) == nil {
-			r := &Repo{Host: host, ID: d.RepoID, Name: d.Name, Path: d.Path, Files: []v1.TerrainFile{}, RegisteredAt: ev.Time}
+			r := &Repo{Host: host, ID: d.RepoID, Name: d.Name, Path: d.Path, Files: []v1.TerrainFile{}, Rules: []v1.Rule{}, RegisteredAt: ev.Time}
 			repos[d.RepoID] = r
 			changed = r
+		}
+	case v1.EventRepoRulesSet:
+		var d v1.RepoRulesSet
+		if ev.Decode(&d) == nil {
+			if r, ok := repos[d.RepoID]; ok {
+				r.Rules = d.Rules
+				if r.Rules == nil {
+					r.Rules = []v1.Rule{}
+				}
+				changed = r
+			}
 		}
 	case v1.EventTerrainSnapshotted:
 		var d v1.TerrainSnapshotted
@@ -74,6 +88,7 @@ func (t *Terrain) Apply(host string, ev v1.Event) {
 	var copy Repo
 	if changed != nil {
 		copy = *changed
+		copy.Rules = append([]v1.Rule{}, changed.Rules...)
 	}
 	t.mu.Unlock()
 	if changed != nil {

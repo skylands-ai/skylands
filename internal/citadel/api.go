@@ -38,6 +38,8 @@ func (c *citadel) api() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/requests/{rid}/approve", c.approve)
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/requests/{rid}/deny", c.deny)
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/trust", c.trust)
+	mux.HandleFunc("POST /api/sessions/{host}/{id}/rules", c.sessionRules)
+	mux.HandleFunc("POST /api/repos/{host}/{id}/rules", c.repoRules)
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/commit", c.commit)
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/merge", c.merge)
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/pull-request", c.pullRequest)
@@ -45,6 +47,36 @@ func (c *citadel) api() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{host}/{id}/diff", c.fetchFromHost(v1.FetchDiff))
 	mux.HandleFunc("GET /api/sessions/{host}/{id}/changes", c.fetchFromHost(v1.FetchChanges))
 	return mux
+}
+
+// rulesBody is the body of the rule endpoints: the whole list.
+type rulesBody struct {
+	Rules []v1.Rule `json:"rules"`
+}
+
+// sessionRules replaces a session's rules on its island.
+func (c *citadel) sessionRules(w http.ResponseWriter, r *http.Request) {
+	host, id := r.PathValue("host"), r.PathValue("id")
+	var body rulesBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Rules == nil {
+		writeError(w, http.StatusBadRequest, "a list of rules is required")
+		return
+	}
+	cmd := v1.SetSessionRules{ID: nuid.Next(), SessionID: id, Rules: body.Rules}
+	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandSetSessionRules), cmd, http.StatusOK)
+}
+
+// repoRules replaces a repository's rules on its island, which sessions
+// started on it from then on copy.
+func (c *citadel) repoRules(w http.ResponseWriter, r *http.Request) {
+	host, id := r.PathValue("host"), r.PathValue("id")
+	var body rulesBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Rules == nil {
+		writeError(w, http.StatusBadRequest, "a list of rules is required")
+		return
+	}
+	cmd := v1.SetRepoRules{ID: nuid.Next(), RepoID: id, Rules: body.Rules}
+	c.relay(w, host, v1.RepoCommandSubject(host, id, v1.CommandSetRepoRules), cmd, http.StatusOK)
 }
 
 // commit commits everything in a session's worktree on its island.

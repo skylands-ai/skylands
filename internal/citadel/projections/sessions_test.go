@@ -17,7 +17,7 @@ func TestEmptySessionEncodesLists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"recent":[]`, `"files":{}`, `"plan":[]`} {
+	for _, want := range []string{`"recent":[]`, `"files":{}`, `"plan":[]`, `"rules":[]`} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("session JSON lacks %s: %s", want, data)
 		}
@@ -70,6 +70,10 @@ func TestSessionsFollowSessionEvents(t *testing.T) {
 	if s := p.List()[0]; !s.Trusted {
 		t.Errorf("session after trust = %+v", s)
 	}
+	apply(v1.EventSessionRulesSet, v1.SessionRulesSet{SessionID: "s1", Rules: []v1.Rule{{Decision: "deny", Kind: "execute", Pattern: "rm -rf *"}}})
+	if s := p.List()[0]; len(s.Rules) != 1 || s.Rules[0].Decision != "deny" {
+		t.Errorf("session with rules = %+v", s.Rules)
+	}
 	apply(v1.EventSessionTitled, v1.SessionTitled{SessionID: "s1", Title: "Fix the tests"})
 	if s := p.List()[0]; s.Title != "Fix the tests" {
 		t.Errorf("titled session = %+v", s)
@@ -78,10 +82,22 @@ func TestSessionsFollowSessionEvents(t *testing.T) {
 	if s := p.List()[0]; s.Status != "idle" || s.Turns != 1 || s.UpdatedAt.IsZero() {
 		t.Errorf("idle session = %+v", s)
 	}
-	// A daemon restart leaves the status alone and says how the agent came back.
+	// A daemon restart leaves the status alone and says how the agent came
+	// back. It is bookkeeping, not activity: the session was touched, but
+	// nobody did anything in the conversation, so nothing new waits.
+	idle := p.List()[0]
+	if idle.ActiveAt.IsZero() || !idle.ActiveAt.Equal(idle.UpdatedAt) {
+		t.Errorf("after the turn ended, active %v, updated %v", idle.ActiveAt, idle.UpdatedAt)
+	}
+	time.Sleep(2 * time.Millisecond)
 	apply(v1.EventSessionResumed, v1.SessionResumed{SessionID: "s1", RestartedAt: time.Now(), How: v1.ResumedByLoad})
+	apply(v1.EventSessionTrusted, v1.SessionTrusted{SessionID: "s1", Trusted: false})
+	apply(v1.EventSessionRulesSet, v1.SessionRulesSet{SessionID: "s1"})
 	if s := p.List()[0]; s.Status != "idle" || s.Resumes != 1 || s.Resumed.How != "load" || s.Resumed.At.IsZero() || s.Resumed.RestartedAt.IsZero() {
 		t.Errorf("resumed session = %+v", s)
+	}
+	if s := p.List()[0]; !s.ActiveAt.Equal(idle.ActiveAt) || !s.UpdatedAt.After(idle.UpdatedAt) {
+		t.Errorf("bookkeeping moved activity: active %v (was %v), updated %v (was %v)", s.ActiveAt, idle.ActiveAt, s.UpdatedAt, idle.UpdatedAt)
 	}
 	if data, _ := json.Marshal(p.List()[0]); !strings.Contains(string(data), `"resumed":{`) {
 		t.Errorf("resumed session JSON lacks the resume: %s", data)

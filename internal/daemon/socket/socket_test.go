@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	v1 "github.com/skylands-ai/skylands/api/v1"
 	"github.com/skylands-ai/skylands/internal/daemon/host"
 	"github.com/skylands-ai/skylands/internal/daemon/session"
 )
@@ -27,6 +28,7 @@ func shortSocket(t *testing.T) string {
 type fakeAPI struct {
 	repos    []RepoInfo
 	sessions []SessionInfo
+	rules    []v1.Rule
 }
 
 func (f *fakeAPI) Sessions(context.Context) []SessionInfo { return f.sessions }
@@ -52,6 +54,22 @@ func (f *fakeAPI) RemoveSession(_ context.Context, id, _ string, force bool) (Re
 	return RemoveResult{}, session.ErrUnknownSession
 }
 func (f *fakeAPI) PruneSessions(context.Context) []PruneResult { return []PruneResult{} }
+func (f *fakeAPI) Rules(context.Context) []RepoRulesInfo {
+	out := []RepoRulesInfo{}
+	for _, r := range f.repos {
+		out = append(out, RepoRulesInfo{RepoID: r.ID, Repo: r.Name, Rules: f.rules})
+	}
+	return out
+}
+func (f *fakeAPI) SetRepoRules(_ context.Context, repoID, _ string, rules []v1.Rule) (RepoRulesInfo, error) {
+	for _, r := range f.repos {
+		if r.ID == repoID {
+			f.rules = rules
+			return RepoRulesInfo{RepoID: r.ID, Repo: r.Name, Rules: rules}, nil
+		}
+	}
+	return RepoRulesInfo{}, host.ErrUnknownRepo
+}
 
 func (f *fakeAPI) Requests(context.Context) []RequestInfo { return []RequestInfo{} }
 func (f *fakeAPI) Approve(_ context.Context, requestID, _ string) (RequestInfo, error) {
@@ -135,6 +153,17 @@ func TestServerAndClient(t *testing.T) {
 	}
 	if pruned, err := c.PruneSessions(ctx); err != nil || len(pruned) != 0 {
 		t.Errorf("PruneSessions = %+v, %v", pruned, err)
+	}
+
+	// Rules are listed per repository and replaced as a whole.
+	if list, err := c.Rules(ctx); err != nil || len(list) != 1 || len(list[0].Rules) != 0 {
+		t.Errorf("Rules = %+v, %v", list, err)
+	}
+	if info, err := c.SetRepoRules(ctx, "r1", []v1.Rule{{Decision: "allow", Kind: "edit", Pattern: "worktree"}}); err != nil || len(info.Rules) != 1 || info.Repo != "storefront" {
+		t.Errorf("SetRepoRules = %+v, %v", info, err)
+	}
+	if _, err := c.SetRepoRules(ctx, "nope", nil); err == nil || !strings.Contains(err.Error(), "no such repository") {
+		t.Errorf("rules for an unknown repo: err = %v", err)
 	}
 
 	stop()

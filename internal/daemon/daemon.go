@@ -122,13 +122,19 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer func() { _ = fetchSub.Unsubscribe() }()
 
-	// Session commands arrive by request-reply, one subject per session.
-	cmds := &commands{host: hostName, sessions: sessions}
+	// Session and repository commands arrive by request-reply, one subject
+	// per session or repository.
+	cmds := &commands{host: hostName, sessions: sessions, agg: agg}
 	sub, err := nc.Subscribe(v1.SessionCommandFilter(hostName), func(msg *nats.Msg) { go cmds.handle(ctx, msg) })
 	if err != nil {
 		return fmt.Errorf("subscribe to session commands: %w", err)
 	}
 	defer func() { _ = sub.Unsubscribe() }()
+	repoSub, err := nc.Subscribe(v1.RepoCommandFilter(hostName), func(msg *nats.Msg) { go cmds.handleRepo(ctx, msg) })
+	if err != nil {
+		return fmt.Errorf("subscribe to repository commands: %w", err)
+	}
+	defer func() { _ = repoSub.Unsubscribe() }()
 
 	started := time.Now().UTC()
 	svc, err := micro.AddService(nc, micro.Config{
@@ -169,10 +175,41 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 }
 
-// commands handles session commands sent to this host.
+// commands handles session and repository commands sent to this host.
 type commands struct {
 	host     string
 	sessions *session.Manager
+	agg      *host.Host
+}
+
+// handleRepo answers one repository command.
+func (c *commands) handleRepo(ctx context.Context, msg *nats.Msg) {
+	// v1.island.<host>.repo.<repo>.cmd.<type>
+	parts := strings.Split(msg.Subject, ".")
+	if len(parts) != 7 {
+		c.reply(msg, v1.Reply{Error: "malformed command subject " + msg.Subject})
+		return
+	}
+	repoID, commandType := parts[4], parts[6]
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	switch commandType {
+	case v1.CommandSetRepoRules:
+		var cmd v1.SetRepoRules
+		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+			c.reply(msg, v1.Reply{Error: "bad SetRepoRules: " + err.Error()})
+			return
+		}
+		cmd.RepoID = repoID
+		r, err := c.agg.SetRules(ctx, cmd)
+		if err != nil {
+			c.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		c.replyResult(msg, map[string]any{"repoId": r.ID, "rules": r.Rules})
+	default:
+		c.reply(msg, v1.Reply{Error: "unknown command " + commandType})
+	}
 }
 
 func (c *commands) handle(ctx context.Context, msg *nats.Msg) {
@@ -269,6 +306,19 @@ func (c *commands) handle(ctx context.Context, msg *nats.Msg) {
 			return
 		}
 		c.replyResult(msg, map[string]any{"sessionId": s.ID, "trusted": s.Trusted, "pending": len(s.Pending)})
+	case v1.CommandSetSessionRules:
+		var cmd v1.SetSessionRules
+		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+			c.reply(msg, v1.Reply{Error: "bad SetSessionRules: " + err.Error()})
+			return
+		}
+		cmd.SessionID = sessionID
+		s, err := c.sessions.SetRules(ctx, cmd)
+		if err != nil {
+			c.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		c.replyResult(msg, map[string]any{"sessionId": s.ID, "rules": s.Rules})
 	case v1.CommandCommitChanges:
 		var cmd v1.CommitChanges
 		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
@@ -441,6 +491,27 @@ func (a *localAPI) pendingInfo(s session.Session, requestID string) socket.Reque
 		}
 	}
 	return socket.RequestInfo{ID: requestID, Session: s.ID}
+}
+
+func (a *localAPI) Rules(context.Context) []socket.RepoRulesInfo {
+	out := []socket.RepoRulesInfo{}
+	for _, r := range a.agg.Repos() {
+		out = append(out, repoRules(r))
+	}
+	return out
+}
+
+func (a *localAPI) SetRepoRules(ctx context.Context, repoID, commandID string, list []v1.Rule) (socket.RepoRulesInfo, error) {
+	r, err := a.agg.SetRules(ctx, v1.SetRepoRules{ID: commandID, RepoID: repoID, Rules: list})
+	return repoRules(r), err
+}
+
+func repoRules(r host.Repo) socket.RepoRulesInfo {
+	list := r.Rules
+	if list == nil {
+		list = []v1.Rule{}
+	}
+	return socket.RepoRulesInfo{RepoID: r.ID, Repo: r.Name, Rules: list}
 }
 
 func (a *localAPI) RegisterRepo(ctx context.Context, path, commandID string) (socket.RepoInfo, error) {

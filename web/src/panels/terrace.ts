@@ -1,6 +1,7 @@
 import { el } from '../dom'
 import { shortCommit } from '../files'
-import type { Island, Repo, Session } from '../protocol'
+import type { Island, Repo, Rule, Session } from '../protocol'
+import { HOST_DEFAULTS, rulesSheet } from '../rules'
 import { agentLabel, isOpen } from '../status'
 import { agentGlyph, backButton, factsBox, header, hint, note, section, timeNode } from './parts'
 
@@ -14,6 +15,7 @@ export function renderTerracePanel(
   sessions: Session[],
   waiting: (s: Session) => boolean,
   backToIsland: () => void,
+  setRules: (rules: Rule[]) => Promise<string>,
 ): void {
   panel.textContent = ''
   const down = stale || !island.reachable
@@ -41,6 +43,12 @@ export function renderTerracePanel(
   facts.push(['Registered', timeNode(repo.registeredAt)], ['Terrain snapshot', timeNode(repo.snapshottedAt)])
   panel.appendChild(factsBox(facts))
   if (!repo.files.length) panel.appendChild(note('This repository has no tracked files yet.'))
+  panel.appendChild(
+    section('Rules', [
+      el('p', { class: 'muted', style: 'margin:0 0 6px;font-size:12px', text: 'New sessions on this repository start with these rules. A session can change its own copy.' }),
+      rulesSheet(repo.rules ?? [], { defaults: HOST_DEFAULTS, readOnly: down, onChange: setRules }),
+    ]),
+  )
   panel.appendChild(hint(sessions.length ? 'Click an airship to follow its agent, or a building to look closer. Conversations are in the inbox.' : 'Click a building to look closer.'))
 }
 

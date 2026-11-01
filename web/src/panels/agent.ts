@@ -50,7 +50,7 @@ export function renderAgentPanel(
     ['Turns', String(s.turns)],
     ['Branch', s.inCheckout ? `${s.branch}, in the checkout` : s.base ? `${s.branch}, from ${s.base}` : s.branch],
     ['Started', timeNode(s.startedAt)],
-    running ? ['Last activity', timeNode(s.updatedAt)] : s.status === 'idle' ? ['Idle since', timeNode(s.updatedAt)] : ['Ended', s.endedAt ? timeNode(s.endedAt) : 'unknown'],
+    running ? ['Last activity', timeNode(s.activeAt)] : s.status === 'idle' ? ['Idle since', timeNode(s.activeAt)] : ['Ended', s.endedAt ? timeNode(s.endedAt) : 'unknown'],
     ['Context', pct(s.used, s.size)],
     ['Tool calls', String(s.recent.length)],
   ]

@@ -35,6 +35,15 @@ func SessionCommandSubject(host, session, commandType string) string {
 	return "v1.island." + host + ".session." + session + ".cmd." + commandType
 }
 
+// RepoCommandSubject is where one command for a repository on host, such
+// as SetRepoRules, is sent by request-reply.
+func RepoCommandSubject(host, repo, commandType string) string {
+	return "v1.island." + host + ".repo." + repo + ".cmd." + commandType
+}
+
+// RepoCommandFilter matches every repository command for host.
+func RepoCommandFilter(host string) string { return "v1.island." + host + ".repo.*.cmd.>" }
+
 // SessionLiveSubject carries a session's transcript as it is written: plain
 // NATS, no stream, for whoever is reading the conversation right now.
 func SessionLiveSubject(host, session string) string {

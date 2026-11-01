@@ -22,6 +22,20 @@ func TestTerrainFollowsHostEvents(t *testing.T) {
 		t.Fatalf("after snapshot, changes = %+v", changes)
 	}
 
+	// Rules set on the repository reach the terrace, and an empty list
+	// still encodes as a list.
+	rulesEv, _ := v1.NewEvent(v1.EventRepoRulesSet, "c4", v1.RepoRulesSet{RepoID: "r1", Rules: []v1.Rule{{Decision: "allow", Kind: "edit", Pattern: "worktree"}}})
+	tr.Apply("ws", rulesEv)
+	if len(changes) != 3 || len(changes[2].Rules) != 1 || changes[2].Rules[0].Pattern != "worktree" {
+		t.Fatalf("after rules, changes = %+v", changes)
+	}
+	cleared, _ := v1.NewEvent(v1.EventRepoRulesSet, "c5", v1.RepoRulesSet{RepoID: "r1"})
+	tr.Apply("ws", cleared)
+	if r := tr.List()[0]; r.Rules == nil || len(r.Rules) != 0 {
+		t.Errorf("cleared rules = %#v, want an empty list", r.Rules)
+	}
+	changes = changes[:2]
+
 	// A snapshot for an unknown repo, and an unknown event type, change nothing.
 	orphan, _ := v1.NewEvent(v1.EventTerrainSnapshotted, "c2", v1.TerrainSnapshotted{RepoID: "nope"})
 	tr.Apply("ws", orphan)

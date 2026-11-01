@@ -6,6 +6,8 @@ package socket
 import (
 	"encoding/json"
 	"time"
+
+	v1 "github.com/skylands-ai/skylands/api/v1"
 )
 
 // RegisterRepoRequest is the body of POST /v1/repos.
@@ -99,6 +101,20 @@ type RequestInfo struct {
 	Input        json.RawMessage `json:"input,omitempty"`
 	Options      []OptionInfo    `json:"options"`
 	Since        time.Time       `json:"since"`
+}
+
+// RepoRulesInfo is one repository's rules, as GET /v1/rules lists them.
+type RepoRulesInfo struct {
+	RepoID string    `json:"repoId"`
+	Repo   string    `json:"repo"`
+	Rules  []v1.Rule `json:"rules"`
+}
+
+// SetRulesRequest is the body of PUT /v1/repos/{id}/rules.
+type SetRulesRequest struct {
+	// CommandID identifies the command. The client fills it in when empty.
+	CommandID string    `json:"commandId,omitempty"`
+	Rules     []v1.Rule `json:"rules"`
 }
 
 // DecideRequest is the body of POST /v1/requests/{id}/approve and deny.

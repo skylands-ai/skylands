@@ -5,9 +5,11 @@ import { renderMarkdown } from './markdown'
 import { agentGlyph, timeNode } from './panels/parts'
 import type { Permission, Session } from './protocol'
 import { replyBox } from './reply'
+import { HOST_DEFAULTS, proposeRule, ruleText, rulesSheet } from './rules'
 import { agentLabel, isOpen, sessionLabel, sessionStatus } from './status'
 import { conversationList, isUnread, isWaiting, type State } from './store'
 import { parseTranscript } from './transcript'
+import type { Rule } from './protocol'
 
 export interface InboxActions {
   /** Opens one conversation, or none. */
@@ -29,7 +31,16 @@ export interface InboxActions {
   merge(s: Session): Promise<string>
   /** Pushes the branch and opens a pull request from it. */
   pullRequest(s: Session): Promise<string>
+  /** Replaces a session's rules, or its repository's, which new sessions copy. */
+  setSessionRules(s: Session, rules: Rule[]): Promise<string>
+  setRepoRules(host: string, repoId: string, rules: Rule[]): Promise<string>
+  /** Re-renders, for a change that lives only in this view. */
+  refresh(): void
 }
+
+/** The sessions whose rules sheet is open, and a counter so a rebuild notices a toggle. */
+const rulesOpen = new Set<string>()
+let rulesToggles = 0
 
 let lastDeps: unknown[] | null = null
 
@@ -52,7 +63,7 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live
   // Once the agent is not mid-turn, where its changes stand is read from the
   // host, and read again after each event, such as a commit.
   const changes = open && open.status !== 'running' && !open.worktreeRemoved ? cache.get('changes', open.host, open.id, 0, Date.parse(open.updatedAt)) : undefined
-  const deps = [s.sessions, s.repos, s.viewed, s.inbox, s.inboxFilter, open, fetched?.at, fetched?.loading, fetched?.error, fetched?.text, changes?.at, changes?.loading, changes?.error, changes?.changes]
+  const deps = [s.sessions, s.repos, s.viewed, s.inbox, s.inboxFilter, open, fetched?.at, fetched?.loading, fetched?.error, fetched?.text, changes?.at, changes?.loading, changes?.error, changes?.changes, rulesToggles]
   if (lastDeps && lastDeps.length === deps.length && lastDeps.every((d, i) => d === deps[i])) return
   lastDeps = deps
 
@@ -80,14 +91,17 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live
 
 /**
  * A tool call waiting on you: what the agent wants to do, the exact input
- * it proposed, and the answers it accepts.
+ * it proposed, and the answers it accepts. Besides answering once, you can
+ * keep the answer as a rule for this session or for every session on the
+ * repository, with the pattern the request suggests, edited as you like.
  */
-function approvalCard(x: Session, p: Permission, actions: InboxActions): HTMLElement {
+function approvalCard(s: State, x: Session, p: Permission, actions: InboxActions): HTMLElement {
   const note = el('span', { class: 'sub' })
   const buttons: HTMLButtonElement[] = []
   const decide = async (run: () => Promise<string>, saying: string): Promise<void> => {
     for (const b of buttons) b.disabled = true
     note.textContent = saying
+    note.style.color = ''
     const err = await run()
     if (err) {
       note.textContent = err
@@ -97,12 +111,46 @@ function approvalCard(x: Session, p: Permission, actions: InboxActions): HTMLEle
   }
   const allows = p.options.filter((o) => o.kind.startsWith('allow'))
   const rejects = p.options.filter((o) => o.kind.startsWith('reject'))
-  for (const o of allows) {
-    const b = el('button', { type: 'button', class: `btn small ${o.kind === 'allow_once' ? 'primary' : ''}`, text: o.name, onclick: () => void decide(() => actions.approve(x, p, o.id), 'Allowing\u2026') }) as HTMLButtonElement
-    buttons.push(b)
+  const once = allows.find((o) => o.kind === 'allow_once') ?? allows[0]
+  if (once) {
+    buttons.push(el('button', { type: 'button', class: 'btn small primary', text: once.kind === 'allow_once' ? 'Allow once' : once.name, onclick: () => void decide(() => actions.approve(x, p, once.id), 'Allowing\u2026') }) as HTMLButtonElement)
   }
-  const d = el('button', { type: 'button', class: 'btn small ghost', text: rejects[0]?.name ?? 'Deny', onclick: () => void decide(() => actions.deny(x, p), 'Denying\u2026') }) as HTMLButtonElement
-  buttons.push(d)
+  buttons.push(el('button', { type: 'button', class: 'btn small ghost', text: rejects[0]?.name ?? 'Deny', onclick: () => void decide(() => actions.deny(x, p), 'Denying\u2026') }) as HTMLButtonElement)
+
+  // Remember the answer as a rule. The request's answer follows once the
+  // rule is saved, so a refused rule leaves the request waiting.
+  const repo = s.repos[x.repoId]
+  const proposed = proposeRule(p, 'allow')
+  const decision = el('select', { 'aria-label': 'Decision to remember' }, [el('option', { value: 'allow', text: 'allow' }), el('option', { value: 'deny', text: 'deny' })]) as HTMLSelectElement
+  const pattern = el('input', { type: 'text', 'aria-label': 'Pattern', placeholder: 'any' }) as HTMLInputElement
+  pattern.value = proposed.pattern ?? ''
+  const rule = (): Rule => ({ decision: decision.value as Rule['decision'], kind: proposed.kind, pattern: pattern.value.trim() || undefined })
+  const answer = (): Promise<string> => (decision.value === 'allow' && once ? actions.approve(x, p, once.id) : actions.deny(x, p))
+  const forSession = el('button', { type: 'button', class: 'btn small', text: 'For this session', onclick: () => void decide(async () => (await actions.setSessionRules(x, [...x.rules, rule()])) || answer(), 'Saving the rule\u2026') }) as HTMLButtonElement
+  const forRepo = el('button', {
+    type: 'button',
+    class: 'btn small',
+    text: `For every session on ${repo?.name ?? 'this repository'}`,
+    onclick: () =>
+      void decide(async () => {
+        const r = rule()
+        const err = (await actions.setRepoRules(x.host, x.repoId, [...(repo?.rules ?? []), r])) || (await actions.setSessionRules(x, [...x.rules, r]))
+        return err || answer()
+      }, 'Saving the rule\u2026'),
+  }) as HTMLButtonElement
+  buttons.push(forSession, forRepo)
+  const preview = el('span', { class: 'sub' })
+  const refresh = (): void => {
+    preview.textContent = `Rule: ${ruleText(rule())}`
+  }
+  decision.addEventListener('change', refresh)
+  pattern.addEventListener('input', refresh)
+  refresh()
+  const remember = el('details', { class: 'remember' }, [
+    el('summary', { text: 'Remember as a rule' }),
+    el('div', { class: 'body' }, [el('div', { class: 'acts' }, [decision, el('span', { class: 'kind', text: proposed.kind }), pattern]), preview, el('div', { class: 'acts' }, [forSession, forRepo])]),
+  ])
+
   const where = p.locations?.length ? el('div', { class: 'where' }, [el('code', { text: p.locations.join(', ') })]) : null
   let input: HTMLElement | null = null
   if (p.input !== undefined && p.input !== null) {
@@ -113,7 +161,7 @@ function approvalCard(x: Session, p: Permission, actions: InboxActions): HTMLEle
     el('div', { class: 'ask' }, [el('span', { class: 'mark', style: 'background:#E0B000' }), el('strong', { text: p.title }), p.kind ? el('span', { class: 'kindchip', text: p.kind }) : null, el('span', { class: 'muted', style: 'margin-left:auto;font-size:12px' }, ['asked ', timeNode(p.at, 'ago')])]),
     where,
     input,
-    el('div', { class: 'acts' }, [...buttons, note]),
+    el('div', { class: 'acts' }, [buttons[0], buttons[1], remember, note]),
   ])
 }
 
@@ -339,7 +387,7 @@ function table(s: State, actions: InboxActions): HTMLElement {
       el('td', { text: s.repos[x.repoId]?.name ?? x.repoId }),
       el('td', {}, [el('span', { class: 'who' }, [mark(s, x), status[0]])]),
       el('td', { text: String(x.turns) }),
-      el('td', {}, [timeNode(x.updatedAt, 'ago')]),
+      el('td', {}, [timeNode(x.activeAt, 'ago')]),
     ])
     row.addEventListener('click', () => actions.open(x.id))
     row.addEventListener('keydown', (e) => {
@@ -373,7 +421,7 @@ function narrowList(s: State, openId: string, actions: InboxActions): HTMLElemen
         el('span', { class: 'name', text: sessionLabel(x, 48) }),
         el('span', { class: 'repo', text: `${agentLabel(x.agent)} \u00b7 ${s.repos[x.repoId]?.name ?? x.repoId}` }),
         unread ? el('span', { class: 'dot new' }) : null,
-        el('span', { class: 'when' }, [timeNode(x.updatedAt, 'ago')]),
+        el('span', { class: 'when' }, [timeNode(x.activeAt, 'ago')]),
       ],
     )
     box.appendChild(row)
@@ -393,6 +441,18 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
     el('span', { class: 'muted', text: `${x.turns} ${x.turns === 1 ? 'turn' : 'turns'}` }),
     el('div', { class: 'acts' }, [
       isOpen(x) ? trustSwitch(x, actions) : null,
+      el('button', {
+        type: 'button',
+        class: 'btn small ghost',
+        text: `Rules (${x.rules.length})`,
+        'aria-expanded': rulesOpen.has(x.id) ? 'true' : 'false',
+        onclick: () => {
+          if (rulesOpen.has(x.id)) rulesOpen.delete(x.id)
+          else rulesOpen.add(x.id)
+          rulesToggles++
+          actions.refresh()
+        },
+      }),
       el('button', { type: 'button', class: 'btn small ghost', text: 'Show in world', onclick: () => actions.openInWorld(x) }),
       el('button', { type: 'button', class: 'btn small ghost', text: 'Close', 'aria-label': 'Close the conversation', onclick: () => actions.open(null) }),
     ]),
@@ -413,7 +473,7 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
     else if (t.text) body.appendChild(el('div', { class: 'msg agent' }, [el('span', { class: 'from' }, [name, copyButton(t.text)]), agentBody(t.text)]))
   }
   if (running && !liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, '')]))
-  for (const p of x.pending) body.appendChild(approvalCard(x, p, actions))
+  for (const p of x.pending) body.appendChild(approvalCard(s, x, p, actions))
   if (fetchError) body.appendChild(el('p', { class: 'convo-end', style: 'color:var(--bad)', text: fetchError }))
   if (x.status === 'failed') body.appendChild(el('p', { class: 'convo-end', style: 'color:var(--bad)', text: `Failed: ${x.error ?? 'unknown error'}` }))
   else if (x.status === 'ended') body.appendChild(el('p', { class: 'convo-end', text: x.stopReason === 'stopped' ? 'You ended this session.' : `This session ended (${(x.stopReason ?? 'done').replace(/_/g, ' ')}).` }))
@@ -424,6 +484,11 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
   else foot.appendChild(el('p', { class: 'muted', style: 'margin:0;font-size:13px', text: 'This session is over. Start a new one from its terrace in the world.' }))
 
   const hint = isOpen(x) && x.trusted ? el('p', { class: 'trust-hint', text: 'Tool calls in this session run without asking.' }) : null
-  const convo = el('section', { class: 'convo', 'aria-label': `${sessionLabel(x)}, with ${name}`, 'data-session': x.id }, [head, hint, body, foot])
+  const rules = rulesOpen.has(x.id)
+    ? el('div', { class: 'convo-rules' }, [
+        rulesSheet(x.rules, { defaults: HOST_DEFAULTS, copiedFrom: repo?.name ?? 'the repository', readOnly: !isOpen(x), onChange: (next) => actions.setSessionRules(x, next) }),
+      ])
+    : null
+  const convo = el('section', { class: 'convo', 'aria-label': `${sessionLabel(x)}, with ${name}`, 'data-session': x.id }, [head, hint, rules, body, foot])
   return convo
 }

@@ -82,6 +82,20 @@ specifies. No events, streams, or aggregates are needed for it.
   and opens a pull request with gh, and the agent panel and the inbox
   show what became of the changes. `skylands session list|stop|remove|
   prune` manage sessions and their worktrees and branches on the host.
+- Rules are done. A rule is a decision (allow, ask, deny), a tool call
+  kind or any, and an optional pattern: a command pattern for execute, a
+  URL pattern for fetch, a path pattern for the rest, where "worktree"
+  means everything inside the session's worktree. The most specific
+  matching rule wins, a deny beats an allow among equals, a session's own
+  rule beats one copied from its repository, and no match asks. A
+  repository's rules (RepoRulesSet) are copied into each session it
+  starts (SessionStarted carries them) and the session can change its
+  copy (SessionRulesSet). The approval card proposes a rule from the
+  request and keeps it for this session or for every session on the
+  repository; the same rules sheet shows on the terrace and behind the
+  conversation's Rules button. `skylands rule list|add|remove` manage a
+  repository's rules on the host. A refusal by a rule is recorded as a
+  request denied by "rule", so the conversation shows it.
 
 ## After the MVP
 
@@ -317,8 +331,8 @@ Demo: the MVP.
 ## Deferred past the MVP
 
 World init, accounts, credentials, and auth callout. Passkeys, user sessions,
-and signed approvals. The rule language and rule events; rules are a kind
-allow-list on the host for now. Push notifications and the phone inbox. Work
+and signed approvals. World-wide rules mirrored to every host; rules live
+on each host's repositories for now. Push notifications and the phone inbox. Work
 orders and dynamic dispatch. Compaction puffs and subagent leashes, which
 wait for their events. Claude Code hooks, so terminal sessions appear on the
 island. The three.js upgrade. Packaging and goreleaser.

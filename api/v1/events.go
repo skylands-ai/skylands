@@ -79,6 +79,54 @@ type RegisterRepo struct {
 	Path string `json:"path"`
 }
 
+// Rule decisions, the kind that matches every tool call, the path pattern
+// that matches everything inside a session's worktree, and the source a
+// session's rule carries when it was copied from the repository.
+const (
+	RuleAllow      = "allow"
+	RuleAsk        = "ask"
+	RuleDeny       = "deny"
+	RuleAnyKind    = "*"
+	RuleInWorktree = "worktree"
+	RuleFromRepo   = "repo"
+)
+
+// Rule settles tool calls before they reach a person. Kind is a tool call
+// kind as ACP reports it, such as read, edit, execute, or fetch, or
+// RuleAnyKind. Pattern narrows the rule to some calls of that kind: a
+// command pattern for execute, a URL pattern for fetch, and a path pattern
+// for the rest, where RuleInWorktree means every location inside the
+// session's worktree and * stands for anything. A session's rules are
+// copied from its repository when it starts, with Source RuleFromRepo;
+// a rule set on the session itself has no source.
+type Rule struct {
+	Decision string `json:"decision"`
+	Kind     string `json:"kind"`
+	Pattern  string `json:"pattern,omitempty"`
+	Source   string `json:"source,omitempty"`
+}
+
+// EventRepoRulesSet records a repository's rules, which every session
+// started on it from then on copies.
+const EventRepoRulesSet = "RepoRulesSet"
+
+// RepoRulesSet carries the whole list, so the event is order-free.
+type RepoRulesSet struct {
+	RepoID string `json:"repoId"`
+	Rules  []Rule `json:"rules"`
+}
+
+// SetRepoRules replaces a repository's rules.
+type SetRepoRules struct {
+	ID     string `json:"id"`
+	RepoID string `json:"repoId"`
+	Rules  []Rule `json:"rules"`
+}
+
+// CommandSetRepoRules is sent to a host by request-reply, or over its
+// socket.
+const CommandSetRepoRules = "SetRepoRules"
+
 // Session event types, produced by the Session aggregate on each daemon.
 const (
 	EventSessionStarted    = "SessionStarted"
@@ -98,7 +146,8 @@ func IsSessionEvent(eventType string) bool {
 	case EventSessionStarted, EventPromptSent, EventAgentSpawned, EventToolCallStarted, EventToolCallCompleted,
 		EventPlanUpdated, EventUsageReported, EventAgentFailed, EventSessionEnded, EventTurnEnded, EventSessionTitled,
 		EventPermissionRequested, EventPermissionGranted, EventPermissionDenied, EventPermissionExpired, EventSessionTrusted,
-		EventSessionResumed, EventChangesCommitted, EventChangesMerged, EventPullRequestOpened, EventWorktreeRemoved:
+		EventSessionResumed, EventChangesCommitted, EventChangesMerged, EventPullRequestOpened, EventWorktreeRemoved,
+		EventSessionRulesSet:
 		return true
 	}
 	return false
@@ -124,6 +173,8 @@ type SessionStarted struct {
 	// is what the checkout was on when the session started.
 	Base       string `json:"base,omitempty"`
 	InCheckout bool   `json:"inCheckout,omitempty"`
+	// Rules are the repository's rules as the session copied them.
+	Rules []Rule `json:"rules,omitempty"`
 }
 
 // PromptSent records what a person asked the session to do.
@@ -518,3 +569,23 @@ type OpenPullRequest struct {
 	Title     string `json:"title,omitempty"`
 	Body      string `json:"body,omitempty"`
 }
+
+// EventSessionRulesSet records a session's rules replaced, from the
+// conversation or the host.
+const EventSessionRulesSet = "SessionRulesSet"
+
+// SessionRulesSet carries the whole list.
+type SessionRulesSet struct {
+	SessionID string `json:"sessionId"`
+	Rules     []Rule `json:"rules"`
+}
+
+// SetSessionRules replaces a session's rules.
+type SetSessionRules struct {
+	ID        string `json:"id"`
+	SessionID string `json:"sessionId"`
+	Rules     []Rule `json:"rules"`
+}
+
+// CommandSetSessionRules is sent to a session by request-reply.
+const CommandSetSessionRules = "SetSessionRules"

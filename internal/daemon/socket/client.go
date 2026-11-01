@@ -11,6 +11,8 @@ import (
 	"net/http"
 
 	"github.com/nats-io/nuid"
+
+	v1 "github.com/skylands-ai/skylands/api/v1"
 )
 
 // ErrNoDaemon means nothing answered on the socket.
@@ -98,6 +100,20 @@ func (c *Client) RemoveSession(ctx context.Context, sessionID string, force bool
 func (c *Client) PruneSessions(ctx context.Context) ([]PruneResult, error) {
 	var out []PruneResult
 	err := c.call(ctx, http.MethodPost, "/v1/sessions/prune", struct{}{}, &out)
+	return out, err
+}
+
+// Rules lists every repository's rules on this host.
+func (c *Client) Rules(ctx context.Context) ([]RepoRulesInfo, error) {
+	var out []RepoRulesInfo
+	err := c.call(ctx, http.MethodGet, "/v1/rules", nil, &out)
+	return out, err
+}
+
+// SetRepoRules replaces a repository's rules.
+func (c *Client) SetRepoRules(ctx context.Context, repoID string, rules []v1.Rule) (RepoRulesInfo, error) {
+	var out RepoRulesInfo
+	err := c.call(ctx, http.MethodPut, "/v1/repos/"+repoID+"/rules", SetRulesRequest{CommandID: nuid.Next(), Rules: rules}, &out)
 	return out, err
 }
 

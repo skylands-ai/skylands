@@ -62,6 +62,9 @@ func TestEveryRunnableCommandIsListed(t *testing.T) {
 		"skylands session stop":    true,
 		"skylands session remove":  true,
 		"skylands session prune":   true,
+		"skylands rule list":       true,
+		"skylands rule add":        true,
+		"skylands rule remove":     true,
 	}
 	listed := map[string]bool{}
 	for _, tc := range unimplemented {
@@ -84,7 +87,7 @@ func TestEveryRunnableCommandIsListed(t *testing.T) {
 
 func TestLocalCommandsNeedTheDaemon(t *testing.T) {
 	sock := t.TempDir() + "/none.sock"
-	for _, args := range [][]string{{"repo", "register", ".", "--socket", sock}, {"daemon", "status", "--socket", sock}, {"session", "list", "--socket", sock}, {"session", "prune", "--socket", sock}} {
+	for _, args := range [][]string{{"repo", "register", ".", "--socket", sock}, {"daemon", "status", "--socket", sock}, {"session", "list", "--socket", sock}, {"session", "prune", "--socket", sock}, {"rule", "list", "--socket", sock}, {"rule", "add", "r", "allow", "edit", "--socket", sock}} {
 		code, _, stderr := run(t, args...)
 		if code != 1 || !strings.Contains(stderr, "no daemon is listening") {
 			t.Errorf("%v: exit %d, stderr %q; want a no-daemon error", args, code, stderr)

@@ -763,3 +763,84 @@ func TestSessionSurvivesDaemonRestart(t *testing.T) {
 		return ok && s.Resumes == 1 && s.Status == "idle" && s.Turns == 2
 	})
 }
+
+func TestRulesSettleToolCallsAndSessionsInheritThem(t *testing.T) {
+	if testing.Short() {
+		t.Skip("whole-world test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	w := startWorld(t, ctx)
+	b := w.openBrowser()
+	sock := shortSocket(t)
+	stop := w.startDaemonWithSocket("ws", sock)
+	defer stop()
+	b.wait(t, "ws reachable", 15*time.Second, func(v view) bool { return reachable(v, "ws", true) })
+	repoDir := gitRepo(t, "main.go")
+	cli := socket.Dial(sock)
+	var info socket.RepoInfo
+	var err error
+	for i := 0; i < 100; i++ {
+		if info, err = cli.RegisterRepo(ctx, repoDir); err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("RegisterRepo: %v", err)
+	}
+	b.wait(t, "the terrace", 20*time.Second, func(v view) bool { _, ok := v.repos[info.ID]; return ok })
+
+	post := func(path, body string) (int, map[string]any) {
+		t.Helper()
+		resp, err := http.Post(w.webURL+path, "application/json", bytes.NewBufferString(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		data, _ := io.ReadAll(resp.Body)
+		var out map[string]any
+		_ = json.Unmarshal(data, &out)
+		return resp.StatusCode, out
+	}
+
+	// Rules set on the repository from the browser reach the terrace, and
+	// a session started on it copies them: its edit never waits.
+	if code, out := post("/api/repos/ws/"+info.ID+"/rules", `{"rules":[{"decision":"allow","kind":"edit","pattern":"worktree"}]}`); code != http.StatusOK {
+		t.Fatalf("set repo rules: %d %v", code, out)
+	}
+	if code, out := post("/api/repos/ws/"+info.ID+"/rules", `{"rules":[{"decision":"sometimes","kind":"edit"}]}`); code != http.StatusBadRequest || out["error"] == nil {
+		t.Errorf("bad rule: %d %v", code, out)
+	}
+	b.wait(t, "the repo's rules", 10*time.Second, func(v view) bool {
+		r, ok := v.repos[info.ID]
+		return ok && len(r.Rules) == 1 && r.Rules[0].Pattern == "worktree"
+	})
+	code, out := post("/api/sessions", `{"host":"ws","repoId":"`+info.ID+`","agent":"fake","prompt":"edit freely"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("start session: %d %v", code, out)
+	}
+	id := out["sessionId"].(string)
+	v := b.wait(t, "the first turn to end", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "idle" })
+	s := v.sessions[id]
+	if len(s.Rules) != 1 || s.Rules[0].Source != "repo" || len(s.Pending) != 0 || s.Files["main.go"] != "edit" || s.Recent[len(s.Recent)-1].Status != "completed" {
+		t.Errorf("session with an inherited rule = rules %+v, pending %d, recent %+v", s.Rules, len(s.Pending), s.Recent)
+	}
+
+	// A rule set on the session beats the copied one, and the host's CLI
+	// sees the repository's rules too.
+	if code, out := post("/api/sessions/ws/"+id+"/rules", `{"rules":[{"decision":"allow","kind":"edit","pattern":"worktree","source":"repo"},{"decision":"deny","kind":"edit","pattern":"worktree"}]}`); code != http.StatusOK {
+		t.Fatalf("set session rules: %d %v", code, out)
+	}
+	b.wait(t, "the session's rules", 10*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && len(s.Rules) == 2 })
+	if code, out := post("/api/sessions/ws/"+id+"/prompt", `{"text":"try again"}`); code != http.StatusOK {
+		t.Fatalf("prompt: %d %v", code, out)
+	}
+	v = b.wait(t, "the denied turn to end", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "idle" && s.Turns == 2 })
+	if s := v.sessions[id]; len(s.Pending) != 0 || s.Recent[len(s.Recent)-1].Status != "failed" {
+		t.Errorf("session after a denying rule = pending %d, recent %+v", len(s.Pending), s.Recent)
+	}
+	if list, err := cli.Rules(ctx); err != nil || len(list) != 1 || len(list[0].Rules) != 1 || list[0].Repo != info.Name {
+		t.Errorf("Rules over the socket = %+v, %v", list, err)
+	}
+}

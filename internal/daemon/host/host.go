@@ -18,22 +18,29 @@ import (
 	v1 "github.com/skylands-ai/skylands/api/v1"
 	"github.com/skylands-ai/skylands/internal/daemon/terrain"
 	"github.com/skylands-ai/skylands/internal/es"
+	"github.com/skylands-ai/skylands/internal/rules"
 )
 
 // Repo is a registered repository: a terrace on the island.
 type Repo struct {
-	ID            string
-	Name          string
-	Path          string
-	Commit        string
-	TotalFiles    int
-	Files         []v1.TerrainFile
+	ID         string
+	Name       string
+	Path       string
+	Commit     string
+	TotalFiles int
+	Files      []v1.TerrainFile
+	// Rules settle tool calls in sessions on this repository; a new
+	// session copies them when it starts.
+	Rules         []v1.Rule
 	RegisteredAt  time.Time
 	SnapshottedAt time.Time
 }
 
-// ErrAlreadyRegistered means the repository is already a terrace.
-var ErrAlreadyRegistered = errors.New("repository is already registered")
+var (
+	// ErrAlreadyRegistered means the repository is already a terrace.
+	ErrAlreadyRegistered = errors.New("repository is already registered")
+	ErrUnknownRepo       = errors.New("no such repository on this host")
+)
 
 // Host is the aggregate for one island.
 type Host struct {
@@ -135,11 +142,61 @@ func (h *Host) RegisterRepo(ctx context.Context, cmd v1.RegisterRepo) (Repo, err
 	return *h.repos[id], nil
 }
 
+// SetRules handles SetRepoRules: the repository's rules become the given
+// list, which sessions started on it from now on copy. A command id
+// already in the history gets the repo back and changes nothing.
+func (h *Host) SetRules(ctx context.Context, cmd v1.SetRepoRules) (Repo, error) {
+	h.cmdMu.Lock()
+	defer h.cmdMu.Unlock()
+	h.mu.Lock()
+	if id, ok := h.handled[cmd.ID]; ok && cmd.ID != "" {
+		r := *h.repos[id]
+		h.mu.Unlock()
+		return r, nil
+	}
+	r, ok := h.repos[cmd.RepoID]
+	if !ok {
+		h.mu.Unlock()
+		return Repo{}, fmt.Errorf("%w: %s", ErrUnknownRepo, cmd.RepoID)
+	}
+	h.mu.Unlock()
+	list, err := rules.Validate(cmd.Rules)
+	if err != nil {
+		return *r, err
+	}
+	// A repository's rules have no source: they are the source.
+	for i := range list {
+		list[i].Source = ""
+	}
+	ev, err := v1.NewEvent(v1.EventRepoRulesSet, cmd.ID, v1.RepoRulesSet{RepoID: r.ID, Rules: list})
+	if err != nil {
+		return Repo{}, err
+	}
+	if _, err := h.store.Append(ctx, v1.IslandEventSubject(h.name, ev.Type), ev); err != nil {
+		return Repo{}, err
+	}
+	h.apply(ev)
+	slog.Info("host: rules set", "host", h.name, "repo", r.Name, "rules", len(list))
+	out, _ := h.Repo(r.ID)
+	return out, nil
+}
+
 // apply folds one event into the state.
 func (h *Host) apply(ev v1.Event) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	switch ev.Type {
+	case v1.EventRepoRulesSet:
+		var d v1.RepoRulesSet
+		if ev.Decode(&d) != nil {
+			return
+		}
+		if r, ok := h.repos[d.RepoID]; ok {
+			r.Rules = d.Rules
+			if ev.CommandID != "" {
+				h.handled[ev.CommandID] = d.RepoID
+			}
+		}
 	case v1.EventRepoRegistered:
 		var d v1.RepoRegistered
 		if ev.Decode(&d) != nil {

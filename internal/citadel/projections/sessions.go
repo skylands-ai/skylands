@@ -82,6 +82,9 @@ type Session struct {
 	// Trusted means the session's tool calls are allowed without asking. It
 	// is always sent, so a browser sees it turn back off.
 	Trusted bool `json:"trusted"`
+	// Rules settle tool calls before they reach a person: the repository's
+	// as copied at the start, and any set on the session since.
+	Rules []v1.Rule `json:"rules"`
 	// Pending holds the tool calls waiting on a person, oldest first.
 	Pending []Permission `json:"pending"`
 	// Resumes counts the daemon restarts the session has lived through, and
@@ -90,9 +93,14 @@ type Session struct {
 	Resumed   Resumed   `json:"resumed,omitzero"`
 	StartedAt time.Time `json:"startedAt"`
 	EndedAt   time.Time `json:"endedAt,omitzero"`
-	// UpdatedAt is the time of the latest event, which is what "something
-	// new happened" means.
+	// UpdatedAt is the time of the latest event of any kind, which is when
+	// what a browser fetched about the session went stale.
 	UpdatedAt time.Time `json:"updatedAt"`
+	// ActiveAt is the time of the latest activity in the conversation: the
+	// agent or a person did something. Bookkeeping such as a daemon restart,
+	// a title, a trust switch, or a rule change leaves it alone, so none of
+	// those reads as something waiting on a person.
+	ActiveAt time.Time `json:"activeAt"`
 	// CurrentFile is the file of the latest tool call that named one, and
 	// CurrentAction that call's title.
 	CurrentFile   string `json:"currentFile,omitempty"`
@@ -132,7 +140,7 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 	case v1.EventSessionStarted:
 		var d v1.SessionStarted
 		if ev.Decode(&d) == nil {
-			s := &Session{Host: host, ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Status: "running", StartedAt: ev.Time, Recent: []ToolCall{}, Files: map[string]string{}, Pending: []Permission{}}
+			s := &Session{Host: host, ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Rules: append([]v1.Rule{}, d.Rules...), Status: "running", StartedAt: ev.Time, ActiveAt: ev.Time, Recent: []ToolCall{}, Files: map[string]string{}, Pending: []Permission{}}
 			p.byID[d.SessionID] = s
 			changed = s
 		}
@@ -169,6 +177,14 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 		if ev.Decode(&d) == nil {
 			if s, ok := p.byID[d.SessionID]; ok {
 				s.Trusted = d.Trusted
+				changed = s
+			}
+		}
+	case v1.EventSessionRulesSet:
+		var d v1.SessionRulesSet
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.Rules = append([]v1.Rule{}, d.Rules...)
 				changed = s
 			}
 		}
@@ -318,12 +334,27 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 		if ev.Time.After(changed.UpdatedAt) {
 			changed.UpdatedAt = ev.Time
 		}
+		if isActivity(ev.Type) && ev.Time.After(changed.ActiveAt) {
+			changed.ActiveAt = ev.Time
+		}
 		copy = cloneSession(changed)
 	}
 	p.mu.Unlock()
 	if changed != nil {
 		p.onChange(copy)
 	}
+}
+
+// isActivity says whether an event is the agent or a person doing
+// something in the conversation, as opposed to bookkeeping about it.
+func isActivity(eventType string) bool {
+	switch eventType {
+	case v1.EventSessionStarted, v1.EventPromptSent, v1.EventTurnEnded, v1.EventToolCallStarted, v1.EventToolCallCompleted,
+		v1.EventPlanUpdated, v1.EventUsageReported, v1.EventPermissionRequested, v1.EventPermissionGranted, v1.EventPermissionDenied,
+		v1.EventAgentFailed, v1.EventSessionEnded, v1.EventChangesCommitted, v1.EventChangesMerged, v1.EventPullRequestOpened:
+		return true
+	}
+	return false
 }
 
 // List returns every session, newest first.
@@ -350,5 +381,6 @@ func cloneSession(s *Session) Session {
 	}
 	c.Plan = append(make([]v1.PlanEntry, 0, len(s.Plan)), s.Plan...)
 	c.Pending = append(make([]Permission, 0, len(s.Pending)), s.Pending...)
+	c.Rules = append(make([]v1.Rule, 0, len(s.Rules)), s.Rules...)
 	return c
 }

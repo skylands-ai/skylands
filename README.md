@@ -162,6 +162,18 @@ and `session prune` does that for all of them, keeping any worktree with
 uncommitted changes or branch with unmerged commits unless `--force` is
 given.
 
+Rules settle what an agent may do before anyone is asked. Reads, searches,
+and thinking pass by default; everything else asks a person in the
+conversation, the inbox, or `skylands request` on the host. When the agent
+asks, the approval card can keep the answer as a rule, for that session or
+for every session on the repository, with a pattern it proposes from the
+request: `allow execute go test *`, `allow edit worktree`, `deny execute
+rm -rf *`. The rules sheet on a terrace and behind a conversation's Rules
+button lists and edits them, and on the host `skylands rule list|add|
+remove` do the same for a repository. The most specific matching rule
+wins, a deny beats an allow among equals, and a session's own rule beats
+one it copied from the repository.
+
 ### Running the roles separately
 
 `devworld up` is the same code as the separate roles, with NATS started for
