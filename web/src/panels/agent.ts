@@ -48,12 +48,16 @@ export function renderAgentPanel(
     ['Status', status[0]],
     ['Agent', s.agentName && s.agentName !== agentLabel(s.agent) ? `${agentLabel(s.agent)} (${s.agentName})` : agentLabel(s.agent)],
     ['Turns', String(s.turns)],
-    ['Branch', s.branch],
+    ['Branch', s.inCheckout ? `${s.branch}, in the checkout` : s.base ? `${s.branch}, from ${s.base}` : s.branch],
     ['Started', timeNode(s.startedAt)],
     running ? ['Last activity', timeNode(s.updatedAt)] : s.status === 'idle' ? ['Idle since', timeNode(s.updatedAt)] : ['Ended', s.endedAt ? timeNode(s.endedAt) : 'unknown'],
     ['Context', pct(s.used, s.size)],
     ['Tool calls', String(s.recent.length)],
   ]
+  if (s.commits) facts.push(['Commits', `${s.commits}, last ${s.commit?.slice(0, 7) ?? ''}`])
+  if (s.mergedInto) facts.push(['Merged', `into ${s.mergedInto} as ${s.mergedCommit?.slice(0, 7) ?? ''}`])
+  if (s.pullRequest) facts.push(['Pull request', el('a', { href: s.pullRequest, target: '_blank', rel: 'noopener', text: s.pullRequest.replace(/^https?:\/\//, '') })])
+  if (s.worktreeRemoved) facts.push(['Worktree', 'removed'])
   if (s.resumes && s.resumed) {
     // The daemon under the session restarted. The history was never at risk; what came back was the agent.
     const how = s.resumed.how === 'load' ? 'the agent reloaded its own session' : 'a new agent was given the transcript'
@@ -99,8 +103,12 @@ export function renderAgentPanel(
     )
   }
 
-  panel.appendChild(section('Changes in the worktree', [textBlock(cache.get('diff', island.host, s.id, refresh, since), 'No changes yet.', 'diff')]))
-  panel.appendChild(hint(`The worktree is on branch ${s.branch} on ${island.host}. The diff stays there until you open this panel.`))
+  if (s.worktreeRemoved) {
+    panel.appendChild(hint('The worktree was removed, so there is no diff to show.'))
+  } else {
+    panel.appendChild(section(s.inCheckout ? 'Changes in the checkout' : 'Changes in the worktree', [textBlock(cache.get('diff', island.host, s.id, refresh, since), 'No changes yet.', 'diff')]))
+    panel.appendChild(hint(s.inCheckout ? `The agent works in the checkout on ${island.host}, on ${s.branch}. Commit from the conversation.` : `The worktree is on branch ${s.branch} on ${island.host}. Commit, merge, or open a pull request from the conversation.`))
+  }
 }
 
 function chatIcon(): HTMLElement {

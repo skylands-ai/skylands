@@ -1,11 +1,17 @@
 import { byteLength } from './live'
+import type { Changes } from './protocol'
 
-/** One fetched text, such as a session's transcript or diff. */
+/** What can be fetched from a host about one session. */
+export type FetchKind = 'transcript' | 'diff' | 'changes'
+
+/** One fetched text, such as a session's transcript or diff, or its changes. */
 export interface Fetched {
   text: string
   truncated: boolean
   /** The whole text's length in bytes on the host, even when truncated. */
   length: number
+  /** The answer to a changes fetch, which is not a text. */
+  changes?: Changes
   error?: string
   loading: boolean
   /** When it was last fetched, in ms since the epoch, or 0 before the first fetch. */
@@ -23,7 +29,7 @@ export class FetchCache {
   constructor(private readonly onChange: () => void) {}
 
   /** Returns the cached entry without fetching, or undefined when nothing was ever asked for. */
-  peek(kind: 'transcript' | 'diff', host: string, id: string): Fetched | undefined {
+  peek(kind: FetchKind, host: string, id: string): Fetched | undefined {
     return this.entries.get(`${kind}/${host}/${id}`)
   }
 
@@ -33,7 +39,7 @@ export class FetchCache {
    * when it was fetched before `since`, the session's latest event, so the
    * text is read again after each event without polling.
    */
-  get(kind: 'transcript' | 'diff', host: string, id: string, refreshMs: number, since = 0): Fetched {
+  get(kind: FetchKind, host: string, id: string, refreshMs: number, since = 0): Fetched {
     const key = `${kind}/${host}/${id}`
     let e = this.entries.get(key)
     if (!e) {
@@ -54,6 +60,9 @@ export class FetchCache {
       const body = (await resp.json().catch(() => ({}))) as { text?: string; truncated?: boolean; length?: number; error?: string }
       if (!resp.ok) {
         e.error = body.error ?? `The citadel answered ${resp.status}.`
+      } else if (kind === 'changes') {
+        e.changes = body as unknown as Changes
+        e.error = undefined
       } else {
         e.text = body.text ?? ''
         e.truncated = !!body.truncated

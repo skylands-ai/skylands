@@ -22,6 +22,9 @@ type startSessionRequest struct {
 	Agent  string `json:"agent"`
 	Model  string `json:"model"`
 	Prompt string `json:"prompt"`
+	// InCheckout runs the agent in the registered checkout itself rather
+	// than a worktree of its own.
+	InCheckout bool `json:"inCheckout"`
 }
 
 // api is the citadel's HTTP API for browsers: the commands the world view
@@ -35,9 +38,43 @@ func (c *citadel) api() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/requests/{rid}/approve", c.approve)
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/requests/{rid}/deny", c.deny)
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/trust", c.trust)
-	mux.HandleFunc("GET /api/sessions/{host}/{id}/transcript", c.fetchText(v1.FetchTranscript))
-	mux.HandleFunc("GET /api/sessions/{host}/{id}/diff", c.fetchText(v1.FetchDiff))
+	mux.HandleFunc("POST /api/sessions/{host}/{id}/commit", c.commit)
+	mux.HandleFunc("POST /api/sessions/{host}/{id}/merge", c.merge)
+	mux.HandleFunc("POST /api/sessions/{host}/{id}/pull-request", c.pullRequest)
+	mux.HandleFunc("GET /api/sessions/{host}/{id}/transcript", c.fetchFromHost(v1.FetchTranscript))
+	mux.HandleFunc("GET /api/sessions/{host}/{id}/diff", c.fetchFromHost(v1.FetchDiff))
+	mux.HandleFunc("GET /api/sessions/{host}/{id}/changes", c.fetchFromHost(v1.FetchChanges))
 	return mux
+}
+
+// commit commits everything in a session's worktree on its island.
+func (c *citadel) commit(w http.ResponseWriter, r *http.Request) {
+	host, id := r.PathValue("host"), r.PathValue("id")
+	var body struct {
+		Message string `json:"message"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	cmd := v1.CommitChanges{ID: nuid.Next(), SessionID: id, Message: strings.TrimSpace(body.Message)}
+	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandCommitChanges), cmd, http.StatusOK)
+}
+
+// merge merges a session's branch into its base in the checkout on its island.
+func (c *citadel) merge(w http.ResponseWriter, r *http.Request) {
+	host, id := r.PathValue("host"), r.PathValue("id")
+	cmd := v1.MergeChanges{ID: nuid.Next(), SessionID: id}
+	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandMergeChanges), cmd, http.StatusOK)
+}
+
+// pullRequest pushes a session's branch and opens a pull request from it.
+func (c *citadel) pullRequest(w http.ResponseWriter, r *http.Request) {
+	host, id := r.PathValue("host"), r.PathValue("id")
+	var body struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	cmd := v1.OpenPullRequest{ID: nuid.Next(), SessionID: id, Title: strings.TrimSpace(body.Title), Body: strings.TrimSpace(body.Body)}
+	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandOpenPullRequest), cmd, http.StatusOK)
 }
 
 // sendPrompt continues an idle session on its island.
@@ -111,9 +148,10 @@ func (c *citadel) relay(w http.ResponseWriter, host, subject string, cmd any, ok
 	_, _ = w.Write(result)
 }
 
-// fetchText relays an on-demand read of one session's transcript or diff
-// from the host that holds it. The citadel keeps nothing of the answer.
-func (c *citadel) fetchText(kind string) http.HandlerFunc {
+// fetchFromHost relays an on-demand read of one session's transcript,
+// diff, or changes from the host that holds it. The citadel keeps nothing
+// of the answer.
+func (c *citadel) fetchFromHost(kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		host, id := r.PathValue("host"), r.PathValue("id")
 		result, err := c.sendCommand(r.Context(), v1.IslandFetchSubject(host, kind), v1.FetchSessionRequest{SessionID: id})
@@ -156,7 +194,7 @@ func (c *citadel) startSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessionID := nuid.Next()
-	cmd := v1.StartSession{ID: nuid.Next(), SessionID: sessionID, RepoID: req.RepoID, Agent: req.Agent, Model: strings.TrimSpace(req.Model), Prompt: req.Prompt}
+	cmd := v1.StartSession{ID: nuid.Next(), SessionID: sessionID, RepoID: req.RepoID, Agent: req.Agent, Model: strings.TrimSpace(req.Model), Prompt: req.Prompt, InCheckout: req.InCheckout}
 	result, err := c.sendCommand(r.Context(), v1.SessionCommandSubject(req.Host, sessionID, v1.CommandStartSession), cmd)
 	switch {
 	case errors.Is(err, nats.ErrNoResponders), errors.Is(err, nats.ErrTimeout):

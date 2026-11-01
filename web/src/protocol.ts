@@ -101,7 +101,18 @@ export interface Session {
   model?: string
   agentName?: string
   prompt: string
+  /** What the agent works on: its own branch, cut from base, or the checkout's when inCheckout is set. */
   branch: string
+  base?: string
+  inCheckout?: boolean
+  /** The latest commit made through Skylands, and how many there were. */
+  commit?: string
+  commits?: number
+  /** The latest merge into the checkout, the pull request opened from the branch, and whether the worktree is gone. */
+  mergedInto?: string
+  mergedCommit?: string
+  pullRequest?: string
+  worktreeRemoved?: boolean
   /** running: the agent works on a turn. idle: it waits for a person. */
   status: 'running' | 'idle' | 'ended' | 'failed'
   stopReason?: string
@@ -127,6 +138,18 @@ export interface Session {
   plan?: PlanEntry[]
   used?: number
   size?: number
+}
+
+/** Where a session's changes stand on the host's disk, as git sees them right now. */
+export interface Changes {
+  branch: string
+  base?: string
+  inCheckout?: boolean
+  /** Files with uncommitted changes. */
+  changed: string[]
+  /** Commits on the branch that its base lacks. Zero for a checkout session. */
+  ahead: number
+  worktreeRemoved?: boolean
 }
 
 /** One piece of text appended to a transcript, at byte offset off. */

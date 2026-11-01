@@ -13,6 +13,7 @@ export class CommandBar {
   private readonly go = byId<HTMLButtonElement>('cmdGo')
   private readonly agent = byId<HTMLSelectElement>('agentSel')
   private readonly model = byId<HTMLInputElement>('modelInput')
+  private readonly where = byId<HTMLSelectElement>('whereSel')
   private readonly scopeTo = byId<HTMLElement>('scopeTo')
   private readonly why = byId<HTMLElement>('scopeWhy')
   private host = ''
@@ -73,7 +74,7 @@ export class CommandBar {
       const resp = await fetch('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ host: this.host, repoId: this.repoId, agent: this.agent.value, model: this.model.value.trim(), prompt }),
+        body: JSON.stringify({ host: this.host, repoId: this.repoId, agent: this.agent.value, model: this.model.value.trim(), prompt, inCheckout: this.where.value === 'checkout' }),
       })
       const body = (await resp.json().catch(() => ({}))) as { error?: string }
       if (!resp.ok) {

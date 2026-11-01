@@ -71,6 +71,36 @@ func (c *Client) Deny(ctx context.Context, requestID string) (RequestInfo, error
 	return out, err
 }
 
+// Sessions lists every session on this host, newest first.
+func (c *Client) Sessions(ctx context.Context) ([]SessionInfo, error) {
+	var out []SessionInfo
+	err := c.call(ctx, http.MethodGet, "/v1/sessions", nil, &out)
+	return out, err
+}
+
+// StopSession ends a session, cancelling any turn in progress.
+func (c *Client) StopSession(ctx context.Context, sessionID string) (SessionInfo, error) {
+	var out SessionInfo
+	err := c.call(ctx, http.MethodPost, "/v1/sessions/"+sessionID+"/stop", SessionCommand{CommandID: nuid.Next()}, &out)
+	return out, err
+}
+
+// RemoveSession deletes a finished session's worktree and branch. With
+// force, uncommitted changes and unmerged commits go too.
+func (c *Client) RemoveSession(ctx context.Context, sessionID string, force bool) (RemoveResult, error) {
+	var out RemoveResult
+	err := c.call(ctx, http.MethodDelete, "/v1/sessions/"+sessionID, SessionCommand{CommandID: nuid.Next(), Force: force}, &out)
+	return out, err
+}
+
+// PruneSessions removes the worktrees and branches finished sessions left
+// behind, keeping any with uncommitted changes or unmerged commits.
+func (c *Client) PruneSessions(ctx context.Context) ([]PruneResult, error) {
+	var out []PruneResult
+	err := c.call(ctx, http.MethodPost, "/v1/sessions/prune", struct{}{}, &out)
+	return out, err
+}
+
 func (c *Client) call(ctx context.Context, method, route string, in, out any) error {
 	var body io.Reader
 	if in != nil {

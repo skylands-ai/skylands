@@ -34,7 +34,7 @@ func TestSessionsFollowSessionEvents(t *testing.T) {
 		ev, _ := v1.NewEvent(typ, "c", data)
 		p.Apply("ws", ev)
 	}
-	apply(v1.EventSessionStarted, v1.SessionStarted{SessionID: "s1", RepoID: "r1", Agent: "fake", Branch: "skylands/s1"})
+	apply(v1.EventSessionStarted, v1.SessionStarted{SessionID: "s1", RepoID: "r1", Agent: "fake", Branch: "skylands/s1", Base: "main"})
 	apply(v1.EventPromptSent, v1.PromptSent{SessionID: "s1", Text: "fix the tests"})
 	apply(v1.EventAgentSpawned, v1.AgentSpawned{SessionID: "s1", AgentID: "s1", Name: "fakeagent"})
 	apply(v1.EventToolCallStarted, v1.ToolCallStarted{SessionID: "s1", ToolCallID: "t1", Title: "Read a.go", Kind: "read", Locations: []string{"a.go"}})
@@ -48,7 +48,7 @@ func TestSessionsFollowSessionEvents(t *testing.T) {
 		t.Fatalf("List = %+v", list)
 	}
 	s := list[0]
-	if s.Host != "ws" || s.Prompt != "fix the tests" || s.AgentName != "fakeagent" || s.Status != "running" {
+	if s.Host != "ws" || s.Prompt != "fix the tests" || s.AgentName != "fakeagent" || s.Status != "running" || s.Base != "main" || s.InCheckout {
 		t.Errorf("session = %+v", s)
 	}
 	if s.CurrentFile != "a.go" || s.CurrentAction != "Edit a.go" || s.Files["a.go"] != "edit" || len(s.Recent) != 2 || s.Recent[0].Status != "completed" {
@@ -93,6 +93,15 @@ func TestSessionsFollowSessionEvents(t *testing.T) {
 	apply(v1.EventSessionEnded, v1.SessionEnded{SessionID: "s1", StopReason: "stopped"})
 	if s := p.List()[0]; s.Status != "ended" || s.StopReason != "stopped" || s.EndedAt.IsZero() {
 		t.Errorf("ended session = %+v", s)
+	}
+	// What became of the changes: committed, merged, sent as a pull request, and cleaned up.
+	apply(v1.EventChangesCommitted, v1.ChangesCommitted{SessionID: "s1", Commit: "abc1234def", Message: "Fix the tests", Files: []string{"a.go"}})
+	apply(v1.EventChangesCommitted, v1.ChangesCommitted{SessionID: "s1", Commit: "bcd2345efa", Message: "More"})
+	apply(v1.EventChangesMerged, v1.ChangesMerged{SessionID: "s1", Into: "main", Commit: "cde3456fab"})
+	apply(v1.EventPullRequestOpened, v1.PullRequestOpened{SessionID: "s1", URL: "https://example.com/pr/1", Branch: "skylands/s1"})
+	apply(v1.EventWorktreeRemoved, v1.WorktreeRemoved{SessionID: "s1", BranchDeleted: true})
+	if s := p.List()[0]; s.Commit != "bcd2345efa" || s.Commits != 2 || s.MergedInto != "main" || s.MergedCommit != "cde3456fab" || s.PullRequest != "https://example.com/pr/1" || !s.WorktreeRemoved {
+		t.Errorf("session after its changes were handled = %+v", s)
 	}
 	// An event for an unknown session changes nothing.
 	before := changes

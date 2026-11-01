@@ -57,7 +57,21 @@ type Session struct {
 	Model     string `json:"model,omitempty"`
 	AgentName string `json:"agentName,omitempty"`
 	Prompt    string `json:"prompt"`
-	Branch    string `json:"branch"`
+	// Branch is what the agent works on: its own, cut from Base, or the
+	// checkout's own when InCheckout is set.
+	Branch     string `json:"branch"`
+	Base       string `json:"base,omitempty"`
+	InCheckout bool   `json:"inCheckout,omitempty"`
+	// Commit is the latest commit made through Skylands and Commits counts
+	// them; MergedInto and MergedCommit record the latest merge into the
+	// checkout, PullRequest the pull request opened from the branch, and
+	// WorktreeRemoved that the worktree and branch are gone.
+	Commit          string `json:"commit,omitempty"`
+	Commits         int    `json:"commits,omitempty"`
+	MergedInto      string `json:"mergedInto,omitempty"`
+	MergedCommit    string `json:"mergedCommit,omitempty"`
+	PullRequest     string `json:"pullRequest,omitempty"`
+	WorktreeRemoved bool   `json:"worktreeRemoved,omitempty"`
 	// Status is running, idle (waiting for a person), ended, or failed.
 	Status     string `json:"status"`
 	StopReason string `json:"stopReason,omitempty"`
@@ -118,7 +132,7 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 	case v1.EventSessionStarted:
 		var d v1.SessionStarted
 		if ev.Decode(&d) == nil {
-			s := &Session{Host: host, ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Branch: d.Branch, Status: "running", StartedAt: ev.Time, Recent: []ToolCall{}, Files: map[string]string{}, Pending: []Permission{}}
+			s := &Session{Host: host, ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Status: "running", StartedAt: ev.Time, Recent: []ToolCall{}, Files: map[string]string{}, Pending: []Permission{}}
 			p.byID[d.SessionID] = s
 			changed = s
 		}
@@ -197,6 +211,39 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 			if s, ok := p.byID[d.SessionID]; ok {
 				s.Resumes++
 				s.Resumed = Resumed{At: ev.Time, RestartedAt: d.RestartedAt, How: d.How, TurnResumed: d.TurnResumed}
+				changed = s
+			}
+		}
+	case v1.EventChangesCommitted:
+		var d v1.ChangesCommitted
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.Commit = d.Commit
+				s.Commits++
+				changed = s
+			}
+		}
+	case v1.EventChangesMerged:
+		var d v1.ChangesMerged
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.MergedInto, s.MergedCommit = d.Into, d.Commit
+				changed = s
+			}
+		}
+	case v1.EventPullRequestOpened:
+		var d v1.PullRequestOpened
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.PullRequest = d.URL
+				changed = s
+			}
+		}
+	case v1.EventWorktreeRemoved:
+		var d v1.WorktreeRemoved
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.WorktreeRemoved = true
 				changed = s
 			}
 		}

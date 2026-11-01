@@ -24,6 +24,13 @@ type API interface {
 	Requests(ctx context.Context) []RequestInfo
 	Approve(ctx context.Context, requestID, commandID string) (RequestInfo, error)
 	Deny(ctx context.Context, requestID, commandID string) (RequestInfo, error)
+	// Sessions lists every session on this host, newest first.
+	Sessions(ctx context.Context) []SessionInfo
+	StopSession(ctx context.Context, sessionID, commandID string) (SessionInfo, error)
+	// RemoveSession deletes a finished session's worktree and branch.
+	RemoveSession(ctx context.Context, sessionID, commandID string, force bool) (RemoveResult, error)
+	// PruneSessions removes what finished sessions left behind.
+	PruneSessions(ctx context.Context) []PruneResult
 }
 
 // Serve listens on the Unix socket at path until ctx ends. A stale socket
@@ -93,6 +100,43 @@ func Serve(ctx context.Context, path string, api API) error {
 	}
 	mux.HandleFunc("POST /v1/requests/{id}/approve", decide(api.Approve))
 	mux.HandleFunc("POST /v1/requests/{id}/deny", decide(api.Deny))
+
+	mux.HandleFunc("GET /v1/sessions", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, http.StatusOK, api.Sessions(r.Context()))
+	})
+	sessionStatus := func(err error) int {
+		switch {
+		case errors.Is(err, session.ErrUnknownSession):
+			return http.StatusNotFound
+		case errors.Is(err, session.ErrOpen), errors.Is(err, session.ErrInCheckout):
+			return http.StatusConflict
+		default:
+			return http.StatusBadRequest
+		}
+	}
+	mux.HandleFunc("POST /v1/sessions/{id}/stop", func(w http.ResponseWriter, r *http.Request) {
+		var req SessionCommand
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		info, err := api.StopSession(r.Context(), r.PathValue("id"), req.CommandID)
+		if err != nil {
+			reply(w, sessionStatus(err), ErrorResponse{Error: err.Error()})
+			return
+		}
+		reply(w, http.StatusOK, info)
+	})
+	mux.HandleFunc("DELETE /v1/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		var req SessionCommand
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		res, err := api.RemoveSession(r.Context(), r.PathValue("id"), req.CommandID, req.Force)
+		if err != nil {
+			reply(w, sessionStatus(err), ErrorResponse{Error: err.Error()})
+			return
+		}
+		reply(w, http.StatusOK, res)
+	})
+	mux.HandleFunc("POST /v1/sessions/prune", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, http.StatusOK, api.PruneSessions(r.Context()))
+	})
 
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)

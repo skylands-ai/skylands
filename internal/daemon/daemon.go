@@ -269,6 +269,45 @@ func (c *commands) handle(ctx context.Context, msg *nats.Msg) {
 			return
 		}
 		c.replyResult(msg, map[string]any{"sessionId": s.ID, "trusted": s.Trusted, "pending": len(s.Pending)})
+	case v1.CommandCommitChanges:
+		var cmd v1.CommitChanges
+		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+			c.reply(msg, v1.Reply{Error: "bad CommitChanges: " + err.Error()})
+			return
+		}
+		cmd.SessionID = sessionID
+		s, err := c.sessions.Commit(ctx, cmd)
+		if err != nil {
+			c.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		c.replyResult(msg, map[string]any{"sessionId": s.ID, "commit": s.Commit, "commits": s.Commits})
+	case v1.CommandMergeChanges:
+		var cmd v1.MergeChanges
+		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+			c.reply(msg, v1.Reply{Error: "bad MergeChanges: " + err.Error()})
+			return
+		}
+		cmd.SessionID = sessionID
+		s, err := c.sessions.Merge(ctx, cmd)
+		if err != nil {
+			c.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		c.replyResult(msg, map[string]any{"sessionId": s.ID, "mergedInto": s.MergedInto, "commit": s.MergedCommit})
+	case v1.CommandOpenPullRequest:
+		var cmd v1.OpenPullRequest
+		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+			c.reply(msg, v1.Reply{Error: "bad OpenPullRequest: " + err.Error()})
+			return
+		}
+		cmd.SessionID = sessionID
+		s, err := c.sessions.OpenPullRequest(ctx, cmd)
+		if err != nil {
+			c.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		c.replyResult(msg, map[string]any{"sessionId": s.ID, "pullRequest": s.PullRequest})
 	default:
 		c.reply(msg, v1.Reply{Error: "unknown command " + commandType})
 	}
@@ -306,15 +345,46 @@ func (a *localAPI) Status(context.Context) socket.StatusInfo {
 	for _, r := range repos {
 		infos = append(infos, repoInfo(r))
 	}
-	var sessions []socket.SessionInfo
+	return socket.StatusInfo{Host: a.host, World: a.world, Version: a.version, Started: a.started, Repos: infos, Sessions: a.Sessions(context.Background())}
+}
+
+func (a *localAPI) Sessions(context.Context) []socket.SessionInfo {
+	var out []socket.SessionInfo
 	for _, s := range a.sessions.List() {
-		name := s.RepoID
-		if r, ok := a.agg.Repo(s.RepoID); ok {
-			name = r.Name
-		}
-		sessions = append(sessions, socket.SessionInfo{ID: s.ID, Repo: name, Agent: s.Agent, Status: string(s.Status), Turns: s.Turns, Title: s.Title, Prompt: s.Prompt, Pending: len(s.Pending), StartedAt: s.StartedAt})
+		out = append(out, a.sessionInfo(s))
 	}
-	return socket.StatusInfo{Host: a.host, World: a.world, Version: a.version, Started: a.started, Repos: infos, Sessions: sessions}
+	return out
+}
+
+func (a *localAPI) sessionInfo(s session.Session) socket.SessionInfo {
+	name := s.RepoID
+	if r, ok := a.agg.Repo(s.RepoID); ok {
+		name = r.Name
+	}
+	return socket.SessionInfo{
+		ID: s.ID, Repo: name, Agent: s.Agent, Status: string(s.Status), Turns: s.Turns, Title: s.Title, Prompt: s.Prompt, Pending: len(s.Pending),
+		Worktree: s.Worktree, Branch: s.Branch, Base: s.Base, InCheckout: s.InCheckout,
+		Commit: s.Commit, MergedInto: s.MergedInto, PullRequest: s.PullRequest, WorktreeRemoved: s.WorktreeRemoved,
+		StartedAt: s.StartedAt, EndedAt: s.EndedAt,
+	}
+}
+
+func (a *localAPI) StopSession(ctx context.Context, sessionID, commandID string) (socket.SessionInfo, error) {
+	s, err := a.sessions.Stop(ctx, v1.StopAgent{ID: commandID, SessionID: sessionID})
+	return a.sessionInfo(s), err
+}
+
+func (a *localAPI) RemoveSession(ctx context.Context, sessionID, commandID string, force bool) (socket.RemoveResult, error) {
+	s, deleted, err := a.sessions.Remove(ctx, commandID, sessionID, force)
+	return socket.RemoveResult{Session: a.sessionInfo(s), BranchDeleted: deleted}, err
+}
+
+func (a *localAPI) PruneSessions(ctx context.Context) []socket.PruneResult {
+	out := []socket.PruneResult{}
+	for _, p := range a.sessions.Prune(ctx) {
+		out = append(out, socket.PruneResult{Session: a.sessionInfo(p.Session), Removed: p.Removed, BranchDeleted: p.BranchDeleted, Kept: p.Kept})
+	}
+	return out
 }
 
 func (a *localAPI) Requests(context.Context) []socket.RequestInfo {

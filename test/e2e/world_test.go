@@ -453,7 +453,10 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 	if testing.Short() {
 		t.Skip("whole-world test")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	for _, kv := range [][2]string{{"GIT_AUTHOR_NAME", "t"}, {"GIT_AUTHOR_EMAIL", "t@t"}, {"GIT_COMMITTER_NAME", "t"}, {"GIT_COMMITTER_EMAIL", "t@t"}} {
+		t.Setenv(kv[0], kv[1])
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	w := startWorld(t, ctx)
 	b := w.openBrowser()
@@ -603,6 +606,53 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 	}
 	if code, _ := get("/api/sessions/nowhere/x/transcript"); code != http.StatusBadGateway {
 		t.Errorf("unknown host transcript: %d", code)
+	}
+
+	// The session's changes are committed and merged into the checkout from
+	// the browser. The fake agent changes nothing, so the test does.
+	worktree := out["worktree"].(string)
+	if err := os.WriteFile(filepath.Join(worktree, "faster.go"), []byte("package faster\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := get("/api/sessions/ws/" + id + "/changes"); code != http.StatusOK || !strings.Contains(body, `"changed":["faster.go"]`) || !strings.Contains(body, `"ahead":0`) {
+		t.Errorf("changes: %d %s", code, body)
+	}
+	if code, out := post2("/api/sessions/ws/"+id+"/merge", `{}`); code != http.StatusBadRequest || !strings.Contains(out["error"].(string), "uncommitted") {
+		t.Errorf("merge before a commit: %d %v", code, out)
+	}
+	if code, out := post2("/api/sessions/ws/"+id+"/commit", `{"message":"Make it faster"}`); code != http.StatusOK {
+		t.Fatalf("commit: %d %v", code, out)
+	}
+	v = b.wait(t, "the commit", 10*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Commits == 1 })
+	if code, out := post2("/api/sessions/ws/"+id+"/merge", `{}`); code != http.StatusOK {
+		t.Fatalf("merge: %d %v", code, out)
+	}
+	v = b.wait(t, "the merge", 10*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.MergedInto != "" })
+	if s := v.sessions[id]; s.MergedInto != s.Base || s.MergedCommit != s.Commit || s.InCheckout {
+		t.Errorf("merged session = base %q, mergedInto %q, commits %q/%q", s.Base, s.MergedInto, s.MergedCommit, s.Commit)
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, "faster.go")); err != nil {
+		t.Errorf("the checkout lacks the merged file: %v", err)
+	}
+	if code, body := get("/api/sessions/ws/" + id + "/transcript"); code != http.StatusOK || !strings.Contains(body, "Committed ") || !strings.Contains(body, "Merged into ") {
+		t.Errorf("transcript after the merge: %d %s", code, body)
+	}
+
+	// A session can work in the checkout itself, one at a time.
+	code, out = post(`{"host":"ws","repoId":"` + info.ID + `","agent":"fake","prompt":"work in place","inCheckout":true}`)
+	if code != http.StatusCreated {
+		t.Fatalf("start a checkout session: %d %v", code, out)
+	}
+	inPlace := out["sessionId"].(string)
+	v = b.wait(t, "the checkout session", 15*time.Second, func(v view) bool { _, ok := v.sessions[inPlace]; return ok })
+	if s := v.sessions[inPlace]; !s.InCheckout || s.Branch != v.sessions[id].Base {
+		t.Errorf("checkout session = %+v", s)
+	}
+	if code, out := post(`{"host":"ws","repoId":"` + info.ID + `","agent":"fake","prompt":"me too","inCheckout":true}`); code != http.StatusBadRequest || !strings.Contains(out["error"].(string), "another session") {
+		t.Errorf("second checkout session: %d %v", code, out)
+	}
+	if code, out := post2("/api/sessions/ws/"+inPlace+"/stop", `{}`); code != http.StatusOK {
+		t.Fatalf("stop the checkout session: %d %v", code, out)
 	}
 }
 

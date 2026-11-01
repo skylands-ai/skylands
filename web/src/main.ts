@@ -103,6 +103,9 @@ const inboxActions: InboxActions = {
   approve: (x, p, optionId) => sessionCommand(x.host, x.id, `requests/${encodeURIComponent(p.requestId)}/approve`, { optionId }),
   deny: (x, p) => sessionCommand(x.host, x.id, `requests/${encodeURIComponent(p.requestId)}/deny`, {}),
   trust: (x, trusted) => sessionCommand(x.host, x.id, 'trust', { trusted }),
+  commit: (x, message) => sessionCommand(x.host, x.id, 'commit', { message }),
+  merge: (x) => sessionCommand(x.host, x.id, 'merge', {}),
+  pullRequest: (x) => sessionCommand(x.host, x.id, 'pull-request', {}),
 }
 
 /** Shows the world or the inbox, and updates the switch in the header. */

@@ -151,6 +151,17 @@ otherwise through a new session given the transcript, and a turn the
 restart cut short is picked up again. The conversation notes where the
 restart happened.
 
+A session works in a git worktree of its own, on a branch cut from
+whatever the checkout was on, or in the checkout itself when the command
+bar's Where chip says so. When the agent is not mid-turn, the conversation
+shows where its changes stand and offers to commit them, merge the branch
+into the checkout, or push it and open a pull request with `gh`. On the
+host, `skylands session list` shows every session, `session stop` ends
+one, `session remove` deletes a finished session's worktree and branch,
+and `session prune` does that for all of them, keeping any worktree with
+uncommitted changes or branch with unmerged commits unless `--force` is
+given.
+
 ### Running the roles separately
 
 `devworld up` is the same code as the separate roles, with NATS started for

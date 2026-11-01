@@ -74,7 +74,14 @@ specifies. No events, streams, or aggregates are needed for it.
   records when the daemon restarted and how the agent came back, the
   conversation shows a note at that point, and the agent panel counts
   restarts. AgentFailed now means the agent itself failed, such as its
-  worktree being gone. Landing the work remains.
+  worktree being gone.
+- Milestone 9, second part, is done: merging a session's changes. A session
+  runs in a worktree of its own or, from the command bar's Where chip, in
+  the registered checkout. The conversation's changes card commits the
+  worktree, merges the branch into its base in the checkout, or pushes it
+  and opens a pull request with gh, and the agent panel and the inbox
+  show what became of the changes. `skylands session list|stop|remove|
+  prune` manage sessions and their worktrees and branches on the host.
 
 ## After the MVP
 
@@ -124,7 +131,7 @@ beacon, and the waiting count. The fake agent asks before its edit, so
 every test exercises the path. Signed approvals remain for the users
 milestone; the rule language remains a kind allow-list for now.
 
-### Milestone 9: recovery from a daemon restart, and landing the work
+### Milestone 9: recovery from a daemon restart, and merging a session's changes
 
 A daemon bounces for many reasons, and the one running the session is often
 the one being rebuilt. Before this milestone a restart marked every open
@@ -145,19 +152,30 @@ conversation could be read but not continued. After it:
 - **A restart is visible, not fatal.** AgentFailed is reserved for an agent
   that actually failed; a bounce records that the daemon restarted and what
   it resumed.
-- **Landing the work.** Sessions can run in the registered checkout or in a
-  worktree, the conversation offers to commit the worktree and merge or
-  open a pull request, and `session` commands stop, remove, and prune
-  worktrees and branches.
+- **Merging a session's changes.** Sessions can run in the registered
+  checkout or in a worktree, the conversation offers to commit the
+  worktree and merge the branch or open a pull request, and `session`
+  commands stop, remove, and prune worktrees and branches.
 
-Done, except landing the work: the first three points. The daemon keeps
-the agent's own session id from AgentSpawned, asks the agent to load it
-again after a restart, and seeds a new session with the transcript when it
-cannot. Nothing is re-asked by the daemon itself: the interrupted turn is
-continued with a prompt that says what happened, and the agent asks again
-for what it still needs. An idle session's agent comes back idle. The
-transcript gets a note at the point of the restart, which the conversation
-shows between the messages.
+Done. For the restart: the daemon keeps the agent's own session id from
+AgentSpawned, asks the agent to load it again after a restart, and seeds
+a new session with the transcript when it cannot. Nothing is re-asked by
+the daemon itself: the interrupted turn is continued with a prompt that
+says what happened, and the agent asks again for what it still needs. An
+idle session's agent comes back idle. The transcript gets a note at the
+point of the restart, which the conversation shows between the messages.
+
+For the changes: a session's branch is cut from whatever the checkout is
+on, which SessionStarted records as the base. The command bar's Where chip
+starts a session in the checkout instead, one at a time per repository.
+CommitChanges, MergeChanges, and OpenPullRequest arrive over NATS from the
+conversation's changes card, which reads where the changes stand from the
+host through the changes fetch. A merge goes into the base in the checkout
+and is aborted on conflict; a pull request is a push to origin and
+`gh pr create`. ChangesCommitted, ChangesMerged, PullRequestOpened, and
+WorktreeRemoved record each step, and the transcript gets a note.
+`skylands session list|stop|remove|prune` work over the socket; remove and
+prune keep a dirty worktree or an unmerged branch unless forced.
 
 ## What the MVP proves
 

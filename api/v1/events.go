@@ -98,13 +98,14 @@ func IsSessionEvent(eventType string) bool {
 	case EventSessionStarted, EventPromptSent, EventAgentSpawned, EventToolCallStarted, EventToolCallCompleted,
 		EventPlanUpdated, EventUsageReported, EventAgentFailed, EventSessionEnded, EventTurnEnded, EventSessionTitled,
 		EventPermissionRequested, EventPermissionGranted, EventPermissionDenied, EventPermissionExpired, EventSessionTrusted,
-		EventSessionResumed:
+		EventSessionResumed, EventChangesCommitted, EventChangesMerged, EventPullRequestOpened, EventWorktreeRemoved:
 		return true
 	}
 	return false
 }
 
-// SessionStarted records a new session in its own git worktree.
+// SessionStarted records a new session: in its own git worktree on its own
+// branch, or in the registered checkout itself.
 type SessionStarted struct {
 	SessionID string `json:"sessionId"`
 	RepoID    string `json:"repoId"`
@@ -112,9 +113,17 @@ type SessionStarted struct {
 	Agent string `json:"agent"`
 	// Model is the model the agent was asked to use, or empty for the
 	// agent's own default.
-	Model    string `json:"model,omitempty"`
+	Model string `json:"model,omitempty"`
+	// Worktree is the directory the agent works in: a worktree of its own,
+	// or the checkout when InCheckout is set.
 	Worktree string `json:"worktree"`
-	Branch   string `json:"branch"`
+	// Branch is the branch the agent works on. For a worktree session it
+	// was cut from Base; for a checkout session it is the checkout's own.
+	Branch string `json:"branch"`
+	// Base is the branch a worktree session's changes merge into, which
+	// is what the checkout was on when the session started.
+	Base       string `json:"base,omitempty"`
+	InCheckout bool   `json:"inCheckout,omitempty"`
 }
 
 // PromptSent records what a person asked the session to do.
@@ -203,6 +212,9 @@ type StartSession struct {
 	// Model overrides the agent's default model when set.
 	Model  string `json:"model,omitempty"`
 	Prompt string `json:"prompt"`
+	// InCheckout runs the agent in the registered checkout itself instead
+	// of a worktree of its own. One session at a time may work there.
+	InCheckout bool `json:"inCheckout,omitempty"`
 }
 
 // Reply is the answer to any command: an error, or the handler's result.
@@ -224,7 +236,27 @@ const (
 	FetchTranscript = "transcript"
 	// FetchDiff returns the changes in a session's worktree.
 	FetchDiff = "diff"
+	// FetchChanges returns where a session's changes stand: what is
+	// uncommitted and how far its branch is ahead of its base.
+	FetchChanges = "changes"
 )
+
+// ChangesResult is the state of a session's changes on the host's disk.
+// What was committed, merged, or sent as a pull request through Skylands
+// is in the session's events; this is what git says right now.
+type ChangesResult struct {
+	Branch     string `json:"branch"`
+	Base       string `json:"base,omitempty"`
+	InCheckout bool   `json:"inCheckout,omitempty"`
+	// Changed lists the files with uncommitted changes.
+	Changed []string `json:"changed"`
+	// Ahead counts the commits on Branch that Base lacks. It is zero for
+	// a checkout session, which has no branch of its own.
+	Ahead int `json:"ahead"`
+	// WorktreeRemoved means the worktree and its branch are gone, so
+	// nothing above applies.
+	WorktreeRemoved bool `json:"worktreeRemoved,omitempty"`
+}
 
 // FetchSessionRequest asks for one session's transcript or diff.
 type FetchSessionRequest struct {
@@ -409,4 +441,80 @@ type SendPrompt struct {
 type StopAgent struct {
 	ID        string `json:"id"`
 	SessionID string `json:"sessionId"`
+}
+
+// Changes events. A session's changes sit in its worktree until a person
+// commits them, merges the branch into its base, or opens a pull request
+// from it, each from the conversation or the host's CLI, and the worktree
+// and branch stay until removed.
+const (
+	EventChangesCommitted  = "ChangesCommitted"
+	EventChangesMerged     = "ChangesMerged"
+	EventPullRequestOpened = "PullRequestOpened"
+	EventWorktreeRemoved   = "WorktreeRemoved"
+)
+
+// ChangesCommitted records a commit of everything in the session's
+// worktree, on its branch.
+type ChangesCommitted struct {
+	SessionID string   `json:"sessionId"`
+	Commit    string   `json:"commit"`
+	Message   string   `json:"message"`
+	Files     []string `json:"files,omitempty"`
+}
+
+// ChangesMerged records the session's branch merged into its base in the
+// registered checkout. Commit is the checkout's new tip.
+type ChangesMerged struct {
+	SessionID string `json:"sessionId"`
+	Into      string `json:"into"`
+	Commit    string `json:"commit"`
+}
+
+// PullRequestOpened records the session's branch pushed and a pull
+// request opened from it.
+type PullRequestOpened struct {
+	SessionID string `json:"sessionId"`
+	URL       string `json:"url"`
+	Branch    string `json:"branch"`
+}
+
+// WorktreeRemoved records that the session's worktree is gone, and whether
+// its branch went with it. A branch with commits its base lacks is kept
+// unless the removal was forced.
+type WorktreeRemoved struct {
+	SessionID     string `json:"sessionId"`
+	BranchDeleted bool   `json:"branchDeleted"`
+}
+
+// Changes commands.
+const (
+	CommandCommitChanges   = "CommitChanges"
+	CommandMergeChanges    = "MergeChanges"
+	CommandOpenPullRequest = "OpenPullRequest"
+)
+
+// CommitChanges commits everything in the session's worktree. An empty
+// Message uses the conversation's title.
+type CommitChanges struct {
+	ID        string `json:"id"`
+	SessionID string `json:"sessionId"`
+	Message   string `json:"message,omitempty"`
+}
+
+// MergeChanges merges the session's branch into its base in the registered
+// checkout, which must be on that base. The worktree must be committed.
+type MergeChanges struct {
+	ID        string `json:"id"`
+	SessionID string `json:"sessionId"`
+}
+
+// OpenPullRequest pushes the session's branch to the repository's origin
+// and opens a pull request against its base with gh. Empty Title and Body
+// use the conversation's title and first prompt.
+type OpenPullRequest struct {
+	ID        string `json:"id"`
+	SessionID string `json:"sessionId"`
+	Title     string `json:"title,omitempty"`
+	Body      string `json:"body,omitempty"`
 }

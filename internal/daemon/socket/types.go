@@ -29,15 +29,54 @@ type RepoInfo struct {
 
 // SessionInfo describes one agent session on this host.
 type SessionInfo struct {
-	ID        string    `json:"id"`
-	Repo      string    `json:"repo"`
-	Agent     string    `json:"agent"`
-	Status    string    `json:"status"`
-	Turns     int       `json:"turns"`
-	Title     string    `json:"title,omitempty"`
-	Prompt    string    `json:"prompt"`
-	Pending   int       `json:"pending,omitempty"`
-	StartedAt time.Time `json:"startedAt"`
+	ID      string `json:"id"`
+	Repo    string `json:"repo"`
+	Agent   string `json:"agent"`
+	Status  string `json:"status"`
+	Turns   int    `json:"turns"`
+	Title   string `json:"title,omitempty"`
+	Prompt  string `json:"prompt"`
+	Pending int    `json:"pending,omitempty"`
+	// Worktree is where the agent works, and Branch what it works on. A
+	// session in the checkout has InCheckout set and no base.
+	Worktree   string `json:"worktree,omitempty"`
+	Branch     string `json:"branch,omitempty"`
+	Base       string `json:"base,omitempty"`
+	InCheckout bool   `json:"inCheckout,omitempty"`
+	// Commit is the latest commit made through Skylands, MergedInto the
+	// branch the session's branch was merged into, and PullRequest the
+	// pull request opened from it.
+	Commit          string    `json:"commit,omitempty"`
+	MergedInto      string    `json:"mergedInto,omitempty"`
+	PullRequest     string    `json:"pullRequest,omitempty"`
+	WorktreeRemoved bool      `json:"worktreeRemoved,omitempty"`
+	StartedAt       time.Time `json:"startedAt"`
+	EndedAt         time.Time `json:"endedAt,omitzero"`
+}
+
+// SessionCommand is the body of POST /v1/sessions/{id}/stop and DELETE
+// /v1/sessions/{id}.
+type SessionCommand struct {
+	// CommandID identifies the command. The client fills it in when empty.
+	CommandID string `json:"commandId,omitempty"`
+	// Force removes a worktree with uncommitted changes and a branch with
+	// unmerged commits.
+	Force bool `json:"force,omitempty"`
+}
+
+// RemoveResult is what removing a session's worktree did.
+type RemoveResult struct {
+	Session       SessionInfo `json:"session"`
+	BranchDeleted bool        `json:"branchDeleted"`
+}
+
+// PruneResult is what pruning did with one finished session.
+type PruneResult struct {
+	Session       SessionInfo `json:"session"`
+	Removed       bool        `json:"removed"`
+	BranchDeleted bool        `json:"branchDeleted,omitempty"`
+	// Kept says why the worktree stayed, when it did.
+	Kept string `json:"kept,omitempty"`
 }
 
 // OptionInfo is one answer a request accepts.

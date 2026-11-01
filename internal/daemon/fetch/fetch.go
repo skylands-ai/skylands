@@ -25,9 +25,11 @@ import (
 // MaxBytes is the most text one answer carries.
 const MaxBytes = 512 * 1024
 
-// Sessions finds sessions, which the session manager provides.
+// Sessions finds sessions and reports their changes, which the session
+// manager provides.
 type Sessions interface {
 	Get(id string) (session.Session, bool)
+	Changes(ctx context.Context, id string) (v1.ChangesResult, error)
 }
 
 // Responder answers fetch requests for one host.
@@ -63,7 +65,20 @@ func (r *Responder) Handle(ctx context.Context, msg *nats.Msg) {
 	case v1.FetchTranscript:
 		text, err = r.transcript(s)
 	case v1.FetchDiff:
-		text, err = diff(ctx, s.Worktree)
+		if s.WorktreeRemoved {
+			err = errors.New("the worktree has been removed")
+		} else {
+			text, err = diff(ctx, s.Worktree)
+		}
+	case v1.FetchChanges:
+		changes, err := r.sessions.Changes(ctx, s.ID)
+		if err != nil {
+			r.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		data, _ := json.Marshal(changes)
+		r.reply(msg, v1.Reply{Result: data})
+		return
 	default:
 		err = errors.New("unknown fetch kind " + kind)
 	}

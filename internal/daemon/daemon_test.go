@@ -294,6 +294,31 @@ func TestStartSessionOverNATS(t *testing.T) {
 		t.Error("an unknown session's transcript was served")
 	}
 
+	// The local CLI's path lists the session and cleans up after it: the
+	// dirty worktree is kept until the removal is forced.
+	sessions, err := cli.Sessions(ctx)
+	if err != nil || len(sessions) != 1 || sessions[0].Branch != "skylands/sess-1" || sessions[0].Worktree != result.Worktree || sessions[0].Status != "ended" {
+		t.Fatalf("Sessions = %+v, %v", sessions, err)
+	}
+	if _, err := cli.StopSession(ctx, "nope"); err == nil || !strings.Contains(err.Error(), "no such session") {
+		t.Errorf("stop an unknown session: err = %v", err)
+	}
+	if pruned, err := cli.PruneSessions(ctx); err != nil || len(pruned) != 1 || pruned[0].Removed {
+		t.Errorf("PruneSessions with a dirty worktree = %+v, %v", pruned, err)
+	}
+	if _, err := cli.RemoveSession(ctx, "sess-1", false); err == nil {
+		t.Error("a dirty worktree was removed without force")
+	}
+	if res, err := cli.RemoveSession(ctx, "sess-1", true); err != nil || !res.Session.WorktreeRemoved || !res.BranchDeleted {
+		t.Fatalf("RemoveSession = %+v, %v", res, err)
+	}
+	if _, err := os.Stat(result.Worktree); err == nil {
+		t.Error("the worktree is still there")
+	}
+	if _, errText := fetchText(v1.FetchDiff, "sess-1"); errText == "" {
+		t.Error("a removed worktree's diff was served")
+	}
+
 	stop()
 	if err := <-done; err != nil {
 		t.Errorf("Run returned %v", err)

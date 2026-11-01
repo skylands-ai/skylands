@@ -579,3 +579,248 @@ func TestLoadResumesOpenSessions(t *testing.T) {
 		t.Errorf("ended session after a restart = %+v", s)
 	}
 }
+
+// gitIdentity gives the daemon's git commands an author and committer, as
+// a host's global config would.
+func gitIdentity(t *testing.T) {
+	t.Helper()
+	for _, kv := range [][2]string{{"GIT_AUTHOR_NAME", "t"}, {"GIT_AUTHOR_EMAIL", "t@t"}, {"GIT_COMMITTER_NAME", "t"}, {"GIT_COMMITTER_EMAIL", "t@t"}} {
+		t.Setenv(kv[0], kv[1])
+	}
+}
+
+// fakeGH puts a gh on the PATH that records its arguments and prints a
+// pull request URL, so opening a pull request needs no GitHub.
+func fakeGH(t *testing.T) (argsFile string) {
+	t.Helper()
+	dir := t.TempDir()
+	argsFile = filepath.Join(dir, "args")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsFile + "\necho https://example.com/pr/7\n"
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return argsFile
+}
+
+func gitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func TestChangesAreCommittedMergedSentAndRemoved(t *testing.T) {
+	f := setup(t)
+	gitIdentity(t)
+	ghArgs := fakeGH(t)
+	// The repository has an origin to push to: a bare clone beside it.
+	bare := t.TempDir()
+	gitOut(t, bare, "init", "-q", "--bare")
+	gitOut(t, f.repo.Path, "remote", "add", "origin", bare)
+	base := gitOut(t, f.repo.Path, "rev-parse", "--abbrev-ref", "HEAD")
+
+	m, err := Load(f.ctx, f.store, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := m.Start(f.ctx, v1.StartSession{ID: "c1", SessionID: "s1", RepoID: f.repo.ID, Agent: "fake", Prompt: "add a file"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Base != base || s.InCheckout || s.Branch != "skylands/s1" {
+		t.Errorf("session = base %q, inCheckout %v, branch %q", s.Base, s.InCheckout, s.Branch)
+	}
+	// Nothing can be done with the changes while the agent is mid-turn.
+	if _, err := m.Commit(f.ctx, v1.CommitChanges{ID: "x0", SessionID: "s1"}); !errors.Is(err, ErrBusy) {
+		t.Errorf("commit during a turn: err = %v", err)
+	}
+	asked := waitPending(t, m, "s1", 1)
+	if _, err := m.Approve(f.ctx, v1.ApproveToolCall{ID: "c2", SessionID: "s1", RequestID: asked.Pending[0].RequestID}, "local"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, "s1", StatusIdle)
+
+	// The fake agent changes nothing, so the test plays the agent's edit.
+	if _, err := m.Commit(f.ctx, v1.CommitChanges{ID: "x1", SessionID: "s1"}); !errors.Is(err, ErrNothingToCommit) {
+		t.Errorf("commit with nothing changed: err = %v", err)
+	}
+	if _, err := m.Merge(f.ctx, v1.MergeChanges{ID: "x2", SessionID: "s1"}); !errors.Is(err, ErrNothingToMerge) {
+		t.Errorf("merge with nothing to merge: err = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(s.Worktree, "new.go"), []byte("package new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.Worktree, "a.go"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := m.Changes(f.ctx, "s1")
+	if err != nil || strings.Join(changes.Changed, ",") != "a.go,new.go" || changes.Ahead != 0 || changes.Base != base {
+		t.Errorf("Changes = %+v, %v", changes, err)
+	}
+	if _, err := m.Merge(f.ctx, v1.MergeChanges{ID: "x3", SessionID: "s1"}); !errors.Is(err, ErrUncommitted) {
+		t.Errorf("merge with uncommitted changes: err = %v", err)
+	}
+
+	// A commit takes everything in the worktree, with the title as the
+	// message when none is given; the same command id commits nothing more.
+	for titled, _ := m.Get("s1"); titled.Title == ""; titled, _ = m.Get("s1") {
+		time.Sleep(20 * time.Millisecond)
+	}
+	committed, err := m.Commit(f.ctx, v1.CommitChanges{ID: "x4", SessionID: "s1"})
+	if err != nil || committed.Commits != 1 || committed.Commit == "" {
+		t.Fatalf("Commit = %+v, %v", committed, err)
+	}
+	if again, err := m.Commit(f.ctx, v1.CommitChanges{ID: "x4", SessionID: "s1"}); err != nil || again.Commits != 1 {
+		t.Errorf("repeated commit = %+v, %v", again, err)
+	}
+	if msg := gitOut(t, s.Worktree, "log", "-1", "--format=%s"); msg != "Add a file" {
+		t.Errorf("commit message = %q, want the title", msg)
+	}
+	if changes, _ := m.Changes(f.ctx, "s1"); len(changes.Changed) != 0 || changes.Ahead != 1 {
+		t.Errorf("after the commit = %+v", changes)
+	}
+
+	// A merge lands the branch in the checkout, on its base.
+	merged, err := m.Merge(f.ctx, v1.MergeChanges{ID: "x5", SessionID: "s1"})
+	if err != nil || merged.MergedInto != base || merged.MergedCommit != committed.Commit {
+		t.Fatalf("Merge = %+v, %v", merged, err)
+	}
+	if _, err := os.Stat(filepath.Join(f.repo.Path, "new.go")); err != nil {
+		t.Errorf("the checkout lacks the merged file: %v", err)
+	}
+	if changes, _ := m.Changes(f.ctx, "s1"); changes.Ahead != 0 {
+		t.Errorf("after the merge = %+v", changes)
+	}
+
+	// Another commit, pushed as a pull request through gh.
+	if err := os.WriteFile(filepath.Join(s.Worktree, "b.go"), []byte("more\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Commit(f.ctx, v1.CommitChanges{ID: "x6", SessionID: "s1", Message: "Second change"}); err != nil {
+		t.Fatal(err)
+	}
+	pr, err := m.OpenPullRequest(f.ctx, v1.OpenPullRequest{ID: "x7", SessionID: "s1"})
+	if err != nil || pr.PullRequest != "https://example.com/pr/7" {
+		t.Fatalf("OpenPullRequest = %+v, %v", pr, err)
+	}
+	if args, _ := os.ReadFile(ghArgs); !strings.Contains(string(args), "pr\ncreate\n--head\nskylands/s1\n--base\n"+base+"\n--title\nAdd a file\n--body\nadd a file") {
+		t.Errorf("gh was called with %q", args)
+	}
+	if pushed := gitOut(t, bare, "branch", "--list", "skylands/s1"); !strings.Contains(pushed, "skylands/s1") {
+		t.Errorf("the branch was not pushed: %q", pushed)
+	}
+
+	// The worktree stays until the session is over and someone removes it.
+	if _, _, err := m.Remove(f.ctx, "x8", "s1", false); !errors.Is(err, ErrOpen) {
+		t.Errorf("remove an open session: err = %v", err)
+	}
+	if _, err := m.Stop(f.ctx, v1.StopAgent{ID: "x9", SessionID: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.Worktree, "dirty.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Prune keeps a dirty worktree, and an unforced removal refuses it.
+	if pruned := m.Prune(f.ctx); len(pruned) != 1 || pruned[0].Removed || pruned[0].Kept == "" {
+		t.Errorf("Prune of a dirty worktree = %+v", pruned)
+	}
+	if _, _, err := m.Remove(f.ctx, "x10", "s1", false); err == nil {
+		t.Error("a dirty worktree was removed without force")
+	}
+	// Forced, the worktree goes, and the branch with it even though the
+	// second commit was never merged.
+	removed, branchDeleted, err := m.Remove(f.ctx, "x11", "s1", true)
+	if err != nil || !removed.WorktreeRemoved || !branchDeleted {
+		t.Fatalf("Remove = %+v, %v, %v", removed, branchDeleted, err)
+	}
+	if _, err := os.Stat(s.Worktree); err == nil {
+		t.Error("the worktree directory is still there")
+	}
+	if branches := gitOut(t, f.repo.Path, "branch", "--list", "skylands/s1"); branches != "" {
+		t.Errorf("the branch is still there: %q", branches)
+	}
+	if _, err := m.Commit(f.ctx, v1.CommitChanges{ID: "x12", SessionID: "s1"}); !errors.Is(err, ErrNoWorktree) {
+		t.Errorf("commit after removal: err = %v", err)
+	}
+	if changes, err := m.Changes(f.ctx, "s1"); err != nil || !changes.WorktreeRemoved {
+		t.Errorf("Changes after removal = %+v, %v", changes, err)
+	}
+	if pruned := m.Prune(f.ctx); len(pruned) != 0 {
+		t.Errorf("Prune after removal = %+v", pruned)
+	}
+	if b, _ := os.ReadFile(filepath.Join(f.cfg.TranscriptsDir, "s1.md")); !strings.Contains(string(b), "*Committed "+committed.Commit[:7]+": Add a file.*") || !strings.Contains(string(b), "*Merged into "+base+" as ") || !strings.Contains(string(b), "*Opened pull request https://example.com/pr/7.*") || !strings.Contains(string(b), "*Worktree and branch removed.*") {
+		t.Errorf("transcript = %q", b)
+	}
+
+	// A fresh manager knows all of it.
+	m2, err := Load(f.ctx, f.store, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s2, _ := m2.Get("s1"); s2.Commits != 2 || s2.MergedInto != base || s2.PullRequest == "" || !s2.WorktreeRemoved || s2.Base != base {
+		t.Errorf("reloaded session = %+v", s2)
+	}
+}
+
+func TestSessionInTheCheckout(t *testing.T) {
+	f := setup(t)
+	gitIdentity(t)
+	base := gitOut(t, f.repo.Path, "rev-parse", "--abbrev-ref", "HEAD")
+	m, err := Load(f.ctx, f.store, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := m.Start(f.ctx, v1.StartSession{ID: "c1", SessionID: "s1", RepoID: f.repo.ID, Agent: "fake", Prompt: "work here", InCheckout: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.InCheckout || s.Worktree != f.repo.Path || s.Branch != base || s.Base != base {
+		t.Errorf("checkout session = %+v", s)
+	}
+	// The checkout is shared, so a second session there must wait.
+	if _, err := m.Start(f.ctx, v1.StartSession{ID: "c2", SessionID: "s2", RepoID: f.repo.ID, Agent: "fake", Prompt: "me too", InCheckout: true}); !errors.Is(err, ErrCheckoutBusy) {
+		t.Errorf("second checkout session: err = %v", err)
+	}
+	asked := waitPending(t, m, "s1", 1)
+	if _, err := m.Approve(f.ctx, v1.ApproveToolCall{ID: "c3", SessionID: "s1", RequestID: asked.Pending[0].RequestID}, "local"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, "s1", StatusIdle)
+
+	// A commit lands on the checkout's own branch; there is no branch to
+	// merge, send, or remove.
+	if err := os.WriteFile(filepath.Join(f.repo.Path, "here.go"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if changes, err := m.Changes(f.ctx, "s1"); err != nil || !changes.InCheckout || changes.Ahead != 0 || strings.Join(changes.Changed, ",") != "here.go" {
+		t.Errorf("Changes = %+v, %v", changes, err)
+	}
+	if c, err := m.Commit(f.ctx, v1.CommitChanges{ID: "c4", SessionID: "s1", Message: "In place"}); err != nil || c.Commits != 1 {
+		t.Fatalf("Commit = %+v, %v", c, err)
+	}
+	if msg := gitOut(t, f.repo.Path, "log", "-1", "--format=%s"); msg != "In place" {
+		t.Errorf("checkout's last commit = %q", msg)
+	}
+	if _, err := m.Merge(f.ctx, v1.MergeChanges{ID: "c5", SessionID: "s1"}); !errors.Is(err, ErrInCheckout) {
+		t.Errorf("merge a checkout session: err = %v", err)
+	}
+	if _, err := m.OpenPullRequest(f.ctx, v1.OpenPullRequest{ID: "c6", SessionID: "s1"}); !errors.Is(err, ErrInCheckout) {
+		t.Errorf("pull request from a checkout session: err = %v", err)
+	}
+	if _, err := m.Stop(f.ctx, v1.StopAgent{ID: "c7", SessionID: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := m.Remove(f.ctx, "c8", "s1", true); !errors.Is(err, ErrInCheckout) {
+		t.Errorf("remove a checkout session: err = %v", err)
+	}
+	if pruned := m.Prune(f.ctx); len(pruned) != 0 {
+		t.Errorf("Prune touched a checkout session: %+v", pruned)
+	}
+	// With the first one over, the checkout is free again.
+	if _, err := m.Start(f.ctx, v1.StartSession{ID: "c9", SessionID: "s3", RepoID: f.repo.ID, Agent: "fake", Prompt: "now me", InCheckout: true}); err != nil {
+		t.Errorf("checkout session after the first ended: %v", err)
+	}
+}

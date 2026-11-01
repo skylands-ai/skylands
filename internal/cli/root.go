@@ -71,6 +71,7 @@ devworld up" runs both with an embedded NATS server for a one-machine world.`,
 		newWorldCmd(),
 		newRepoCmd(),
 		newRequestCmd(),
+		newSessionCmd(),
 		newVersionCmd(),
 		newFakeAgentCmd(),
 	)

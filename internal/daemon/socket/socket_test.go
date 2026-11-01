@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/skylands-ai/skylands/internal/daemon/host"
+	"github.com/skylands-ai/skylands/internal/daemon/session"
 )
 
 // shortSocket returns a socket path short enough for every platform's limit.
@@ -23,7 +24,34 @@ func shortSocket(t *testing.T) string {
 	return filepath.Join(dir, "d.sock")
 }
 
-type fakeAPI struct{ repos []RepoInfo }
+type fakeAPI struct {
+	repos    []RepoInfo
+	sessions []SessionInfo
+}
+
+func (f *fakeAPI) Sessions(context.Context) []SessionInfo { return f.sessions }
+func (f *fakeAPI) StopSession(_ context.Context, id, _ string) (SessionInfo, error) {
+	for i := range f.sessions {
+		if f.sessions[i].ID == id {
+			f.sessions[i].Status = "ended"
+			return f.sessions[i], nil
+		}
+	}
+	return SessionInfo{}, session.ErrUnknownSession
+}
+func (f *fakeAPI) RemoveSession(_ context.Context, id, _ string, force bool) (RemoveResult, error) {
+	for i := range f.sessions {
+		if f.sessions[i].ID == id {
+			if f.sessions[i].Status != "ended" {
+				return RemoveResult{}, session.ErrOpen
+			}
+			f.sessions[i].WorktreeRemoved = true
+			return RemoveResult{Session: f.sessions[i], BranchDeleted: force}, nil
+		}
+	}
+	return RemoveResult{}, session.ErrUnknownSession
+}
+func (f *fakeAPI) PruneSessions(context.Context) []PruneResult { return []PruneResult{} }
 
 func (f *fakeAPI) Requests(context.Context) []RequestInfo { return []RequestInfo{} }
 func (f *fakeAPI) Approve(_ context.Context, requestID, _ string) (RequestInfo, error) {
@@ -85,6 +113,28 @@ func TestServerAndClient(t *testing.T) {
 	}
 	if st, _ := c.Status(ctx); len(st.Repos) != 1 {
 		t.Errorf("status repos = %+v", st.Repos)
+	}
+
+	// Sessions are listed, stopped, and removed, with the daemon's refusals
+	// coming back as errors.
+	api.sessions = []SessionInfo{{ID: "s1", Status: "idle", Branch: "skylands/s1"}}
+	if list, err := c.Sessions(ctx); err != nil || len(list) != 1 || list[0].Branch != "skylands/s1" {
+		t.Errorf("Sessions = %+v, %v", list, err)
+	}
+	if _, err := c.RemoveSession(ctx, "s1", false); err == nil || !strings.Contains(err.Error(), "still open") {
+		t.Errorf("remove an open session: err = %v", err)
+	}
+	if s, err := c.StopSession(ctx, "s1"); err != nil || s.Status != "ended" {
+		t.Errorf("StopSession = %+v, %v", s, err)
+	}
+	if _, err := c.StopSession(ctx, "nope"); err == nil || !strings.Contains(err.Error(), "no such session") {
+		t.Errorf("stop an unknown session: err = %v", err)
+	}
+	if res, err := c.RemoveSession(ctx, "s1", true); err != nil || !res.Session.WorktreeRemoved || !res.BranchDeleted {
+		t.Errorf("RemoveSession = %+v, %v", res, err)
+	}
+	if pruned, err := c.PruneSessions(ctx); err != nil || len(pruned) != 0 {
+		t.Errorf("PruneSessions = %+v, %v", pruned, err)
 	}
 
 	stop()

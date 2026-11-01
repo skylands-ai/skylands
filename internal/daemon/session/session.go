@@ -9,14 +9,12 @@
 package session
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -54,17 +52,31 @@ type ToolCall struct {
 
 // Session is one agent run on one repository.
 type Session struct {
-	ID         string
-	RepoID     string
-	Agent      string
-	Model      string
-	AgentName  string
-	Prompt     string
-	Worktree   string
-	Branch     string
-	Status     Status
-	StopReason string
-	Error      string
+	ID        string
+	RepoID    string
+	Agent     string
+	Model     string
+	AgentName string
+	Prompt    string
+	// Worktree is where the agent works: a worktree of its own, or the
+	// registered checkout when InCheckout is set.
+	Worktree string
+	Branch   string
+	// Base is the branch a worktree session's changes merge into.
+	Base       string
+	InCheckout bool
+	// Commit is the latest commit made through Skylands, and Commits counts
+	// them. MergedInto and MergedCommit record the latest merge, and
+	// PullRequest the pull request opened from the branch.
+	Commit          string
+	Commits         int
+	MergedInto      string
+	MergedCommit    string
+	PullRequest     string
+	WorktreeRemoved bool
+	Status          Status
+	StopReason      string
+	Error           string
 	// Title is the name the agent gave the conversation, once it has.
 	Title string
 	// Trusted means tool calls are allowed without asking.
@@ -144,14 +156,22 @@ type Config struct {
 var DefaultAllowKinds = []string{"read", "search", "think"}
 
 var (
-	ErrUnknownRepo    = errors.New("no such repository on this host")
-	ErrUnknownAgent   = errors.New("no such agent on this host")
-	ErrEmptyPrompt    = errors.New("a prompt is required")
-	ErrUnknownSession = errors.New("no such session on this host")
-	ErrNotIdle        = errors.New("the session is not waiting for a prompt")
-	ErrOver           = errors.New("the session has ended")
-	ErrUnknownRequest = errors.New("no such request is waiting")
-	ErrResuming       = errors.New("the agent is being brought back after a restart; try again in a moment")
+	ErrUnknownRepo     = errors.New("no such repository on this host")
+	ErrUnknownAgent    = errors.New("no such agent on this host")
+	ErrEmptyPrompt     = errors.New("a prompt is required")
+	ErrUnknownSession  = errors.New("no such session on this host")
+	ErrNotIdle         = errors.New("the session is not waiting for a prompt")
+	ErrOver            = errors.New("the session has ended")
+	ErrUnknownRequest  = errors.New("no such request is waiting")
+	ErrResuming        = errors.New("the agent is being brought back after a restart; try again in a moment")
+	ErrCheckoutBusy    = errors.New("another session is working in the checkout")
+	ErrBusy            = errors.New("the agent is working; wait for the turn to end or stop the session")
+	ErrOpen            = errors.New("the session is still open; stop it first")
+	ErrInCheckout      = errors.New("the session works in the checkout itself, so it has no branch or worktree of its own")
+	ErrNoWorktree      = errors.New("the worktree has been removed")
+	ErrNothingToCommit = errors.New("there is nothing to commit")
+	ErrUncommitted     = errors.New("the worktree has uncommitted changes; commit them first")
+	ErrNothingToMerge  = errors.New("the branch has no commits its base lacks")
 )
 
 // Manager is the aggregate for every session on one island.
@@ -646,19 +666,30 @@ func (m *Manager) Start(ctx context.Context, cmd v1.StartSession) (Session, erro
 	if id == "" {
 		id = nuid.Next()
 	}
-	worktree := filepath.Join(m.cfg.WorktreesDir, id)
-	branch := "skylands/" + id
-	if err := addWorktree(ctx, repo.Path, worktree, branch); err != nil {
+	base, err := currentBranch(ctx, repo.Path)
+	if err != nil {
+		return Session{}, err
+	}
+	worktree, branch := filepath.Join(m.cfg.WorktreesDir, id), "skylands/"+id
+	if cmd.InCheckout {
+		// The checkout is shared, so only one agent at a time works in it.
+		for _, other := range m.List() {
+			if other.RepoID == repo.ID && other.InCheckout && (other.Status == StatusRunning || other.Status == StatusIdle) {
+				return Session{}, fmt.Errorf("%w: %s", ErrCheckoutBusy, other.ID)
+			}
+		}
+		worktree, branch = repo.Path, base
+	} else if err := addWorktree(ctx, repo.Path, worktree, branch); err != nil {
 		return Session{}, err
 	}
 
-	if err := m.record(ctx, id, cmd.ID, v1.EventSessionStarted, v1.SessionStarted{SessionID: id, RepoID: repo.ID, Agent: cmd.Agent, Model: cmd.Model, Worktree: worktree, Branch: branch}); err != nil {
+	if err := m.record(ctx, id, cmd.ID, v1.EventSessionStarted, v1.SessionStarted{SessionID: id, RepoID: repo.ID, Agent: cmd.Agent, Model: cmd.Model, Worktree: worktree, Branch: branch, Base: base, InCheckout: cmd.InCheckout}); err != nil {
 		return Session{}, err
 	}
 	if err := m.record(ctx, id, cmd.ID, v1.EventPromptSent, v1.PromptSent{SessionID: id, Text: cmd.Prompt}); err != nil {
 		return Session{}, err
 	}
-	slog.Info("session: started", "session", id, "repo", repo.Name, "agent", cmd.Agent, "model", cmd.Model, "worktree", worktree)
+	slog.Info("session: started", "session", id, "repo", repo.Name, "agent", cmd.Agent, "model", cmd.Model, "worktree", worktree, "branch", branch, "base", base)
 	m.transcript(id).Append("## You\n\n" + strings.TrimSpace(cmd.Prompt) + "\n\n## Agent\n\n")
 
 	m.runs.Add(1)
@@ -857,7 +888,7 @@ func (m *Manager) apply(ev v1.Event) {
 		if ev.Decode(&d) != nil {
 			return
 		}
-		m.sessions[d.SessionID] = &Session{ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Worktree: d.Worktree, Branch: d.Branch, Status: StatusRunning, StartedAt: ev.Time, UpdatedAt: ev.Time}
+		m.sessions[d.SessionID] = &Session{ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Worktree: d.Worktree, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Status: StatusRunning, StartedAt: ev.Time, UpdatedAt: ev.Time}
 		if ev.CommandID != "" {
 			m.handled[ev.CommandID] = d.SessionID
 		}
@@ -938,6 +969,47 @@ func (m *Manager) apply(ev v1.Event) {
 			if s := touch(d.SessionID); s != nil {
 				s.Resumes++
 				s.Resumed = Resumed{At: ev.Time, RestartedAt: d.RestartedAt, How: d.How, TurnResumed: d.TurnResumed}
+			}
+		}
+	case v1.EventChangesCommitted:
+		var d v1.ChangesCommitted
+		if ev.Decode(&d) == nil {
+			if s := touch(d.SessionID); s != nil {
+				s.Commit = d.Commit
+				s.Commits++
+				if ev.CommandID != "" {
+					m.handled[ev.CommandID] = d.SessionID
+				}
+			}
+		}
+	case v1.EventChangesMerged:
+		var d v1.ChangesMerged
+		if ev.Decode(&d) == nil {
+			if s := touch(d.SessionID); s != nil {
+				s.MergedInto, s.MergedCommit = d.Into, d.Commit
+				if ev.CommandID != "" {
+					m.handled[ev.CommandID] = d.SessionID
+				}
+			}
+		}
+	case v1.EventPullRequestOpened:
+		var d v1.PullRequestOpened
+		if ev.Decode(&d) == nil {
+			if s := touch(d.SessionID); s != nil {
+				s.PullRequest = d.URL
+				if ev.CommandID != "" {
+					m.handled[ev.CommandID] = d.SessionID
+				}
+			}
+		}
+	case v1.EventWorktreeRemoved:
+		var d v1.WorktreeRemoved
+		if ev.Decode(&d) == nil {
+			if s := touch(d.SessionID); s != nil {
+				s.WorktreeRemoved = true
+				if ev.CommandID != "" {
+					m.handled[ev.CommandID] = d.SessionID
+				}
 			}
 		}
 	case v1.EventToolCallStarted:
@@ -1139,15 +1211,8 @@ func addWorktree(ctx context.Context, repo, dir, branch string) error {
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", repo, "worktree", "add", "-b", branch, dir)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return fmt.Errorf("create worktree for %s: %s", filepath.Base(repo), msg)
+	if _, err := git(ctx, repo, "worktree", "add", "-b", branch, dir); err != nil {
+		return fmt.Errorf("create worktree for %s: %w", filepath.Base(repo), err)
 	}
 	return nil
 }

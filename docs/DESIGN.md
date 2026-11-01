@@ -276,7 +276,7 @@ A citadel learns which daemons it can reach by pinging the skylands-daemon micro
 - The daemon launches each agent as a child process and drives it over ACP on stdio, using the community Go SDK `github.com/spachava753/acp-sdk`.
 - Each agent type sits behind one adapter interface, so adding an agent type never changes the daemon core.
 - At ACP initialization the daemon records each agent's capabilities, such as session load and session list, and uses only what the agent advertises.
-- Each session runs in its own git worktree, and subagents work in their lead's worktree.
+- Each session runs in its own git worktree on a branch cut from the checkout's, unless it is started in the checkout itself, and subagents work in their lead's worktree. A session's changes are committed, merged into the checkout, or sent as a pull request from the conversation, and `skylands session` removes or prunes the worktrees and branches that ended sessions leave.
 - Agents distributed through npm need Node on the host. The daemon checks at startup, records which agent types it can launch, and the world shows that on the island's panel.
 
 ### Claude Code hooks

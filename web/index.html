@@ -39,6 +39,7 @@
           <span class="why" id="scopeWhy">Dispatches straight to this island’s daemon.</span>
           <label class="chip">Agent <select id="agentSel" aria-label="Agent"><option value="fake">Fake agent, built in</option><option value="claude">Claude Code</option></select></label>
           <label class="chip">Model <input id="modelInput" list="models" placeholder="Agent’s default" autocomplete="off" aria-label="Model" style="min-height:32px;padding:0 8px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--text);font:inherit;font-size:13px;width:190px"></label>
+          <label class="chip">Where <select id="whereSel" aria-label="Where the agent works"><option value="worktree">A worktree of its own</option><option value="checkout">The checkout itself</option></select></label>
           <datalist id="models"><option value="claude-sonnet-5-5"><option value="claude-opus-5-5"><option value="claude-haiku-5-5"><option value="claude-fable-5-1"></datalist>
         </div>
       </div>
