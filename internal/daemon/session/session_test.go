@@ -304,6 +304,11 @@ func TestStartRunsAnAgentAndRecordsItsEvents(t *testing.T) {
 	if len(third.Pending) != 0 || third.ToolCalls[8].Status != "completed" {
 		t.Errorf("trusted turn = pending %d, tool calls %+v", len(third.Pending), third.ToolCalls[6:])
 	}
+	// The session's tokens add up over its three turns, each of which read
+	// two files, and the title request.
+	if wantInput := 3*(fakeagent.TurnInputTokens+2*fakeagent.FileInputTokens) + fakeagent.TitleInputTokens; third.Tokens.Input != wantInput || third.Tokens.Output == 0 || third.Tokens.Total != third.Tokens.Input+third.Tokens.Output {
+		t.Errorf("tokens after three turns = %+v, want input %d", third.Tokens, wantInput)
+	}
 	if b, err := os.ReadFile(filepath.Join(f.cfg.TranscriptsDir, "s1.md")); err != nil || !strings.Contains(string(b), "Done with \"tidy up\"") || !strings.Contains(string(b), "## You\n\nand again") || !strings.Contains(string(b), "Done with \"and again\". I read 2 files and was not allowed to edit") || !strings.Contains(string(b), ToolLinePrefix+"Edit a.go (denied)") {
 		t.Errorf("transcript = %q, %v", b, err)
 	} else {
@@ -379,21 +384,23 @@ func TestStartRunsAnAgentAndRecordsItsEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(types, " ")
-	for _, want := range []string{"SessionStarted PromptSent AgentSpawned", "ToolCallStarted", "ToolCallCompleted", "PlanUpdated", "UsageReported", "TurnEnded PromptSent", "TurnEnded SessionEnded", "PermissionRequested PermissionGranted", "PermissionRequested PermissionDenied", "SessionTrusted"} {
+	for _, want := range []string{"SessionStarted PromptSent AgentSpawned", "ToolCallStarted", "ToolCallCompleted", "PlanUpdated", "UsageReported", "TokensUsed TurnEnded", "TurnEnded PromptSent", "TurnEnded SessionEnded", "PermissionRequested PermissionGranted", "PermissionRequested PermissionDenied", "SessionTrusted"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("event types %q lack %q", got, want)
 		}
 	}
-	if !strings.HasSuffix(got, "SessionEnded") || strings.Count(got, "SessionStarted") != 1 || strings.Count(got, "TurnEnded") != 3 || strings.Count(got, "PermissionRequested") != 2 {
+	// Each turn's cost is recorded as it ends, and the title's with the title.
+	if !strings.HasSuffix(got, "SessionEnded") || strings.Count(got, "SessionStarted") != 1 || strings.Count(got, "TurnEnded") != 3 || strings.Count(got, "PermissionRequested") != 2 || strings.Count(got, "TokensUsed") != 4 {
 		t.Errorf("event types = %q", got)
 	}
 
-	// A fresh manager rebuilt from the stream knows the session as ended.
+	// A fresh manager rebuilt from the stream knows the session as ended,
+	// with what it cost.
 	m2, err := Load(f.ctx, f.store, f.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s2, ok := m2.Get("s1"); !ok || s2.Status != StatusEnded || len(s2.ToolCalls) != 9 || s2.Turns != 3 || s2.Title != "Tidy up" || !s2.Trusted || len(s2.Pending) != 0 {
+	if s2, ok := m2.Get("s1"); !ok || s2.Status != StatusEnded || len(s2.ToolCalls) != 9 || s2.Turns != 3 || s2.Title != "Tidy up" || !s2.Trusted || len(s2.Pending) != 0 || s2.Tokens != third.Tokens {
 		t.Errorf("reloaded session = %+v", s2)
 	}
 }

@@ -12,8 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/skylands-ai/skylands/internal/titles"
 	"github.com/spachava753/acp-sdk/acp"
+
+	v1 "github.com/skylands-ai/skylands/api/v1"
+	"github.com/skylands-ai/skylands/internal/titles"
 )
 
 // Run is one agent process with one open ACP session. It takes any number
@@ -209,7 +211,36 @@ func (r *Run) Prompt(ctx context.Context, text string) (string, error) {
 		return "", r.fail("prompt", err)
 	}
 	r.drain()
+	// The turn's cost comes back with its end, after everything the turn
+	// reported, so it is handed on last.
+	if t, ok := tokenUsage(resp.Usage); ok {
+		r.handler.obs.Tokens(v1.TokensForTurn, t)
+	}
 	return string(resp.StopReason), nil
+}
+
+// tokenUsage reads what a prompt response says the request cost. ACP's
+// usage is a turn's own figure, not a running total: Claude Code's adapter
+// resets its tally as each turn starts, and the fake agent counts each turn
+// alone. An agent that gives no total gets the sum of the counts it gave.
+func tokenUsage(u *acp.Usage) (v1.TokenUsage, bool) {
+	if u == nil {
+		return v1.TokenUsage{}, false
+	}
+	t := v1.TokenUsage{Input: u.InputTokens, Output: u.OutputTokens, Total: u.TotalTokens}
+	if u.CachedReadTokens != nil {
+		t.CachedRead = *u.CachedReadTokens
+	}
+	if u.CachedWriteTokens != nil {
+		t.CachedWrite = *u.CachedWriteTokens
+	}
+	if u.ThoughtTokens != nil {
+		t.Thought = *u.ThoughtTokens
+	}
+	if t.Total == 0 {
+		t.Total = t.Input + t.Output + t.CachedRead + t.CachedWrite
+	}
+	return t, !t.IsZero()
 }
 
 // drain waits until every update the transport read before the last
@@ -225,8 +256,9 @@ func (r *Run) drain() {
 }
 
 // Title asks the agent, in a side session of its own, to name the
-// conversation that begins with the given request. Nothing of it reaches
-// the observer or the conversation. It gives up after the timeout.
+// conversation that begins with the given request. Nothing it says reaches
+// the observer or the conversation; what it costs does, since the session
+// pays for it. It gives up after the timeout.
 func (r *Run) Title(ctx context.Context, request string, timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -244,12 +276,15 @@ func (r *Run) Title(ctx context.Context, request string, timeout time.Duration) 
 		case <-done:
 		}
 	}()
-	_, err = r.client.Prompt(ctx, &acp.PromptRequest{SessionID: sess.SessionID, Prompt: []acp.ContentBlock{acp.TextContentBlock(titles.Request(request))}})
+	resp, err := r.client.Prompt(ctx, &acp.PromptRequest{SessionID: sess.SessionID, Prompt: []acp.ContentBlock{acp.TextContentBlock(titles.Request(request))}})
 	close(done)
 	if err != nil {
 		return "", fmt.Errorf("ask for a title: %w", err)
 	}
 	r.drain()
+	if t, ok := tokenUsage(resp.Usage); ok {
+		r.handler.obs.Tokens(v1.TokensForTitle, t)
+	}
 	title := titles.Clean(r.handler.collected(sess.SessionID))
 	if title == "" {
 		return "", errors.New("the agent gave no usable title")

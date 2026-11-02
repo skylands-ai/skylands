@@ -9,7 +9,6 @@ export interface Placement {
   depth: number
   seed: number
   phase: number
-  waterfall: boolean
 }
 
 /** FNV-1a, so the same host hashes the same on every citadel and every reload. */
@@ -49,7 +48,6 @@ export function placeIsland(host: string, taken: Placement[]): Placement {
     depth: 0,
     seed: Math.floor(r() * 1e6) + 1,
     phase: r() * Math.PI * 2,
-    waterfall: r() < 0.5,
   }
   p.depth = p.R + 2 + r() * 1.5
   for (let tries = 0; tries < 12 && taken.some((t) => angleGap(t.angle, angle) < MIN_GAP); tries++) {

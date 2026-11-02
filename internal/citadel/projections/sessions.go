@@ -125,8 +125,13 @@ type Session struct {
 	// touch, such as read or edit.
 	Files map[string]string `json:"files"`
 	Plan  []v1.PlanEntry    `json:"plan"`
-	Used  uint64            `json:"used,omitempty"`
-	Size  uint64            `json:"size,omitempty"`
+	// Used and Size are the latest reading of the context window.
+	Used uint64 `json:"used,omitempty"`
+	Size uint64 `json:"size,omitempty"`
+	// Tokens is what the session has cost so far: every turn's tokens and
+	// the title request's, summed. Always sent, so a browser can add
+	// sessions up without checking.
+	Tokens v1.TokenUsage `json:"tokens"`
 }
 
 // Sessions is the projection of every host's sessions. It is safe for
@@ -370,6 +375,14 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 				changed = s
 			}
 		}
+	case v1.EventTokensUsed:
+		var d v1.TokensUsed
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.Tokens.Add(d.Tokens)
+				changed = s
+			}
+		}
 	case v1.EventAgentFailed:
 		var d v1.AgentFailed
 		if ev.Decode(&d) == nil {
@@ -404,7 +417,9 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 }
 
 // isActivity says whether an event is the agent or a person doing
-// something in the conversation, as opposed to bookkeeping about it.
+// something in the conversation, as opposed to bookkeeping about it. A
+// turn's token count arrives with the turn's end, and the title's with the
+// title, so TokensUsed is bookkeeping too.
 func isActivity(eventType string) bool {
 	switch eventType {
 	case v1.EventSessionStarted, v1.EventPromptSent, v1.EventTurnEnded, v1.EventToolCallStarted, v1.EventToolCallCompleted,

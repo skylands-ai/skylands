@@ -1,4 +1,4 @@
-import type { Island, Session } from './protocol'
+import type { Island, Session, TokenUsage } from './protocol'
 import type { State } from './store'
 import type { Status } from './world/world'
 
@@ -131,4 +131,28 @@ export function agoText(when: string | number, now = Date.now()): string {
 export function upText(iso: string, now = Date.now()): string {
   const sec = secondsSince(iso, now)
   return sec < 60 ? 'up under a minute' : `up ${durationText(sec)}`
+}
+
+/** A token count short enough for a fact or a header: "843", "12.3k", "123k", "1.23M", "12.3M". */
+export function tokensText(n: number): string {
+  if (n < 1000) return String(n)
+  if (n < 100_000) return `${(n / 1000).toFixed(1)}k`
+  if (n < 1_000_000) return `${Math.round(n / 1000)}k`
+  if (n < 10_000_000) return `${(n / 1_000_000).toFixed(2)}M`
+  return `${(n / 1_000_000).toFixed(1)}M`
+}
+
+/** "12.3k tokens", or "no tokens yet" before any request has been counted. */
+export function tokensLabel(t: TokenUsage): string {
+  return t.total ? `${tokensText(t.total)} tokens` : 'no tokens yet'
+}
+
+/** The exact counts behind a token total, for a tooltip: "12,345 tokens: 10,000 in, 2,000 out, 345 cache read". Empty when nothing was counted. */
+export function tokensBreakdown(t: TokenUsage): string {
+  if (!t.total) return ''
+  const parts = [`${t.input.toLocaleString()} in`, `${t.output.toLocaleString()} out`]
+  if (t.cachedRead) parts.push(`${t.cachedRead.toLocaleString()} cache read`)
+  if (t.cachedWrite) parts.push(`${t.cachedWrite.toLocaleString()} cache write`)
+  if (t.thought) parts.push(`${t.thought.toLocaleString()} thought`)
+  return `${t.total.toLocaleString()} tokens: ${parts.join(', ')}`
 }

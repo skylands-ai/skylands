@@ -13,10 +13,9 @@ export interface IslandMeshes {
 }
 
 /**
- * One host's island: a grassy slab on a rock, with hills, trees, and maybe a
- * pond with a waterfall. Terraces for its repositories come in a later
- * milestone. Everything is seeded from the placement, so it looks the same
- * on every visit.
+ * One host's island: a grassy slab on a rock, with hills and trees.
+ * Everything is seeded from the placement, so it looks the same on
+ * every visit.
  */
 export function buildIsland(id: string, h: Placement): IslandMeshes {
   const g = new THREE.Group()
@@ -40,10 +39,6 @@ export function buildIsland(id: string, h: Placement): IslandMeshes {
     hill.userData.scenery = 'hill'
     g.add(hill)
   }
-  const WA = 1.5
-  const pondR = h.R * noise(WA) * 0.62
-  const pondX = Math.cos(WA) * pondR
-  const pondZ = Math.sin(WA) * pondR
   let trees = Math.round(h.R * 1.8)
   const tries = trees * 4
   for (let i = 0; i < tries && trees > 0; i++) {
@@ -51,7 +46,6 @@ export function buildIsland(id: string, h: Placement): IslandMeshes {
     const td = Math.sqrt(r()) * 0.84 * h.R * noise(ta)
     const tx = Math.cos(ta) * td
     const tz = Math.sin(ta) * td
-    if (h.waterfall && (Math.hypot(tx - pondX, tz - pondZ) < 2.3 || (Math.abs(ta - WA) < 0.3 && td > pondR * 0.8))) continue
     const tree = new THREE.Group()
     tree.add(new THREE.Mesh(G.trunk, M.trunk))
     const pine = r() < 0.55
@@ -63,21 +57,6 @@ export function buildIsland(id: string, h: Placement): IslandMeshes {
     g.add(tree)
     trees--
   }
-  if (h.waterfall) {
-    const pond = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 0.12, 14), M.pond)
-    pond.position.set(pondX, 0.04, pondZ)
-    g.add(pond)
-    const edge = h.R * noise(WA) * 0.99
-    const fall = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 10), M.water)
-    fall.position.set(Math.cos(WA) * (edge + 0.15), -5, Math.sin(WA) * (edge + 0.15))
-    fall.rotation.y = -WA + Math.PI / 2
-    g.add(fall)
-    const stream = new THREE.Mesh(new THREE.BoxGeometry(edge - pondR, 0.08, 0.7), M.pond)
-    stream.position.set((Math.cos(WA) * (pondR + edge)) / 2, 0.03, (Math.sin(WA) * (pondR + edge)) / 2)
-    stream.rotation.y = -WA
-    g.add(stream)
-  }
-
   const ring = selectionRing(h.R * 1.18, 0.09)
   ring.position.y = 0.15
   g.add(ring)

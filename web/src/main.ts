@@ -180,7 +180,7 @@ function panelDeps(s: State, stale: boolean): unknown[] {
     case 'file':
       return ['file', repo, island, s.file]
     case 'terrace':
-      return ['terrace', repo, island, stale, s.viewed, world?.buildingCount(island?.host ?? '', repo?.id ?? ''), ...(repo ? sessionsOn(s, repo.id) : [])]
+      return ['terrace', repo, island, stale, s.viewed, ...(repo ? sessionsOn(s, repo.id) : [])]
     case 'island':
       return ['island', island, stale, stale ? s.lastContact : 0, ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
     default:
@@ -237,13 +237,11 @@ function renderPanelContent(s: State, stale: boolean): void {
       break
     case 'terrace':
       if (island && repo) {
-        const shown = world?.buildingCount(island.host, repo.id) ?? repo.files.length
         renderTerracePanel(
           panelEl,
           repo,
           island,
           stale,
-          shown,
           sessionsOn(s, repo.id),
           (x) => isWaiting(s, x),
           () => nav.select(island.host),

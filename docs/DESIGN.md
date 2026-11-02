@@ -226,7 +226,7 @@ Sessions are event-sourced, and each daemon is the single writer of the session 
 
 | Aggregate | Lives in | Handles commands | Produces events |
 | --- | --- | --- | --- |
-| Session | Daemon | StartSession, SendPrompt, RecordToolCall, RecordToolResult, RecordPlan, RecordUsage, RecordCompaction, RecordPermissionRequest, ApproveToolCall, DenyToolCall, RetryAgent, PauseAgent, ResumeAgent, StopAgent, ForkSession, ExpirePendingRequests | SessionStarted, PromptSent, AgentSpawned, SessionTitled, ToolCallStarted, ToolCallCompleted, TurnEnded, PlanUpdated, UsageReported, ContextCompacted, PermissionRequested, PermissionGranted, PermissionDenied, PermissionExpired, AgentFailed, AgentPaused, AgentResumed, SessionForked, SessionEnded |
+| Session | Daemon | StartSession, SendPrompt, RecordToolCall, RecordToolResult, RecordPlan, RecordUsage, RecordTokens, RecordCompaction, RecordPermissionRequest, ApproveToolCall, DenyToolCall, RetryAgent, PauseAgent, ResumeAgent, StopAgent, ForkSession, ExpirePendingRequests | SessionStarted, PromptSent, AgentSpawned, SessionTitled, ToolCallStarted, ToolCallCompleted, TurnEnded, PlanUpdated, UsageReported, TokensUsed, ContextCompacted, PermissionRequested, PermissionGranted, PermissionDenied, PermissionExpired, AgentFailed, AgentPaused, AgentResumed, SessionForked, SessionEnded |
 | Host | Daemon | RegisterRepo, SnapshotTerrain, RecordFileChanges, RecordAdapterAvailability | RepoRegistered, TerrainSnapshotted, FilesChanged, AdapterAvailabilityChanged |
 | Rules | Citadel | AddRule, RemoveRule | RuleAdded, RuleRemoved |
 | Users | Citadel | EnrollUser, EnrollApproverKey, RevokeUser | UserEnrolled, ApproverKeyEnrolled, UserRevoked |
@@ -380,7 +380,7 @@ Rules settle most tool calls on the host, so only what no rule covers reaches a 
 
 ## Data handling
 
-The daemon decides what leaves the host. Session and host events carry metadata by default: tool names, file paths, commands, plans, usage, and decisions.
+The daemon decides what leaves the host. Session and host events carry metadata by default: tool names, file paths, commands, plans, context use, token counts, and decisions.
 
 - Diffs, file contents, full transcripts, and what each tool call took in and gave back stay on the host until someone asks for them. The citadel requests them on demand through the island's fetch subjects, and the daemon answers or refuses based on its rules.
 - NATS stores events. Each citadel derives its projections from them _in memory_, so no citadel holds data of its own, and it keeps fetched content only for as long as a person is viewing it.

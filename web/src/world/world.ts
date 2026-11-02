@@ -184,11 +184,6 @@ export class World {
     }
   }
 
-  /** How many buildings a terrace shows, which can be fewer than the repo's files. */
-  buildingCount(host: string, terrace: string): number {
-    return this.islands.get(host)?.terraces.get(terrace)?.meshes.blds.length ?? 0
-  }
-
   /** Gives a host's agents their airships, and takes them away as sessions end. */
   setAgents(host: string, states: AgentState[]): void {
     this.agents.set(host, states)

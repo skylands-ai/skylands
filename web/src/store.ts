@@ -1,4 +1,4 @@
-import type { Island, Repo, ServerInfo, Session } from './protocol'
+import type { Island, Repo, ServerInfo, Session, TokenUsage } from './protocol'
 
 /** The browser's link to its citadel over the WebSocket. */
 export type LinkState = 'connecting' | 'connected' | 'lost'
@@ -170,6 +170,20 @@ export function sessionsOn(s: State, repoId: string): Session[] {
   return Object.values(s.sessions)
     .filter((x) => x.repoId === repoId)
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+}
+
+/** What a set of sessions has cost, added up: a repository's spend from its sessions, or the world's from all of them. */
+export function sumTokens(list: Session[]): TokenUsage {
+  const sum = { input: 0, output: 0, cachedRead: 0, cachedWrite: 0, thought: 0, total: 0 }
+  for (const { tokens: t } of list) {
+    sum.input += t.input
+    sum.output += t.output
+    sum.cachedRead += t.cachedRead ?? 0
+    sum.cachedWrite += t.cachedWrite ?? 0
+    sum.thought += t.thought ?? 0
+    sum.total += t.total
+  }
+  return sum
 }
 
 /** Whether the agent or a person did something in a session since it was last looked at here. Bookkeeping, such as a daemon restart, does not count. */

@@ -108,8 +108,12 @@ type Session struct {
 	UpdatedAt time.Time
 	ToolCalls []ToolCall
 	Plan      []v1.PlanEntry
-	Used      uint64
-	Size      uint64
+	// Used and Size are the latest reading of the context window.
+	Used uint64
+	Size uint64
+	// Tokens is what the session has cost so far: the sum of every turn's
+	// tokens and the title request's.
+	Tokens v1.TokenUsage
 }
 
 // Resumed says how a session's agent came back after a daemon restart.
@@ -1356,6 +1360,13 @@ func (m *Manager) apply(ev v1.Event) {
 				s.Used, s.Size = d.Used, d.Size
 			}
 		}
+	case v1.EventTokensUsed:
+		var d v1.TokensUsed
+		if ev.Decode(&d) == nil {
+			if s := touch(d.SessionID); s != nil {
+				s.Tokens.Add(d.Tokens)
+			}
+		}
 	case v1.EventAgentFailed:
 		var d v1.AgentFailed
 		if ev.Decode(&d) == nil {
@@ -1488,6 +1499,13 @@ func (o *observer) Usage(used, size uint64) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	_ = o.m.record(o.m.ctx, o.id, "", v1.EventUsageReported, v1.UsageReported{SessionID: o.id, Used: used, Size: size})
+}
+
+// Tokens records what a request cost, which the session's total sums.
+func (o *observer) Tokens(purpose string, t v1.TokenUsage) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	_ = o.m.record(o.m.ctx, o.id, "", v1.EventTokensUsed, v1.TokensUsed{SessionID: o.id, For: purpose, Tokens: t})
 }
 
 // Message keeps agent text on the host, in the session's transcript.

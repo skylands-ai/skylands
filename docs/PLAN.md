@@ -132,6 +132,15 @@ specifies. No events, streams, or aggregates are needed for it.
   took, the input by field, and the output, refreshed while the call
   still runs. The fake agent reports inputs and results, and announces
   its edit under a placeholder first, so every path is tested.
+- Token usage is done. Each request's cost comes back with its answer over
+  ACP, and the daemon records it as TokensUsed: a turn's tokens as the
+  turn ends, and the title request's with the title. A session's total is
+  the sum, shown in the conversation's header and the agent panel; a
+  repository's is the sum over its sessions, on the terrace panel under
+  the tracked files; and the top of the inbox shows the total across
+  every conversation. UsageReported stays what it was, a reading of the
+  context window. The fake agent returns fixed counts, so the sums are
+  tested end to end.
 
 ## After the MVP
 

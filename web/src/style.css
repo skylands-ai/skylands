@@ -92,7 +92,6 @@ button:focus-visible,a:focus-visible{ outline:2px solid var(--accent); outline-o
 .inbox-list.narrow{ flex:0 0 340px; border-right:1px solid var(--line); display:flex; flex-direction:column; }
 .inbox-empty{ margin:0; padding:48px 24px; color:var(--muted); text-align:center; font-size:14px; }
 .inbox-tools{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 14px; border-bottom:1px solid var(--line); background:var(--surface); font-size:13px; }
-.inbox-list.narrow .inbox-tools{ justify-content:flex-end; }
 .convo-head h2{ max-width:min(60%, 640px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .inbox-table{ width:100%; border-collapse:collapse; table-layout:fixed; font-size:14px; }
 .inbox-table th{ text-align:left; font-size:12px; font-weight:600; color:var(--muted); padding:10px 14px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--surface); z-index:1; }

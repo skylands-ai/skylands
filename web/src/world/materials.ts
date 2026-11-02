@@ -31,8 +31,6 @@ export const M = {
   stoneWall: std(0x9aa6b4),
   stoneDark: std(0x7f8ca0),
   window: new THREE.MeshBasicMaterial({ color: 0xffe3a3 }),
-  water: new THREE.MeshBasicMaterial({ color: 0x9fd3f5, transparent: true, opacity: 0.75, side: THREE.DoubleSide }),
-  pond: std(0x5fa9d6, { roughness: 0.3 }),
   ring: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 }),
   gondola: std(0x3a3f4a),
   sand: std(0xc8b48a),
