@@ -2,7 +2,7 @@ import { el } from '../dom'
 import type { FetchCache, Fetched } from '../fetchcache'
 import type { Island, Repo, Session } from '../protocol'
 import { agentLabel, clockText, sessionLabel, sessionStatus } from '../status'
-import { backButton, factsBox, header, hint, section, timeNode } from './parts'
+import { backButton, factsBox, header, hint, section, timeNode, tokensNode } from './parts'
 
 function pct(used?: number, size?: number): string {
   if (!used || !size) return 'not reported'
@@ -52,6 +52,7 @@ export function renderAgentPanel(
     ['Started', timeNode(s.startedAt)],
     running ? ['Last activity', timeNode(s.activeAt)] : s.status === 'idle' ? ['Idle since', timeNode(s.activeAt)] : ['Ended', s.endedAt ? timeNode(s.endedAt) : 'unknown'],
     ['Context', pct(s.used, s.size)],
+    ['Tokens used', tokensNode(s.tokens)],
     ['Tool calls', String(s.recent.length)],
   ]
   if (s.commits) facts.push(['Commits', `${s.commits}, last ${s.commit?.slice(0, 7) ?? ''}`])

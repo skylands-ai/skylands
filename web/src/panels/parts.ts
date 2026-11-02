@@ -1,5 +1,6 @@
 import { el } from '../dom'
-import { agentColor } from '../status'
+import type { TokenUsage } from '../protocol'
+import { agentColor, tokensBreakdown, tokensText } from '../status'
 import { providerOf } from '../world/airship'
 import { agoText, durationText, secondsSince, upText } from '../status'
 import type { Status } from '../world/world'
@@ -36,6 +37,12 @@ export function header(title: string, kind: string | null, status: Status | null
       kind ? el('p', { class: 'muted', style: 'margin:4px 0 0;font-size:13px', text: kind }) : null,
     ]),
   ])
+}
+
+/** A token total with the exact counts as its tooltip, or the given text while nothing has been counted. */
+export function tokensNode(t: TokenUsage, none = 'none yet'): HTMLElement {
+  if (!t.total) return el('span', { text: none })
+  return el('span', { title: tokensBreakdown(t), text: tokensText(t.total) })
 }
 
 /** Label and value rows. A value can be a node, such as a ticking time. */

@@ -92,7 +92,12 @@ to read it as a chat, with the agent's words and tool calls arriving as
 they happen, reply at the bottom, or end the session, which stops the
 agent and keeps its worktree. The world is paused while the inbox is
 open, and "Show in world" flies back to the airship. The header's Inbox
-badge and the tab title count the sessions waiting on you.
+badge and the tab title count the sessions waiting on you. Every answer
+the agent gives comes back with what it cost in tokens, and the daemon
+records it: a conversation's header shows the total for that session, the
+top of the inbox shows the total across every conversation, and a
+terrace's panel shows the total for its repository under the tracked
+files, with the exact counts as a tooltip.
 
 Two agents are available. The built-in fake agent reads a few files and
 edits one, so you can see the loop without any API keys. Claude Code runs

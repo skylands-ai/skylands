@@ -28,6 +28,7 @@ type recorder struct {
 	calls     []ToolCall
 	plans     int
 	usage     []uint64
+	tokens    []v1.TokensUsed
 	messages  []string
 	asked     []PermissionRequest
 	questions []Question
@@ -114,6 +115,11 @@ func (r *recorder) Spawned(name, _, session string) {
 func (r *recorder) ToolCall(tc ToolCall)  { r.mu.Lock(); r.calls = append(r.calls, tc); r.mu.Unlock() }
 func (r *recorder) Plan(e []v1.PlanEntry) { r.mu.Lock(); r.plans++; r.mu.Unlock() }
 func (r *recorder) Usage(used, _ uint64)  { r.mu.Lock(); r.usage = append(r.usage, used); r.mu.Unlock() }
+func (r *recorder) Tokens(purpose string, t v1.TokenUsage) {
+	r.mu.Lock()
+	r.tokens = append(r.tokens, v1.TokensUsed{For: purpose, Tokens: t})
+	r.mu.Unlock()
+}
 func (r *recorder) Permission(_ context.Context, req PermissionRequest) Decision {
 	r.mu.Lock()
 	r.asked = append(r.asked, req)
@@ -258,6 +264,12 @@ func TestRunPromptDrivesTheFakeAgent(t *testing.T) {
 	if got := strings.Join(rec.messages, ""); got != want {
 		t.Errorf("message chunks arrived out of order:\n got %q\nwant %q", got, want)
 	}
+	// The turn's cost arrives once, with its end, after the last message.
+	wantTokens := v1.TokenUsage{Input: fakeagent.TurnInputTokens + 2*fakeagent.FileInputTokens, Output: uint64(len(want))}
+	wantTokens.Total = wantTokens.Input + wantTokens.Output
+	if len(rec.tokens) != 1 || rec.tokens[0].For != v1.TokensForTurn || rec.tokens[0].Tokens != wantTokens {
+		t.Errorf("tokens = %+v, want one turn of %+v", rec.tokens, wantTokens)
+	}
 	// Tool calls start before they complete, every time.
 	seen := map[string]bool{}
 	for _, c := range rec.calls {
@@ -285,6 +297,10 @@ func TestTitleUsesASideSession(t *testing.T) {
 	}
 	if len(rec.messages) != 0 || len(rec.calls) != 0 {
 		t.Errorf("the title request leaked into the observer: messages %d, calls %d", len(rec.messages), len(rec.calls))
+	}
+	// What the title cost does reach the observer: the session pays for it.
+	if len(rec.tokens) != 1 || rec.tokens[0].For != v1.TokensForTitle || rec.tokens[0].Tokens.Input != fakeagent.TitleInputTokens || rec.tokens[0].Tokens.Total <= fakeagent.TitleInputTokens {
+		t.Errorf("title tokens = %+v", rec.tokens)
 	}
 }
 
