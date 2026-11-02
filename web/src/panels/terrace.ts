@@ -11,7 +11,6 @@ export function renderTerracePanel(
   repo: Repo,
   island: Island,
   stale: boolean,
-  shown: number,
   sessions: Session[],
   waiting: (s: Session) => boolean,
   backToIsland: () => void,
@@ -39,8 +38,7 @@ export function renderTerracePanel(
     ['Commit', shortCommit(repo.commit)],
     ['Tracked files', String(repo.totalFiles)],
   ]
-  if (shown < repo.totalFiles) facts.push(['Buildings shown', `${shown} largest`])
-  facts.push(['Registered', timeNode(repo.registeredAt)], ['Terrain snapshot', timeNode(repo.snapshottedAt)])
+  facts.push(['Registered', timeNode(repo.registeredAt)])
   panel.appendChild(factsBox(facts))
   if (!repo.files.length) panel.appendChild(note('This repository has no tracked files yet.'))
   panel.appendChild(
