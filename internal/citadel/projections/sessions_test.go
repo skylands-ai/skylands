@@ -17,7 +17,7 @@ func TestEmptySessionEncodesLists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"recent":[]`, `"files":{}`, `"plan":[]`, `"rules":[]`, `"questions":[]`} {
+	for _, want := range []string{`"recent":[]`, `"files":{}`, `"plan":[]`, `"rules":[]`, `"questions":[]`, `"tokens":{"input":0,"output":0,"total":0}`} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("session JSON lacks %s: %s", want, data)
 		}
@@ -42,6 +42,8 @@ func TestSessionsFollowSessionEvents(t *testing.T) {
 	apply(v1.EventToolCallStarted, v1.ToolCallStarted{SessionID: "s1", ToolCallID: "t2", Title: "Edit a.go", Kind: "edit", Locations: []string{"a.go"}})
 	apply(v1.EventPlanUpdated, v1.PlanUpdated{SessionID: "s1", Entries: []v1.PlanEntry{{Content: "x", Status: "pending"}}})
 	apply(v1.EventUsageReported, v1.UsageReported{SessionID: "s1", Used: 10, Size: 100})
+	apply(v1.EventTokensUsed, v1.TokensUsed{SessionID: "s1", For: v1.TokensForTitle, Tokens: v1.TokenUsage{Input: 50, Output: 5, Total: 55}})
+	apply(v1.EventTokensUsed, v1.TokensUsed{SessionID: "s1", For: v1.TokensForTurn, Tokens: v1.TokenUsage{Input: 1000, Output: 200, CachedRead: 300, Total: 1500}})
 
 	list := p.List()
 	if len(list) != 1 {
@@ -56,6 +58,10 @@ func TestSessionsFollowSessionEvents(t *testing.T) {
 	}
 	if len(s.Plan) != 1 || s.Used != 10 || s.Size != 100 {
 		t.Errorf("plan/usage = %+v %d/%d", s.Plan, s.Used, s.Size)
+	}
+	// Tokens add up across requests, whatever they paid for.
+	if want := (v1.TokenUsage{Input: 1050, Output: 205, CachedRead: 300, Total: 1555}); s.Tokens != want {
+		t.Errorf("tokens = %+v, want %+v", s.Tokens, want)
 	}
 
 	apply(v1.EventPermissionRequested, v1.PermissionRequested{SessionID: "s1", RequestID: "r1", ToolCallID: "e1", Title: "Edit main.go", Kind: "edit", Options: []v1.PermissionOption{{ID: "a", Name: "Allow", Kind: "allow_once"}}})
@@ -102,7 +108,8 @@ func TestSessionsFollowSessionEvents(t *testing.T) {
 	apply(v1.EventSessionResumed, v1.SessionResumed{SessionID: "s1", RestartedAt: time.Now(), How: v1.ResumedByLoad})
 	apply(v1.EventSessionTrusted, v1.SessionTrusted{SessionID: "s1", Trusted: false})
 	apply(v1.EventSessionRulesSet, v1.SessionRulesSet{SessionID: "s1"})
-	if s := p.List()[0]; s.Status != "idle" || s.Resumes != 1 || s.Resumed.How != "load" || s.Resumed.At.IsZero() || s.Resumed.RestartedAt.IsZero() {
+	apply(v1.EventTokensUsed, v1.TokensUsed{SessionID: "s1", For: v1.TokensForTitle, Tokens: v1.TokenUsage{Input: 1, Total: 1}})
+	if s := p.List()[0]; s.Status != "idle" || s.Resumes != 1 || s.Resumed.How != "load" || s.Resumed.At.IsZero() || s.Resumed.RestartedAt.IsZero() || s.Tokens.Total != 1556 {
 		t.Errorf("resumed session = %+v", s)
 	}
 	if s := p.List()[0]; !s.ActiveAt.Equal(idle.ActiveAt) || !s.UpdatedAt.After(idle.UpdatedAt) {

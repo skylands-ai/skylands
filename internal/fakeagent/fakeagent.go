@@ -1,7 +1,7 @@
 // Package fakeagent is a scripted agent that speaks ACP over stdio. It reads
 // a few files in its working directory, edits one, reports a plan and its
-// context use, and ends its turn. Tests and demos use it in place of a real
-// agent, so nothing needs API keys.
+// context use, and ends its turn with a made-up token count. Tests and
+// demos use it in place of a real agent, so nothing needs API keys.
 package fakeagent
 
 import (
@@ -166,10 +166,11 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	}
 	if asked := promptText(req); titles.IsRequest(asked) {
 		// A title request gets a title and nothing else, like a well-behaved agent.
-		if err := send(acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(titles.Fake(titles.RequestedFor(asked))))); err != nil {
+		title := titles.Fake(titles.RequestedFor(asked))
+		if err := send(acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(title))); err != nil {
 			return nil, err
 		}
-		return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
+		return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn, Usage: usage(TitleInputTokens, uint64(len(title)))}, nil
 	}
 	pause := func() bool {
 		select {
@@ -347,7 +348,26 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 			return nil, err
 		}
 	}
-	return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
+	// The turn's cost comes back with its end, as it does from a real
+	// agent: a share per file read, and the answer as output.
+	return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn, Usage: usage(TurnInputTokens+uint64(n)*FileInputTokens, uint64(len(msg)))}, nil
+}
+
+// What the fake agent says its requests cost, in tokens. The figures are
+// made up but fixed, so a test can add them up.
+const (
+	// TurnInputTokens is what every turn costs before its files are read.
+	TurnInputTokens uint64 = 2_000
+	// FileInputTokens is what each file read adds.
+	FileInputTokens uint64 = 1_000
+	// TitleInputTokens is what the title request costs.
+	TitleInputTokens uint64 = 50
+)
+
+// usage is a turn's token count as ACP carries it: the given input, the
+// output, and the total of the two.
+func usage(input, output uint64) *acp.Usage {
+	return &acp.Usage{InputTokens: input, OutputTokens: output, TotalTokens: input + output}
 }
 
 // requestOf reads a prompt the way the fake agent does: the request is its

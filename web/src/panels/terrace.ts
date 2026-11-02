@@ -3,7 +3,8 @@ import { shortCommit } from '../files'
 import type { Island, Repo, Rule, Session } from '../protocol'
 import { HOST_DEFAULTS, rulesSheet } from '../rules'
 import { agentLabel, isOpen } from '../status'
-import { agentGlyph, backButton, factsBox, header, hint, note, section, timeNode } from './parts'
+import { sumTokens } from '../store'
+import { agentGlyph, backButton, factsBox, header, hint, note, section, timeNode, tokensNode } from './parts'
 
 /** The terrace-level panel: one repository on one host. */
 export function renderTerracePanel(
@@ -38,6 +39,8 @@ export function renderTerracePanel(
     ['Path', repo.path],
     ['Commit', shortCommit(repo.commit)],
     ['Tracked files', String(repo.totalFiles)],
+    // What every session on this repository has cost, open or finished.
+    ['Tokens used', tokensNode(sumTokens(sessions))],
   ]
   if (shown < repo.totalFiles) facts.push(['Buildings shown', `${shown} largest`])
   facts.push(['Registered', timeNode(repo.registeredAt)], ['Terrain snapshot', timeNode(repo.snapshottedAt)])

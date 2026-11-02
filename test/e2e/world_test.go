@@ -540,8 +540,8 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 	if s.Host != "ws" || s.RepoID != info.ID || s.Prompt != "make it faster" || s.AgentName != "skylands-fakeagent" || s.StopReason != "end_turn" || s.Turns != 1 {
 		t.Errorf("session = %+v", s)
 	}
-	if len(s.Recent) != 3 || s.Files["main.go"] != "edit" || s.Files["util.go"] != "read" || s.CurrentFile != "main.go" || s.Used == 0 {
-		t.Errorf("activity: recent=%+v files=%v current=%q used=%d", s.Recent, s.Files, s.CurrentFile, s.Used)
+	if len(s.Recent) != 3 || s.Files["main.go"] != "edit" || s.Files["util.go"] != "read" || s.CurrentFile != "main.go" || s.Used == 0 || s.Tokens.Total == 0 || s.Tokens.Total != s.Tokens.Input+s.Tokens.Output {
+		t.Errorf("activity: recent=%+v files=%v current=%q used=%d tokens=%+v", s.Recent, s.Files, s.CurrentFile, s.Used, s.Tokens)
 	}
 
 	// Interrupting a turn keeps the session: the pending edit is withdrawn,

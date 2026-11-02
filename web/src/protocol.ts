@@ -67,6 +67,16 @@ export interface PlanEntry {
   status: string
 }
 
+/** Tokens counted by kind, for one request or summed over many. Input leaves out the cached counts; total is the agent's own sum. */
+export interface TokenUsage {
+  input: number
+  output: number
+  cachedRead?: number
+  cachedWrite?: number
+  thought?: number
+  total: number
+}
+
 export interface ToolCall {
   id: string
   title: string
@@ -183,8 +193,11 @@ export interface Session {
   recent: ToolCall[]
   files: Record<string, string>
   plan?: PlanEntry[]
+  /** The latest reading of the context window: used tokens of size. */
   used?: number
   size?: number
+  /** What the session has cost so far: every turn's tokens and the title request's, summed. */
+  tokens: TokenUsage
 }
 
 /** Where a session's changes stand on the host's disk, as git sees them right now. */

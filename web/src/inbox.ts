@@ -6,8 +6,8 @@ import { agentGlyph, timeNode } from './panels/parts'
 import type { Permission, Question, QuestionField, Session } from './protocol'
 import { replyBox } from './reply'
 import { HOST_DEFAULTS, proposeRule, ruleText, rulesSheet } from './rules'
-import { agentLabel, isOpen, sessionLabel, sessionStatus } from './status'
-import { conversationList, isUnread, isWaiting, type State } from './store'
+import { agentLabel, isOpen, sessionLabel, sessionStatus, tokensBreakdown, tokensLabel, tokensText } from './status'
+import { conversationList, isUnread, isWaiting, sumTokens, type State } from './store'
 import { parseTranscript } from './transcript'
 import type { Rule } from './protocol'
 
@@ -433,15 +433,19 @@ function listed(s: State): Session[] {
   return s.inboxFilter === 'all' ? all : all.filter((x) => isOpen(x) || x.id === s.inbox)
 }
 
-/** The row above the list: what is shown, and the switch between open and all. */
+/** The row above the list: what is shown, what every conversation has cost in tokens, and the switch between open and all. */
 function tools(s: State, actions: InboxActions, compact: boolean): HTMLElement {
   const all = conversationList(s)
   const open = all.filter(isOpen).length
   const over = all.length - open
   const seg = (which: 'open' | 'all', text: string): HTMLElement =>
     el('button', { type: 'button', class: 'btn small', 'aria-pressed': s.inboxFilter === which ? 'true' : 'false', text, onclick: () => actions.filter(which) })
-  const count = compact ? null : el('span', { class: 'muted', text: s.inboxFilter === 'all' ? `${all.length} conversations` : `${open} open${over ? `, ${over} finished hidden` : ''}` })
-  return el('div', { class: 'inbox-tools' }, [count, el('div', { class: 'modes', role: 'group', 'aria-label': 'Which conversations' }, [seg('open', 'Open'), seg('all', 'All')])])
+  const count = compact ? null : s.inboxFilter === 'all' ? `${all.length} conversations` : `${open} open${over ? `, ${over} finished hidden` : ''}`
+  // The total is over every conversation on every island, whatever the filter lists.
+  const tokens = sumTokens(all)
+  const spent = tokens.total ? el('span', { title: `${tokensBreakdown(tokens)}, across every conversation`, text: `${tokensText(tokens.total)} tokens${compact ? '' : ' used'}` }) : null
+  const left = el('span', { class: 'muted' }, [count, count && spent ? ' · ' : null, spent])
+  return el('div', { class: 'inbox-tools' }, [left, el('div', { class: 'modes', role: 'group', 'aria-label': 'Which conversations' }, [seg('open', 'Open'), seg('all', 'All')])])
 }
 
 function agentCell(x: Session): HTMLElement {
@@ -521,6 +525,7 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
     el('span', { class: 'who muted' }, [agentGlyph(x.agent), `${name} \u00b7 ${repo?.name ?? x.repoId} on ${x.host}`]),
     el('span', { class: 'pill' }, [el('span', { class: 'dot', style: `background:${status[1]}` }), status[0]]),
     el('span', { class: 'muted', text: `${x.turns} ${x.turns === 1 ? 'turn' : 'turns'}` }),
+    el('span', { class: 'muted', title: tokensBreakdown(x.tokens) || null, text: tokensLabel(x.tokens) }),
     el('div', { class: 'acts' }, [
       isOpen(x) ? trustSwitch(x, actions) : null,
       el('button', {

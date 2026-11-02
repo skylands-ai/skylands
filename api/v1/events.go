@@ -147,7 +147,8 @@ func IsSessionEvent(eventType string) bool {
 		EventPlanUpdated, EventUsageReported, EventAgentFailed, EventSessionEnded, EventTurnEnded, EventSessionTitled,
 		EventPermissionRequested, EventPermissionGranted, EventPermissionDenied, EventPermissionExpired, EventSessionTrusted,
 		EventSessionResumed, EventChangesCommitted, EventChangesMerged, EventPullRequestOpened, EventWorktreeRemoved,
-		EventSessionRulesSet, EventQuestionAsked, EventQuestionAnswered, EventQuestionExpired, EventTurnCancelled:
+		EventSessionRulesSet, EventQuestionAsked, EventQuestionAnswered, EventQuestionExpired, EventTurnCancelled,
+		EventTokensUsed:
 		return true
 	}
 	return false
@@ -231,10 +232,57 @@ type PlanUpdated struct {
 }
 
 // UsageReported records context use: Used tokens of a Size token window.
+// It is a reading, not a cost; what the session spends is in TokensUsed.
 type UsageReported struct {
 	SessionID string `json:"sessionId"`
 	Used      uint64 `json:"used"`
 	Size      uint64 `json:"size"`
+}
+
+// EventTokensUsed records what one request to the agent's model cost in
+// tokens: a turn, or a side request such as the one for the title. A
+// session's spend is the sum of its TokensUsed events, and a repository's
+// the sum over its sessions.
+const EventTokensUsed = "TokensUsed"
+
+// What a TokensUsed event paid for.
+const (
+	TokensForTurn  = "turn"
+	TokensForTitle = "title"
+)
+
+// TokenUsage counts tokens by kind, for one request or summed over many.
+// Input leaves out the cached counts, as providers report them, and Total
+// is the agent's own sum: input, output, and the cache counts, with thought
+// tokens where the provider bills them apart from output.
+type TokenUsage struct {
+	Input       uint64 `json:"input"`
+	Output      uint64 `json:"output"`
+	CachedRead  uint64 `json:"cachedRead,omitempty"`
+	CachedWrite uint64 `json:"cachedWrite,omitempty"`
+	Thought     uint64 `json:"thought,omitempty"`
+	Total       uint64 `json:"total"`
+}
+
+// Add adds o's counts to t's.
+func (t *TokenUsage) Add(o TokenUsage) {
+	t.Input += o.Input
+	t.Output += o.Output
+	t.CachedRead += o.CachedRead
+	t.CachedWrite += o.CachedWrite
+	t.Thought += o.Thought
+	t.Total += o.Total
+}
+
+// IsZero reports whether nothing was counted.
+func (t TokenUsage) IsZero() bool { return t == TokenUsage{} }
+
+// TokensUsed records the tokens one request cost. For is TokensForTurn or
+// TokensForTitle.
+type TokensUsed struct {
+	SessionID string     `json:"sessionId"`
+	For       string     `json:"for,omitempty"`
+	Tokens    TokenUsage `json:"tokens"`
 }
 
 // AgentFailed records that the agent stopped on an error. A daemon restart
