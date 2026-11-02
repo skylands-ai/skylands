@@ -21,6 +21,7 @@ import { agentLabel, citadelLabelStatus, clockText, durationText, islandStatus, 
 import { islandList, isWaiting, level, pendingCount, reposOn, sessionsOn, Store, waitingCount, type State } from './store'
 import { growLive, renderInbox, type InboxActions } from './inbox'
 import { LiveText } from './live'
+import { refreshOpenChips } from './toolchip'
 import { renderMarkdown } from './markdown'
 import { providerOf } from './world/airship'
 import type { AgentState } from './world/agents'
@@ -54,7 +55,7 @@ const link = connectToCitadel(store, (_host, id, piece) => {
   growQueued = true
   requestAnimationFrame(() => {
     growQueued = false
-    growLive(inboxEl, store.state, cache, live)
+    growLive(inboxEl, store.state, cache, live, () => store.touch())
   })
 })
 
@@ -339,5 +340,6 @@ setInterval(() => {
   if (ag && ag.status === 'running') cache.get('diff', ag.host, ag.id, 2000)
   const open = s.view === 'inbox' && s.inbox ? s.sessions[s.inbox] : undefined
   if (open && open.status === 'running') cache.get('transcript', open.host, open.id, 15000)
+  if (open) refreshOpenChips(open, cache)
 }, 1000)
 

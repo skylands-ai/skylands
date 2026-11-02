@@ -340,6 +340,12 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 				for i := range s.Recent {
 					if s.Recent[i].ID == d.ToolCallID {
 						s.Recent[i].Status = d.Status
+						if d.Title != "" {
+							if s.CurrentAction == s.Recent[i].Title {
+								s.CurrentAction = d.Title
+							}
+							s.Recent[i].Title = d.Title
+						}
 						if len(d.Locations) > 0 {
 							s.Recent[i].Locations = d.Locations
 						}

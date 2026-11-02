@@ -51,7 +51,8 @@ func DefaultRegistry() Registry {
 	}
 }
 
-// ToolCall is a tool call as last reported by the agent.
+// ToolCall is a tool call as last reported by the agent, plus what the
+// latest report said about its result.
 type ToolCall struct {
 	ID     string
 	Title  string
@@ -60,6 +61,42 @@ type ToolCall struct {
 	// Locations are the files the call touches, relative to the worktree
 	// when inside it.
 	Locations []string
+	// Input is the exact tool input as JSON, as the agent last reported it.
+	// It is nil until the agent has said, and an agent that streams the
+	// input reports an empty object first and the rest once it knows it.
+	Input json.RawMessage
+	// Content is what this report says the call produced, which replaces
+	// what an earlier report said. It is nil when the report says nothing
+	// about the result, which is not the same as an empty result.
+	Content []v1.ToolCallContent
+	// Output is the raw result this report carries, as text, when the agent
+	// gave one.
+	Output string
+}
+
+// InputKnown reports whether the agent has said what the call's input is:
+// either it never reports inputs, or it reported one that is not the empty
+// object an agent sends while the input still streams.
+func (tc ToolCall) InputKnown() bool {
+	if tc.Input == nil {
+		return true
+	}
+	trimmed := bytes.TrimSpace(tc.Input)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return false
+	}
+	if trimmed[0] == '{' {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(trimmed, &fields); err == nil && len(fields) == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// Finished reports whether the call is over, well or badly.
+func (tc ToolCall) Finished() bool {
+	return tc.Status == string(acp.ToolCallStatusCompleted) || tc.Status == string(acp.ToolCallStatusFailed)
 }
 
 // Observer receives what the agent reports during a prompt.
@@ -70,7 +107,8 @@ type Observer interface {
 	Spawned(name, version, agentSessionID string)
 	// ToolCall runs for a new tool call and for each update to one. Status
 	// tells which: pending or in_progress at the start, then completed or
-	// failed.
+	// failed. The call's identity, input, and locations are as last
+	// reported; its Content and Output are what this report carried.
 	ToolCall(tc ToolCall)
 	Plan(entries []v1.PlanEntry)
 	Usage(used, size uint64)
@@ -190,8 +228,17 @@ func (h *handler) update(n *acp.SessionNotification) {
 		if u.Locations != nil {
 			tc.Locations = h.relative(*u.Locations)
 		}
+		if u.RawInput != nil {
+			if data, err := json.Marshal(u.RawInput); err == nil {
+				tc.Input = data
+			}
+		}
+		// What the call produced is handed on with this report and not
+		// kept, so a long session's outputs do not pile up in memory.
 		h.calls[u.ToolCallID] = tc
 		h.mu.Unlock()
+		tc.Content = h.toolContent(u.Content)
+		tc.Output = rawText(u.RawOutput)
 		h.obs.ToolCall(tc)
 	case acp.SessionUpdateTypePlan:
 		entries := make([]v1.PlanEntry, 0, len(u.Entries))
@@ -360,6 +407,69 @@ func (h *handler) relative(locs []acp.ToolCallLocation) []string {
 }
 
 func hasPrefix(s, prefix string) bool { return len(s) >= len(prefix) && s[:len(prefix)] == prefix }
+
+// toolContent reads what a tool call report says the call produced. A
+// first report carries a slice, an update a pointer to one; nil means the
+// report said nothing about it.
+func (h *handler) toolContent(c any) []v1.ToolCallContent {
+	var items []acp.ToolCallContent
+	switch v := c.(type) {
+	case []acp.ToolCallContent:
+		items = v
+	case *[]acp.ToolCallContent:
+		if v == nil {
+			return nil
+		}
+		items = *v
+	default:
+		return nil
+	}
+	out := make([]v1.ToolCallContent, 0, len(items))
+	for _, it := range items {
+		switch it.Type {
+		case acp.ToolCallContentTypeDiff:
+			out = append(out, v1.ToolCallContent{Type: "diff", Path: h.relative([]acp.ToolCallLocation{{Path: it.Path}})[0], OldText: it.OldText, NewText: it.NewText})
+		case acp.ToolCallContentTypeTerminal:
+			out = append(out, v1.ToolCallContent{Type: "terminal", TerminalID: string(it.TerminalID)})
+		default:
+			b := it.Content
+			switch b.Type {
+			case acp.ContentBlockTypeText, "":
+				out = append(out, v1.ToolCallContent{Type: "text", Text: b.Text})
+			default:
+				// An image, audio, or resource: say what it was, not what
+				// it held.
+				desc := string(b.Type)
+				if b.MimeType != nil {
+					desc += " " + *b.MimeType
+				}
+				if b.URI != nil {
+					desc += " " + *b.URI
+				} else if b.Name != "" {
+					desc += " " + b.Name
+				}
+				out = append(out, v1.ToolCallContent{Type: string(b.Type), Text: desc})
+			}
+		}
+	}
+	return out
+}
+
+// rawText renders an agent's raw tool output as text: a string as itself,
+// anything else as JSON.
+func rawText(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return x
+	}
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
 
 func contentText(c any) string {
 	switch v := c.(type) {

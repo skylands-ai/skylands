@@ -293,6 +293,19 @@ func TestStartSessionOverNATS(t *testing.T) {
 	if _, errText := fetchText(v1.FetchTranscript, "nope"); errText == "" {
 		t.Error("an unknown session's transcript was served")
 	}
+	// So does one tool call's record, named by its id.
+	body, _ := json.Marshal(v1.FetchSessionRequest{SessionID: "sess-1", ToolCallID: "t1-read-0"})
+	if msg, err := nc.Request(v1.IslandFetchSubject("ws", v1.FetchToolCall), body, 5*time.Second); err != nil {
+		t.Fatalf("fetch tool call: %v", err)
+	} else {
+		var reply v1.Reply
+		_ = json.Unmarshal(msg.Data, &reply)
+		var detail v1.ToolCallDetail
+		_ = json.Unmarshal(reply.Result, &detail)
+		if reply.Error != "" || detail.Title != "Read main.go" || detail.Status != "completed" || len(detail.Content) != 1 || detail.Content[0].Text != "main.go" {
+			t.Errorf("tool call = %+v, err %q", detail, reply.Error)
+		}
+	}
 
 	// The local CLI's path lists the session and cleans up after it: the
 	// dirty worktree is kept until the removal is forced.

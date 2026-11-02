@@ -266,6 +266,61 @@ func TestRunPromptDrivesTheFakeAgent(t *testing.T) {
 		}
 		seen[c.ID] = true
 	}
+	// Each report carries the input as last reported and what the report
+	// said the call produced. The edit is announced under a placeholder
+	// with an empty input, which does not count as known, then named.
+	var firstEdit, namedEdit, readDone, editDone *ToolCall
+	for i := range rec.calls {
+		c := &rec.calls[i]
+		switch {
+		case c.ID == "t1-edit-0" && firstEdit == nil:
+			firstEdit = c
+		case c.ID == "t1-edit-0" && namedEdit == nil:
+			namedEdit = c
+		case c.ID == "t1-read-0" && c.Status == "completed":
+			readDone = c
+		case c.ID == "t1-edit-0" && c.Status == "completed":
+			editDone = c
+		}
+	}
+	if firstEdit == nil || firstEdit.Title != "Edit" || firstEdit.InputKnown() || firstEdit.Content != nil {
+		t.Errorf("the edit's first report = %+v, want a placeholder with an unknown input", firstEdit)
+	}
+	if namedEdit == nil || namedEdit.Title != "Edit README.md" || !namedEdit.InputKnown() || !strings.Contains(string(namedEdit.Input), "rewrite") || namedEdit.Locations[0] != "README.md" {
+		t.Errorf("the edit's naming = %+v", namedEdit)
+	}
+	if readDone == nil || !strings.Contains(string(readDone.Input), `"file_path":"README.md"`) || len(readDone.Content) != 1 || readDone.Content[0].Type != "text" || readDone.Content[0].Text != "README.md" {
+		t.Errorf("the read's result = %+v", readDone)
+	}
+	if editDone == nil || len(editDone.Content) != 1 || editDone.Content[0].Type != "diff" || editDone.Content[0].Path != "README.md" || !strings.Contains(editDone.Content[0].NewText, "rewritten") {
+		t.Errorf("the edit's result = %+v", editDone)
+	}
+}
+
+func TestToolCallInputKnown(t *testing.T) {
+	cases := []struct {
+		input json.RawMessage
+		known bool
+	}{
+		{nil, true},
+		{json.RawMessage(`{}`), false},
+		{json.RawMessage(` { } `), false},
+		{json.RawMessage(`null`), false},
+		{json.RawMessage(`{"command":"git status"}`), true},
+		{json.RawMessage(`"text"`), true},
+	}
+	for _, c := range cases {
+		if got := (ToolCall{Input: c.input}).InputKnown(); got != c.known {
+			t.Errorf("InputKnown(%s) = %v, want %v", c.input, got, c.known)
+		}
+	}
+}
+
+func TestSeedTextDropsToolMarkers(t *testing.T) {
+	seed := seedText("## You\n\nfix it\n\n## Agent\n\n⚙ Read a.go <!-- tool:t1-read-0 -->\n\nDone.")
+	if strings.Contains(seed, "<!--") || !strings.Contains(seed, "⚙ Read a.go\n") {
+		t.Errorf("seed = %q", seed)
+	}
 }
 
 func TestTitleUsesASideSession(t *testing.T) {

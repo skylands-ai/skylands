@@ -307,9 +307,15 @@ func TestStartRunsAnAgentAndRecordsItsEvents(t *testing.T) {
 	if b, err := os.ReadFile(filepath.Join(f.cfg.TranscriptsDir, "s1.md")); err != nil || !strings.Contains(string(b), "Done with \"tidy up\"") || !strings.Contains(string(b), "## You\n\nand again") || !strings.Contains(string(b), "Done with \"and again\". I read 2 files and was not allowed to edit") || !strings.Contains(string(b), ToolLinePrefix+"Edit a.go (denied)") {
 		t.Errorf("transcript = %q, %v", b, err)
 	} else {
-		// Tool calls sit on their own lines between the agent's words.
-		if !strings.Contains(string(b), "\n"+ToolLinePrefix+"Read a.go\n") {
+		// Tool calls sit on their own lines between the agent's words, each
+		// with a marker naming the call. The edit was announced under a
+		// placeholder before its input was known; its line waited for the
+		// name.
+		if !strings.Contains(string(b), "\n"+ToolLine("Read a.go", "t1-read-0")+"\n") || !strings.Contains(string(b), "\n"+ToolLine("Edit a.go", "t1-edit-0")+"\n") {
 			t.Errorf("transcript lacks a tool line: %q", b)
+		}
+		if strings.Contains(string(b), ToolLinePrefix+"Edit <!--") || strings.Contains(string(b), ToolLinePrefix+"Edit\n") {
+			t.Errorf("transcript has the placeholder line: %q", b)
 		}
 		// The live feed is the file, piece by piece.
 		liveMu.Lock()
@@ -326,6 +332,30 @@ func TestStartRunsAnAgentAndRecordsItsEvents(t *testing.T) {
 		if joined.String() != string(b) {
 			t.Errorf("live feed differs from the transcript:\n%q\n%q", joined.String(), b)
 		}
+	}
+
+	// Each tool call has a record beside the transcript: the exact input,
+	// what came back, and when. The edit's input came with the agent's
+	// naming of the call and again with its permission request.
+	read, err := m.ToolCall("s1", "t1-read-0")
+	if err != nil || read.Title != "Read a.go" || read.Kind != "read" || read.Status != "completed" || !strings.Contains(string(read.Input), `"file_path":"a.go"`) || len(read.Content) != 1 || read.Content[0].Type != "text" || read.Content[0].Text != "a.go" || read.Locations[0] != "a.go" {
+		t.Errorf("read record = %+v, %v", read, err)
+	}
+	if read.EndedAt == nil || read.EndedAt.Before(read.StartedAt) || read.UpdatedAt.Before(read.StartedAt) {
+		t.Errorf("read record times = started %v, updated %v, ended %v", read.StartedAt, read.UpdatedAt, read.EndedAt)
+	}
+	edit, err := m.ToolCall("s1", "t1-edit-0")
+	if err != nil || edit.Title != "Edit a.go" || edit.Status != "completed" || !strings.Contains(string(edit.Input), "rewrite") || len(edit.Content) != 1 || edit.Content[0].Type != "diff" || edit.Content[0].Path != "a.go" || edit.Content[0].OldText == nil || *edit.Content[0].OldText != "a.go" || !strings.Contains(edit.Content[0].NewText, "rewritten") {
+		t.Errorf("edit record = %+v, %v", edit, err)
+	}
+	if denied, err := m.ToolCall("s1", "t2-edit-0"); err != nil || denied.Status != "failed" || !strings.Contains(string(denied.Input), "rewrite") {
+		t.Errorf("denied edit record = %+v, %v", denied, err)
+	}
+	if _, err := m.ToolCall("s1", "nope"); !errors.Is(err, ErrUnknownToolCall) {
+		t.Errorf("an unknown tool call: err = %v", err)
+	}
+	if _, err := m.ToolCall("nope", "t1-read-0"); !errors.Is(err, ErrUnknownSession) {
+		t.Errorf("an unknown session's tool call: err = %v", err)
 	}
 
 	// Stop ends the session; a repeated stop is harmless.

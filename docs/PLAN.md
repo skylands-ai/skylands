@@ -112,6 +112,26 @@ specifies. No events, streams, or aggregates are needed for it.
   with the choices and a box for anything else, and `skylands request
   answer` takes field=value pairs or --decline. The fake agent asks which
   file to edit when its prompt says "ask me", so every path is tested.
+- Tool call details are done. A chip in the conversation said only its
+  title, and an agent that streams a call's input titles it first with a
+  placeholder, such as "Terminal" for a command it has not finished
+  writing, which is what the chip kept. Now the daemon keeps a record per
+  tool call beside the transcript, under `<session>.tools/`: the exact
+  input as last reported, what the call produced as ACP content (text
+  such as a command's output, a diff, or a terminal reference), the raw
+  output when nothing else carried it, and when it started and ended,
+  with long texts cut at a size limit. A call starts, for ToolCallStarted
+  and the transcript's line, once its input is known rather than at the
+  first report, so the line carries the real title, flattened to one line
+  and cut short; ToolCallCompleted carries a title the agent changed
+  since. Each line ends with a marker naming the call, which Markdown
+  hides and the seed of a replacement session drops. The conversation's
+  chip is a button: opening it fetches the record through the citadel
+  (`GET /api/sessions/{host}/{id}/tools/{toolCallId}`, the "toolcall"
+  fetch kind on the island) and shows the kind, how it went, how long it
+  took, the input by field, and the output, refreshed while the call
+  still runs. The fake agent reports inputs and results, and announces
+  its edit under a placeholder first, so every path is tested.
 
 ## After the MVP
 

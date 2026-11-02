@@ -205,6 +205,32 @@ export interface Live {
   text: string
 }
 
+/** One piece of what a tool call produced: text such as a command's output, a diff, or a terminal reference. */
+export interface ToolCallContent {
+  type: string
+  text?: string
+  path?: string
+  oldText?: string
+  newText?: string
+  terminalId?: string
+}
+
+/** Everything the host kept about one tool call: the exact input, what came back, and when. */
+export interface ToolCallDetail {
+  toolCallId: string
+  title: string
+  kind?: string
+  status: string
+  locations?: string[]
+  input?: unknown
+  content?: ToolCallContent[]
+  output?: string
+  truncated?: boolean
+  startedAt: string
+  updatedAt: string
+  endedAt?: string
+}
+
 export interface Message {
   type: string
   host?: string

@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/nats-io/nuid"
 
@@ -216,7 +217,10 @@ type Manager struct {
 	resuming map[string]bool
 	// transcripts holds each session's transcript writer once it is in use.
 	transcripts map[string]*transcript
-	runs        sync.WaitGroup
+	// toolMu serializes the tool call records, which are read, changed,
+	// and written whole.
+	toolMu sync.Mutex
+	runs   sync.WaitGroup
 }
 
 // live is a session's running agent and the turn it may be on.
@@ -411,7 +415,7 @@ func (m *Manager) decide(ctx context.Context, commandID, sessionID, requestID, b
 		if err := m.record(ctx, sessionID, commandID, v1.EventPermissionDenied, v1.PermissionDenied{SessionID: sessionID, RequestID: requestID, By: by}); err != nil {
 			return Session{}, err
 		}
-		m.transcript(sessionID).Line(ToolLinePrefix + pending.Title + " (denied)")
+		m.transcript(sessionID).Line(ToolLine(pending.Title+" (denied)", pending.ToolCallID))
 		ask <- agents.Decision{Cancelled: true}
 		out, _ := m.Get(sessionID)
 		return out, nil
@@ -424,7 +428,7 @@ func (m *Manager) decide(ctx context.Context, commandID, sessionID, requestID, b
 		if err := m.record(ctx, sessionID, commandID, v1.EventPermissionDenied, v1.PermissionDenied{SessionID: sessionID, RequestID: requestID, OptionID: option, By: by}); err != nil {
 			return Session{}, err
 		}
-		m.transcript(sessionID).Line(ToolLinePrefix + pending.Title + " (denied)")
+		m.transcript(sessionID).Line(ToolLine(pending.Title+" (denied)", pending.ToolCallID))
 	}
 	slog.Info("session: request decided", "session", sessionID, "request", requestID, "allowed", allow, "by", by)
 	ask <- agents.Decision{OptionID: option}
@@ -1328,6 +1332,9 @@ func (m *Manager) apply(ev v1.Event) {
 				for i := range s.ToolCalls {
 					if s.ToolCalls[i].ID == d.ToolCallID {
 						s.ToolCalls[i].Status = d.Status
+						if d.Title != "" {
+							s.ToolCalls[i].Title = d.Title
+						}
 						if len(d.Locations) > 0 {
 							s.ToolCalls[i].Locations = d.Locations
 						}
@@ -1386,6 +1393,8 @@ func (o *observer) Spawned(name, version, agentSessionID string) {
 func (o *observer) ToolCall(tc agents.ToolCall) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	now := time.Now().UTC()
+	o.m.recordTool(o.id, tc, now)
 	s, _ := o.m.Get(o.id)
 	var known *ToolCall
 	for i := range s.ToolCalls {
@@ -1394,22 +1403,80 @@ func (o *observer) ToolCall(tc agents.ToolCall) {
 		}
 	}
 	if known == nil {
+		// An agent that streams a call's input reports it first with a
+		// placeholder title, such as "Terminal" for a command it has not
+		// finished writing. The call starts, for the record and the
+		// transcript, once the input is known, so the title is the real
+		// one; a call that finishes without ever saying starts then.
+		if !tc.InputKnown() && !tc.Finished() {
+			return
+		}
 		_ = o.m.record(o.m.ctx, o.id, "", v1.EventToolCallStarted, v1.ToolCallStarted{SessionID: o.id, ToolCallID: tc.ID, Title: tc.Title, Kind: tc.Kind, Locations: tc.Locations})
 		// The transcript notes each tool call on a line of its own, between
 		// the agent's words, so a reader sees what it did where it did it.
-		o.t.Line(ToolLinePrefix + tc.Title)
+		if tc.Status != "failed" {
+			o.t.Line(ToolLine(tc.Title, tc.ID))
+		}
 	}
-	finished := tc.Status == "completed" || tc.Status == "failed"
-	if finished && (known == nil || (known.Status != "completed" && known.Status != "failed")) {
-		_ = o.m.record(o.m.ctx, o.id, "", v1.EventToolCallCompleted, v1.ToolCallCompleted{SessionID: o.id, ToolCallID: tc.ID, Status: tc.Status, Locations: tc.Locations})
+	if tc.Finished() && (known == nil || (known.Status != "completed" && known.Status != "failed")) {
+		done := v1.ToolCallCompleted{SessionID: o.id, ToolCallID: tc.ID, Status: tc.Status, Locations: tc.Locations}
+		if known != nil && known.Title != tc.Title {
+			done.Title = tc.Title
+		}
+		_ = o.m.record(o.m.ctx, o.id, "", v1.EventToolCallCompleted, done)
 		if tc.Status == "failed" {
-			o.t.Line(ToolLinePrefix + tc.Title + " (failed)")
+			o.t.Line(ToolLine(tc.Title+" (failed)", tc.ID))
 		}
 	}
 }
 
+// started puts a call the agent asks permission for on the record and in
+// the transcript before the request is, when its reports have not yet: a
+// request is about a call, so the call has begun whatever the agent has
+// said of it, and the request arrives alongside those reports rather than
+// after them. The request also carries the whole input, which for some
+// agents is the first time it is seen, so the call's record gets it.
+func (o *observer) started(tc agents.ToolCall, input json.RawMessage) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.m.recordToolInput(o.id, tc, input, time.Now().UTC())
+	s, _ := o.m.Get(o.id)
+	for _, known := range s.ToolCalls {
+		if known.ID == tc.ID {
+			return
+		}
+	}
+	_ = o.m.record(o.m.ctx, o.id, "", v1.EventToolCallStarted, v1.ToolCallStarted{SessionID: o.id, ToolCallID: tc.ID, Title: tc.Title, Kind: tc.Kind, Locations: tc.Locations})
+	o.t.Line(ToolLine(tc.Title, tc.ID))
+}
+
 // ToolLinePrefix opens a transcript line that records a tool call.
 const ToolLinePrefix = "\u2699 "
+
+// MaxToolLine is the most of a tool call's title a transcript line shows.
+// The record keeps the whole of it.
+const MaxToolLine = 160
+
+// ToolLine is the transcript line for a tool call: the prefix, the title
+// on one line, and a marker naming the call, which a conversation's reader
+// follows to the call's record and which Markdown does not show.
+func ToolLine(title, toolCallID string) string {
+	line := ToolLinePrefix + lineTitle(title)
+	if toolCallID != "" && !strings.ContainsAny(toolCallID, " \t\n>") {
+		line += " <!-- tool:" + toolCallID + " -->"
+	}
+	return line
+}
+
+// lineTitle fits a title on one transcript line: whitespace runs, including
+// line breaks in a long command, become one space, and the rest is cut.
+func lineTitle(title string) string {
+	t := strings.Join(strings.Fields(title), " ")
+	if utf8.RuneCountInString(t) <= MaxToolLine {
+		return t
+	}
+	return string([]rune(t)[:MaxToolLine]) + "\u2026"
+}
 
 func (o *observer) Plan(entries []v1.PlanEntry) {
 	o.mu.Lock()
@@ -1437,8 +1504,9 @@ func (o *observer) Message(text string) {
 // to do.
 func (o *observer) Permission(ctx context.Context, req agents.PermissionRequest) agents.Decision {
 	m := o.m
-	s, _ := m.Get(o.id)
 	tc := req.ToolCall
+	o.started(tc, req.Input)
+	s, _ := m.Get(o.id)
 	decision := v1.RuleAllow
 	if !s.Trusted {
 		decision = rules.Decide(append(append([]v1.Rule{}, s.Rules...), m.hostRules()...), rules.Call{Kind: tc.Kind, Title: tc.Title, Locations: tc.Locations, Input: req.Input})
@@ -1453,7 +1521,7 @@ func (o *observer) Permission(ctx context.Context, req agents.PermissionRequest)
 		option := pickOption(req.Options, false, "")
 		_ = m.record(m.ctx, o.id, "", v1.EventPermissionRequested, v1.PermissionRequested{SessionID: o.id, RequestID: requestID, ToolCallID: tc.ID, Title: tc.Title, Kind: tc.Kind, Locations: tc.Locations, Input: req.Input, Options: req.Options})
 		_ = m.record(m.ctx, o.id, "", v1.EventPermissionDenied, v1.PermissionDenied{SessionID: o.id, RequestID: requestID, OptionID: option, By: "rule"})
-		o.t.Line(ToolLinePrefix + tc.Title + " (denied by a rule)")
+		o.t.Line(ToolLine(tc.Title+" (denied by a rule)", tc.ID))
 		slog.Info("session: denied by a rule", "session", o.id, "tool", tc.Title)
 		if option != "" {
 			return agents.Decision{OptionID: option}
@@ -1491,7 +1559,7 @@ func (o *observer) Permission(ctx context.Context, req agents.PermissionRequest)
 		// Nobody answered: that is a refusal of this one call, not the end
 		// of the turn, so the agent gets its reject option when it has one.
 		_ = m.record(m.ctx, o.id, "", v1.EventPermissionExpired, v1.PermissionExpired{SessionID: o.id, RequestID: requestID, Reason: "timeout"})
-		o.t.Line(ToolLinePrefix + tc.Title + " (nobody answered in time)")
+		o.t.Line(ToolLine(tc.Title+" (nobody answered in time)", tc.ID))
 		if opt := pickOption(req.Options, false, ""); opt != "" {
 			return agents.Decision{OptionID: opt}
 		}

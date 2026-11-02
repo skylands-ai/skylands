@@ -202,13 +202,14 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 			return done()
 		}
 		id := acp.ToolCallId(fmt.Sprintf("t%d-read-%d", turn, i))
-		if err := send(toolCall(id, "Read "+f, acp.ToolKindRead, filepath.Join(s.cwd, f), acp.ToolCallStatusInProgress)); err != nil {
+		if err := send(toolCall(id, "Read "+f, acp.ToolKindRead, filepath.Join(s.cwd, f), acp.ToolCallStatusInProgress, map[string]any{"file_path": f})); err != nil {
 			return nil, err
 		}
 		if !pause() {
 			return done()
 		}
-		if err := send(toolCallUpdate(id, acp.ToolCallStatusCompleted)); err != nil {
+		// What a read produces is the file's text, as a real agent reports it.
+		if err := send(toolResult(id, acp.ToolCallStatusCompleted, acp.ContentToolCallContent(acp.TextContentBlock(fileText(s.cwd, f))))); err != nil {
 			return nil, err
 		}
 		n++
@@ -273,13 +274,21 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 			edited = chosen
 		}
 		id := acp.ToolCallId(fmt.Sprintf("t%d-edit-0", turn))
-		if err := send(toolCall(id, "Edit "+edited, acp.ToolKindEdit, filepath.Join(s.cwd, edited), acp.ToolCallStatusPending)); err != nil {
+		// Like an agent whose tool input streams in, the edit is announced
+		// before its input is known, under a placeholder title with an empty
+		// input, and named once the input is complete.
+		if err := send(toolCall(id, "Edit", acp.ToolKindEdit, "", acp.ToolCallStatusPending, map[string]any{})); err != nil {
 			return nil, err
 		}
-		// An edit needs permission, like a real agent's would.
 		title := "Edit " + edited
 		kind := acp.ToolKindEdit
 		locs := []acp.ToolCallLocation{{Path: filepath.Join(s.cwd, edited)}}
+		named := acp.ToolCallUpdateSessionUpdate(id)
+		named.Title, named.Kind, named.Locations, named.RawInput = &title, &kind, &locs, map[string]any{"path": edited, "change": "rewrite"}
+		if err := send(named); err != nil {
+			return nil, err
+		}
+		// An edit needs permission, like a real agent's would.
 		perm, err := a.conn.RequestPermission(ctx, &acp.RequestPermissionRequest{
 			SessionID: req.SessionID,
 			ToolCall:  acp.ToolCallUpdate{ToolCallID: id, Title: &title, Kind: &kind, Locations: &locs, RawInput: map[string]any{"path": edited, "change": "rewrite"}},
@@ -311,7 +320,12 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 			if !pause() {
 				return done()
 			}
-			if err := send(toolCallUpdate(id, acp.ToolCallStatusCompleted)); err != nil {
+			// What an edit produces is a diff of the file, as a real agent
+			// reports it, though the fake agent changes nothing on disk.
+			old := fileText(s.cwd, edited)
+			diff := acp.DiffToolCallContent(filepath.Join(s.cwd, edited), old+"// rewritten by the fake agent\n")
+			diff.OldText = &old
+			if err := send(toolResult(id, acp.ToolCallStatusCompleted, diff)); err != nil {
 				return nil, err
 			}
 		}
@@ -374,12 +388,17 @@ func chunks(s string, n int) []string {
 	return append(out, s)
 }
 
-func toolCall(id acp.ToolCallId, title string, kind acp.ToolKind, path string, status acp.ToolCallStatus) acp.SessionUpdate {
+// toolCall is the first report of a tool call. An empty path means the
+// call names no file yet.
+func toolCall(id acp.ToolCallId, title string, kind acp.ToolKind, path string, status acp.ToolCallStatus, input any) acp.SessionUpdate {
 	u := acp.ToolCallSessionUpdate(id, title)
 	u.Kind = &kind
 	u.Status = &status
-	locs := []acp.ToolCallLocation{{Path: path}}
-	u.Locations = &locs
+	u.RawInput = input
+	if path != "" {
+		locs := []acp.ToolCallLocation{{Path: path}}
+		u.Locations = &locs
+	}
 	return u
 }
 
@@ -387,6 +406,29 @@ func toolCallUpdate(id acp.ToolCallId, status acp.ToolCallStatus) acp.SessionUpd
 	u := acp.ToolCallUpdateSessionUpdate(id)
 	u.Status = &status
 	return u
+}
+
+// toolResult ends a tool call with what it produced.
+func toolResult(id acp.ToolCallId, status acp.ToolCallStatus, content ...acp.ToolCallContent) acp.SessionUpdate {
+	u := toolCallUpdate(id, status)
+	u.Content = &content
+	return u
+}
+
+// MaxFileText is the most of a file the fake agent reports having read.
+const MaxFileText = 2048
+
+// fileText is a file's text as the fake agent reports it, cut short for a
+// long one.
+func fileText(dir, rel string) string {
+	data, err := os.ReadFile(filepath.Join(dir, rel))
+	if err != nil {
+		return "(could not read " + rel + ": " + err.Error() + ")"
+	}
+	if len(data) > MaxFileText {
+		return string(data[:MaxFileText]) + "\n[…]"
+	}
+	return string(data)
 }
 
 // someFiles lists up to n regular files under dir, outside .git, sorted by

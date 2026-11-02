@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -107,11 +108,15 @@ const (
 // session's first prompt. A longer one keeps its end.
 const MaxSeed = 256 * 1024
 
+// toolMarkers matches the marker a transcript's tool call lines end with,
+// which names the call for a reader's browser and means nothing to an agent.
+var toolMarkers = regexp.MustCompile(` <!-- tool:[^ >]* -->`)
+
 // seedText is what a new agent session is told before its first prompt
 // when it stands in for one that could not be loaded: the conversation so
 // far, as the transcript recorded it.
 func seedText(transcript string) string {
-	transcript = strings.TrimSpace(transcript)
+	transcript = strings.TrimSpace(toolMarkers.ReplaceAllString(transcript, ""))
 	if transcript == "" {
 		return ""
 	}

@@ -208,7 +208,7 @@ Every kind of data has one home and, where it needs one, a named copy.
 | Rule, user, budget, and work order events | One stream per aggregate type in the world's JetStream domain, with one subject per aggregate instance | Any citadel, settled by a per-subject compare-and-set | Rule and user streams are mirrored into every daemon's domain |
 | Citadel projections | Each citadel's memory | That citadel, from its own ordered consumers | None |
 | Daemon projections: rules and approver keys | The daemon's memory | The daemon, from its local mirrors | None |
-| Diffs, file contents, and transcripts | The host's disk, in worktrees and agent session files | Agents and the daemon | None; a citadel holds fetched content only while someone views it |
+| Diffs, file contents, transcripts, and tool call records | The host's disk, in worktrees and agent session files | Agents and the daemon | None; a citadel holds fetched content only while someone views it |
 | Commands and queries | Nowhere; they're NATS request-reply | People, through a citadel, the CLI, or an integration | None |
 | Owner key | Offline, with the world's owner | `skylands world init` | None |
 | Approver keys | Private keys stay on people's devices as passkeys, and public keys travel in user events | People's devices | Wherever user events go |
@@ -382,7 +382,7 @@ Rules settle most tool calls on the host, so only what no rule covers reaches a 
 
 The daemon decides what leaves the host. Session and host events carry metadata by default: tool names, file paths, commands, plans, usage, and decisions.
 
-- Diffs, file contents, and full transcripts stay on the host until someone asks for them. The citadel requests them on demand through the island's fetch subjects, and the daemon answers or refuses based on its rules.
+- Diffs, file contents, full transcripts, and what each tool call took in and gave back stay on the host until someone asks for them. The citadel requests them on demand through the island's fetch subjects, and the daemon answers or refuses based on its rules.
 - NATS stores events. Each citadel derives its projections from them _in memory_, so no citadel holds data of its own, and it keeps fetched content only for as long as a person is viewing it.
 - Event streams on each host are capped by size. When an offline host reaches the cap, the daemon stops starting new sessions rather than dropping events that haven't synced.
 - Push notifications carry no tool input, file contents, or commands.
@@ -456,7 +456,7 @@ skylands/
 │   │   ├── terrain/           repos, worktrees, file watching
 │   │   ├── enforce/           rule enforcement, approval signature checks
 │   │   ├── leaf/              embedded leaf node, local streams and mirrors
-│   │   ├── fetch/             diff, file, and transcript responders
+│   │   ├── fetch/             diff, file, transcript, and tool call responders
 │   │   └── socket/            local API for the CLI
 │   ├── es/                    event-sourcing kit over JetStream
 │   ├── rules/                 rule language and evaluation
