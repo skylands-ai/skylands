@@ -90,7 +90,11 @@ A session waits on you while its agent has stopped for a reply you have
 not read yet; once you have read it, it is idle until you answer. Open one
 to read it as a chat, with the agent's words and tool calls arriving as
 they happen, reply at the bottom, or end the session, which stops the
-agent and keeps its worktree. The world is paused while the inbox is
+agent and keeps its worktree. Each tool call is a chip where it happened;
+click one to see what the call did: the exact command or input, what came
+back, such as a command's output or an edit's diff, and how long it took.
+That record stays on the host beside the transcript and is fetched only
+while you look. The world is paused while the inbox is
 open, and "Show in world" flies back to the airship. The header's Inbox
 badge and the tab title count the sessions waiting on you. Every answer
 the agent gives comes back with what it cost in tokens, and the daemon

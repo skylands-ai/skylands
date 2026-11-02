@@ -210,11 +210,13 @@ type ToolCallStarted struct {
 }
 
 // ToolCallCompleted records a tool call's end. Status is "completed" or
-// "failed".
+// "failed". Title is set when the agent renamed the call since it started,
+// as one does once it knows the whole input.
 type ToolCallCompleted struct {
 	SessionID  string   `json:"sessionId"`
 	ToolCallID string   `json:"toolCallId"`
 	Status     string   `json:"status"`
+	Title      string   `json:"title,omitempty"`
 	Locations  []string `json:"locations,omitempty"`
 }
 
@@ -338,7 +340,48 @@ const (
 	// FetchChanges returns where a session's changes stand: what is
 	// uncommitted and how far its branch is ahead of its base.
 	FetchChanges = "changes"
+	// FetchToolCall returns one tool call's record: its exact input, what
+	// it produced, and when. The request names the call by ToolCallID.
+	FetchToolCall = "toolcall"
 )
+
+// ToolCallDetail is everything the host kept about one tool call: what the
+// agent asked for, what came back, and when. It stays on the host's disk
+// beside the transcript until a conversation's reader opens the call.
+type ToolCallDetail struct {
+	ToolCallID string   `json:"toolCallId"`
+	Title      string   `json:"title"`
+	Kind       string   `json:"kind,omitempty"`
+	Status     string   `json:"status"`
+	Locations  []string `json:"locations,omitempty"`
+	// Input is the exact tool input as the agent last reported it, as JSON.
+	Input json.RawMessage `json:"input,omitempty"`
+	// Content is what the call produced, as the agent last reported it:
+	// text, such as a command's output, a diff, or a terminal reference.
+	Content []ToolCallContent `json:"content,omitempty"`
+	// Output is the agent's raw result as text, when it gave one and no
+	// content carried it.
+	Output string `json:"output,omitempty"`
+	// Truncated says some text was cut at the host's size limit.
+	Truncated bool      `json:"truncated,omitempty"`
+	StartedAt time.Time `json:"startedAt"`
+	// UpdatedAt is when the agent last said anything about the call.
+	UpdatedAt time.Time  `json:"updatedAt"`
+	EndedAt   *time.Time `json:"endedAt,omitempty"`
+}
+
+// ToolCallContent is one piece of what a tool call produced, as ACP
+// reports it: "text" with Text, "diff" with Path and the texts, "terminal"
+// with TerminalID, or another content block's type with a short Text
+// describing it.
+type ToolCallContent struct {
+	Type       string  `json:"type"`
+	Text       string  `json:"text,omitempty"`
+	Path       string  `json:"path,omitempty"`
+	OldText    *string `json:"oldText,omitempty"`
+	NewText    string  `json:"newText,omitempty"`
+	TerminalID string  `json:"terminalId,omitempty"`
+}
 
 // ChangesResult is the state of a session's changes on the host's disk.
 // What was committed, merged, or sent as a pull request through Skylands
@@ -357,9 +400,11 @@ type ChangesResult struct {
 	WorktreeRemoved bool `json:"worktreeRemoved,omitempty"`
 }
 
-// FetchSessionRequest asks for one session's transcript or diff.
+// FetchSessionRequest asks for one session's transcript, diff, or changes,
+// or with ToolCallID for one of its tool calls.
 type FetchSessionRequest struct {
-	SessionID string `json:"sessionId"`
+	SessionID  string `json:"sessionId"`
+	ToolCallID string `json:"toolCallId,omitempty"`
 }
 
 // TextResult is a fetched text, cut off at the daemon's size limit when

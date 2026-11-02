@@ -8,6 +8,8 @@ import { replyBox } from './reply'
 import { HOST_DEFAULTS, proposeRule, ruleText, rulesSheet } from './rules'
 import { agentLabel, isOpen, sessionLabel, sessionStatus, tokensBreakdown, tokensLabel, tokensText } from './status'
 import { conversationList, isUnread, isWaiting, sumTokens, type State } from './store'
+import { chipDeps, toolChip } from './toolchip'
+
 import { parseTranscript } from './transcript'
 import type { Rule } from './protocol'
 
@@ -68,7 +70,7 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live
   // Once the agent is not mid-turn, where its changes stand is read from the
   // host, and read again after each event, such as a commit.
   const changes = open && open.status !== 'running' && !open.worktreeRemoved ? cache.get('changes', open.host, open.id, 0, Date.parse(open.updatedAt)) : undefined
-  const deps = [s.sessions, s.repos, s.viewed, s.inbox, s.inboxFilter, open, fetched?.at, fetched?.loading, fetched?.error, fetched?.text, changes?.at, changes?.loading, changes?.error, changes?.changes, rulesToggles]
+  const deps = [s.sessions, s.repos, s.viewed, s.inbox, s.inboxFilter, open, fetched?.at, fetched?.loading, fetched?.error, fetched?.text, changes?.at, changes?.loading, changes?.error, changes?.changes, rulesToggles, ...(open ? chipDeps(open, cache) : [])]
   if (lastDeps && lastDeps.length === deps.length && lastDeps.every((d, i) => d === deps[i])) return
   lastDeps = deps
 
@@ -83,7 +85,7 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live
   if (open) {
     const { text, gap } = live.compose(open.id, fetched)
     if (gap && fetched && !fetched.loading) cache.get('transcript', open.host, open.id, 0, Date.now())
-    root.appendChild(conversation(s, open, text, fetched?.error, changes, actions))
+    root.appendChild(conversation(s, open, text, fetched?.error, changes, cache, actions))
   }
 
   for (const box of root.querySelectorAll<HTMLElement>('[data-scroll]')) {
@@ -340,20 +342,20 @@ function trustSwitch(x: Session, actions: InboxActions): HTMLElement {
   return label
 }
 
-/** An agent message: its words as Markdown, with each tool call it made as a chip where it happened. */
-function agentBody(text: string): HTMLElement {
+/** An agent message: its words as Markdown, with each tool call it made as a chip where it happened, and its record behind the chip. */
+function agentBody(x: Session, text: string, cache: FetchCache, refresh: () => void): HTMLElement {
   const body = el('div', { class: 'body md' })
   for (const seg of segments(text)) {
-    if (seg.kind === 'tool') body.appendChild(el('span', { class: 'toolchip', text: seg.text }))
+    if (seg.kind === 'tool') for (const n of toolChip(x, seg.text, seg.id, cache, refresh)) body.appendChild(n)
     else body.appendChild(renderMarkdown(seg.text))
   }
   return body
 }
 
 /** The running turn's body: what the agent has said so far, or what it is doing. */
-function liveBody(x: Session, text: string): HTMLElement {
+function liveBody(x: Session, text: string, cache: FetchCache, refresh: () => void): HTMLElement {
   if (text.trim()) {
-    const body = agentBody(text)
+    const body = agentBody(x, text, cache, refresh)
     body.classList.add('md')
     return body
   }
@@ -361,12 +363,19 @@ function liveBody(x: Session, text: string): HTMLElement {
   return el('div', { class: 'body quiet', text: `${doing}\u2026` })
 }
 
-/** A line the daemon writes between the agent's words: a tool call, or a question and its answer. */
-const TOOL_LINE = /^[\u2699\u2753] (.*)$/
+/**
+ * A line the daemon writes between the agent's words: a tool call, or a
+ * question and its answer. A tool call's line ends with a marker naming
+ * the call, which Markdown would hide and the chip follows to its record.
+ */
+const TOOL_LINE = /^[\u2699\u2753] (.*?)(?: <!-- tool:(\S+) -->)?\s*$/
+
+/** The marker, wherever it is, for text that leaves the page. */
+const TOOL_MARKERS = / <!-- tool:\S+ -->/g
 
 /** Splits an agent turn into runs of words and the tool calls between them. */
-function segments(text: string): { kind: 'text' | 'tool'; text: string }[] {
-  const out: { kind: 'text' | 'tool'; text: string }[] = []
+function segments(text: string): { kind: 'text' | 'tool'; text: string; id?: string }[] {
+  const out: { kind: 'text' | 'tool'; text: string; id?: string }[] = []
   let words: string[] = []
   const flush = (): void => {
     const t = words.join('\n').trim()
@@ -377,7 +386,7 @@ function segments(text: string): { kind: 'text' | 'tool'; text: string }[] {
     const m = TOOL_LINE.exec(line)
     if (m) {
       flush()
-      out.push({ kind: 'tool', text: m[1] })
+      out.push({ kind: 'tool', text: m[1], id: m[2] })
     } else words.push(line)
   }
   flush()
@@ -388,7 +397,7 @@ function segments(text: string): { kind: 'text' | 'tool'; text: string }[] {
  * Grows the open conversation's live bubble with what the feed brought,
  * without rebuilding anything else. Called as pieces arrive.
  */
-export function growLive(root: HTMLElement, s: State, cache: FetchCache, live: LiveText): void {
+export function growLive(root: HTMLElement, s: State, cache: FetchCache, live: LiveText, refresh: () => void): void {
   const open = s.inbox ? s.sessions[s.inbox] : undefined
   const convo = root.querySelector<HTMLElement>('.convo')
   if (!open || !convo || convo.dataset.session !== open.id || open.status !== 'running') return
@@ -401,15 +410,15 @@ export function growLive(root: HTMLElement, s: State, cache: FetchCache, live: L
   if (!bubble || !last || last.who !== 'agent') return
   const box = convo.querySelector<HTMLElement>('.convo-body')
   const atEnd = !!box && box.scrollHeight - box.scrollTop - box.clientHeight < 12
-  bubble.querySelector('.body')?.replaceWith(liveBody(open, last.text))
+  bubble.querySelector('.body')?.replaceWith(liveBody(open, last.text, cache, refresh))
   if (box && atEnd) box.scrollTop = box.scrollHeight
 }
 
-/** Copies one message's Markdown as the agent wrote it. */
+/** Copies one message's Markdown as the agent wrote it, without the daemon's markers. */
 function copyButton(text: string): HTMLElement {
   const b = el('button', { type: 'button', class: 'copy', text: 'Copy', 'aria-label': 'Copy this message' })
   b.addEventListener('click', () => {
-    navigator.clipboard?.writeText(text).then(
+    navigator.clipboard?.writeText(text.replace(TOOL_MARKERS, '')).then(
       () => {
         b.textContent = 'Copied'
         setTimeout(() => (b.textContent = 'Copy'), 1500)
@@ -516,7 +525,7 @@ function narrowList(s: State, openId: string, actions: InboxActions): HTMLElemen
 }
 
 /** One conversation: its turns, the notes between them, how it ended, and the reply box while it is open. */
-function conversation(s: State, x: Session, transcript: string | undefined, fetchError: string | undefined, changes: Fetched | undefined, actions: InboxActions): HTMLElement {
+function conversation(s: State, x: Session, transcript: string | undefined, fetchError: string | undefined, changes: Fetched | undefined, cache: FetchCache, actions: InboxActions): HTMLElement {
   const status = sessionStatus(x, isWaiting(s, x))
   const repo = s.repos[x.repoId]
   const name = agentLabel(x.agent)
@@ -556,10 +565,10 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
   for (const t of conv.turns) {
     if (t.who === 'you') body.appendChild(el('div', { class: 'msg you' }, [el('span', { class: 'from', text: 'You' }), el('div', { class: 'body', text: t.text })]))
     else if (t.who === 'note') body.appendChild(el('p', { class: 'convo-note', text: t.text }))
-    else if (t === liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, t.text)]))
-    else if (t.text) body.appendChild(el('div', { class: 'msg agent' }, [el('span', { class: 'from' }, [name, copyButton(t.text)]), agentBody(t.text)]))
+    else if (t === liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, t.text, cache, actions.refresh)]))
+    else if (t.text) body.appendChild(el('div', { class: 'msg agent' }, [el('span', { class: 'from' }, [name, copyButton(t.text)]), agentBody(x, t.text, cache, actions.refresh)]))
   }
-  if (running && !liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, '')]))
+  if (running && !liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, '', cache, actions.refresh)]))
   for (const p of x.pending) body.appendChild(approvalCard(s, x, p, actions))
   for (const q of x.questions) body.appendChild(questionCard(x, q, actions))
   if (fetchError) body.appendChild(el('p', { class: 'convo-end', style: 'color:var(--bad)', text: fetchError }))

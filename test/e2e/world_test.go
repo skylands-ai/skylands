@@ -622,6 +622,17 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 	if code, body := get("/api/sessions/ws/" + id + "/diff"); code != http.StatusOK || !strings.Contains(body, `"text"`) {
 		t.Errorf("diff: %d %s", code, body)
 	}
+	// A tool call's record comes the same way: the transcript's line names
+	// the call, and the record holds its input and what it produced.
+	if code, body := get("/api/sessions/ws/" + id + "/tools/t1-read-0"); code != http.StatusOK || !strings.Contains(body, `"title":"Read `) || !strings.Contains(body, `"status":"completed"`) || !strings.Contains(body, `"file_path"`) || !strings.Contains(body, `"type":"text"`) {
+		t.Errorf("tool call: %d %s", code, body)
+	}
+	if code, _ := get("/api/sessions/ws/" + id + "/tools/nope"); code != http.StatusNotFound {
+		t.Errorf("unknown tool call: %d", code)
+	}
+	if live := b.liveText(); !strings.Contains(live, " <!-- tool:t3-read-0 -->") {
+		t.Errorf("live text lacks the tool marker: %q", live)
+	}
 	if code, _ := get("/api/sessions/ws/nope/transcript"); code != http.StatusNotFound {
 		t.Errorf("unknown session transcript: %d", code)
 	}

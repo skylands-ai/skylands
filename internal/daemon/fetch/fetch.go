@@ -1,6 +1,7 @@
 // Package fetch answers on-demand reads from the host's disk: a session's
-// transcript and the diff in its worktree. The citadel asks through the
-// island's fetch subjects, and the daemon decides what leaves the host.
+// transcript, the diff in its worktree, where its changes stand, and the
+// record of one of its tool calls. The citadel asks through the island's
+// fetch subjects, and the daemon decides what leaves the host.
 package fetch
 
 import (
@@ -25,11 +26,12 @@ import (
 // MaxBytes is the most text one answer carries.
 const MaxBytes = 512 * 1024
 
-// Sessions finds sessions and reports their changes, which the session
-// manager provides.
+// Sessions finds sessions and reports their changes and their tool calls,
+// which the session manager provides.
 type Sessions interface {
 	Get(id string) (session.Session, bool)
 	Changes(ctx context.Context, id string) (v1.ChangesResult, error)
+	ToolCall(sessionID, toolCallID string) (v1.ToolCallDetail, error)
 }
 
 // Responder answers fetch requests for one host.
@@ -77,6 +79,15 @@ func (r *Responder) Handle(ctx context.Context, msg *nats.Msg) {
 			return
 		}
 		data, _ := json.Marshal(changes)
+		r.reply(msg, v1.Reply{Result: data})
+		return
+	case v1.FetchToolCall:
+		detail, err := r.sessions.ToolCall(s.ID, req.ToolCallID)
+		if err != nil {
+			r.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		data, _ := json.Marshal(detail)
 		r.reply(msg, v1.Reply{Result: data})
 		return
 	default:

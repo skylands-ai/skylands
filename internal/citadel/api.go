@@ -48,6 +48,7 @@ func (c *citadel) api() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{host}/{id}/transcript", c.fetchFromHost(v1.FetchTranscript))
 	mux.HandleFunc("GET /api/sessions/{host}/{id}/diff", c.fetchFromHost(v1.FetchDiff))
 	mux.HandleFunc("GET /api/sessions/{host}/{id}/changes", c.fetchFromHost(v1.FetchChanges))
+	mux.HandleFunc("GET /api/sessions/{host}/{id}/tools/{tid}", c.fetchFromHost(v1.FetchToolCall))
 	return mux
 }
 
@@ -207,12 +208,12 @@ func (c *citadel) relay(w http.ResponseWriter, host, subject string, cmd any, ok
 }
 
 // fetchFromHost relays an on-demand read of one session's transcript,
-// diff, or changes from the host that holds it. The citadel keeps nothing
-// of the answer.
+// diff, changes, or one tool call's record from the host that holds it.
+// The citadel keeps nothing of the answer.
 func (c *citadel) fetchFromHost(kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		host, id := r.PathValue("host"), r.PathValue("id")
-		result, err := c.sendCommand(r.Context(), v1.IslandFetchSubject(host, kind), v1.FetchSessionRequest{SessionID: id})
+		result, err := c.sendCommand(r.Context(), v1.IslandFetchSubject(host, kind), v1.FetchSessionRequest{SessionID: id, ToolCallID: r.PathValue("tid")})
 		switch {
 		case errors.Is(err, nats.ErrNoResponders), errors.Is(err, nats.ErrTimeout):
 			writeError(w, http.StatusBadGateway, host+" did not answer; it may be unreachable")
