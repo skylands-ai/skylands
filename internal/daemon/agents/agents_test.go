@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -393,5 +394,18 @@ func TestRunPromptReportsAMissingAgent(t *testing.T) {
 	_, err := RunPrompt(context.Background(), Adapter{Name: "nope", Command: []string{"/definitely/not/here"}}, t.TempDir(), "x", "", &recorder{})
 	if err == nil {
 		t.Fatal("a missing agent command started")
+	}
+}
+
+// TestClaudeAdapterIsPinned keeps the Claude Code adapter at an exact
+// version, so a new npm release never reaches a session unannounced.
+func TestClaudeAdapterIsPinned(t *testing.T) {
+	exact := regexp.MustCompile(`^@agentclientprotocol/claude-agent-acp@\d+\.\d+\.\d+$`)
+	if !exact.MatchString(ClaudeAdapterPackage) {
+		t.Errorf("ClaudeAdapterPackage = %q, want the package at an exact x.y.z version", ClaudeAdapterPackage)
+	}
+	cmd := DefaultRegistry()["claude"].Command
+	if len(cmd) == 0 || cmd[len(cmd)-1] != ClaudeAdapterPackage {
+		t.Errorf("claude adapter command = %q, want it to run %s", cmd, ClaudeAdapterPackage)
 	}
 }
