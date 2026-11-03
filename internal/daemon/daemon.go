@@ -29,6 +29,7 @@ import (
 	"github.com/skylands-ai/skylands/internal/daemon/socket"
 	"github.com/skylands-ai/skylands/internal/es"
 	"github.com/skylands-ai/skylands/internal/natsembed"
+	"github.com/skylands-ai/skylands/internal/watchdog"
 )
 
 // ServiceName is the NATS micro service every daemon registers. Citadels
@@ -72,6 +73,18 @@ func Run(ctx context.Context, cfg Config) error {
 	hostName := cleanHost(cfg.Host)
 	if hostName == "" {
 		hostName = DefaultHost()
+	}
+	// The watchdog ends the agents' process groups if this process dies
+	// without ending them. Every agent is launched under ctx, so each
+	// registers with it. It closes after everything else here has stopped,
+	// with nothing left to end.
+	if exe, err := os.Executable(); err == nil {
+		if wd, err := watchdog.Start(exe); err == nil {
+			defer func() { _ = wd.Close() }()
+			ctx = agents.WithWatch(ctx, wd)
+		} else {
+			slog.Warn("daemon: no watchdog, so if the daemon dies abruptly, what its agents started may keep running", "err", err)
+		}
 	}
 	leaf, err := natsembed.StartLeaf(ctx, natsembed.LeafConfig{
 		Name:      ServiceName + "-" + hostName,

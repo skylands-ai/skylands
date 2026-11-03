@@ -12,11 +12,16 @@ import (
 	"syscall"
 
 	"github.com/skylands-ai/skylands/internal/cli"
+	"github.com/skylands-ai/skylands/internal/watchdog"
 )
 
 func main() {
+	// A daemon runs this binary as its watchdog, too.
+	watchdog.MainHook()
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// A closed terminal's hangup stops the daemon the way Ctrl-C does, so
+	// it ends its agents rather than dying with them running.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	code := cli.Main(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	stop()
 	os.Exit(code)

@@ -172,7 +172,7 @@ func launch(ctx context.Context, ad Adapter, cwd, model string, obs Observer) (*
 		cancel()
 		return nil, nil, err
 	}
-	transport := &processTransport{cmd: cmd}
+	transport := &processTransport{cmd: cmd, watch: watchFrom(ctx)}
 	h.read = &transport.read
 	client, err := acp.Connect(ctx, transport, h)
 	if err != nil {

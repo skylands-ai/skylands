@@ -269,8 +269,12 @@ Each agent runs in a process group of its own. When its session ends, or
 the daemon stops, the agent is asked to exit and then stopped if it
 doesn't, and whatever it started that is still running goes with it, such
 as a dev server or a test run its shell tool left behind. Ctrl-C on a
-daemon in a terminal reaches the daemon alone, which stops its agents this
-way, and its open sessions are resumed when it starts again.
+daemon in a terminal, or closing the terminal, reaches the daemon alone,
+which stops its agents this way, and its open sessions are resumed when it
+starts again. A daemon that dies without stopping them, killed or crashed,
+leaves that to its watchdog: a small `skylands` process, the same binary,
+that the daemon tells about each agent and that ends whatever is still
+running once the daemon is gone.
 
 ### Running the roles separately
 
