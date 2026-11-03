@@ -154,8 +154,12 @@ func launch(ctx context.Context, ad Adapter, cwd, model string, obs Observer) (*
 	stderr := &tailBuffer{limit: 4096}
 	cmd.Stderr = stderr
 
-	h := &handler{cwd: cwd, obs: obs, calls: map[acp.ToolCallId]ToolCall{}}
+	h := &handler{ExtensionMux: acp.NewExtensionMux(), auth: make(chan AuthStatus, 1), cwd: cwd, obs: obs, calls: map[acp.ToolCallId]ToolCall{}}
 	h.seq = newSequencer(h.update)
+	if err := acp.AddExtensionNotification(h.ExtensionMux, authStatusMethod, h.authStatus); err != nil {
+		cancel()
+		return nil, nil, err
+	}
 	transport := &processTransport{cmd: cmd}
 	client, err := acp.Connect(ctx, transport, h)
 	if err != nil {

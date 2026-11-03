@@ -48,7 +48,18 @@ citadel from it serves a page saying the client is missing.
 
 Every machine that runs agents needs git, and Node 22 or newer for Claude
 Code, whose adapter comes from npm. `gh` is needed only to open pull
-requests from a conversation.
+requests from a conversation. To check a machine, run:
+
+```sh
+skylands preflight
+```
+
+It reports git, Node, and npx with the versions and paths it found, starts
+each agent over ACP without asking a model anything, reports whether Claude
+Code is logged in as Claude Code itself sees it, checks `gh`, and asks the
+daemon on the local socket which version it runs. Each problem comes with
+what to do about it, and the command exits with status 1 when a check
+fails.
 
 ## Quickstart
 
@@ -79,7 +90,8 @@ again to change the flags, restart the service after replacing the binary,
 and `skylands devworld uninstall` or `skylands daemon uninstall` stops and
 removes it, leaving the data directory alone. On Linux the service runs
 while you are logged in, unless `loginctl enable-linger` keeps it running
-from boot.
+from boot. A service gets only PATH from your shell, so an API key in your
+environment does not reach it, and `skylands preflight` warns about that.
 
 ### A second island on the same machine
 

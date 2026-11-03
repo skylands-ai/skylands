@@ -71,6 +71,7 @@ func TestEveryRunnableCommandIsListed(t *testing.T) {
 		"skylands rule list":          true,
 		"skylands rule add":           true,
 		"skylands rule remove":        true,
+		"skylands preflight":          true,
 	}
 	listed := map[string]bool{}
 	for _, tc := range unimplemented {
