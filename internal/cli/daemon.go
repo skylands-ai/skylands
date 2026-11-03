@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/skylands-ai/skylands/internal/daemon"
 	"github.com/skylands-ai/skylands/internal/daemon/socket"
@@ -17,7 +18,7 @@ func newDaemonCmd() *cobra.Command {
 		GroupID: groupRoles,
 		Short:   "Run, enroll, and inspect the daemon that makes this machine an island",
 	}
-	cmd.AddCommand(newDaemonUpCmd(), newDaemonEnrollCmd(), newDaemonStatusCmd())
+	cmd.AddCommand(newDaemonUpCmd(), newDaemonInstallCmd(), newUninstallCmd("daemon"), newDaemonEnrollCmd(), newDaemonStatusCmd())
 	return cmd
 }
 
@@ -37,13 +38,29 @@ it over a Unix socket.`,
 			return daemon.Run(cmd.Context(), cfg)
 		},
 	}
-	f := cmd.Flags()
+	daemonUpFlags(cmd.Flags(), &cfg)
+	return cmd
+}
+
+// daemonUpFlags registers the flags "daemon up" takes, which "daemon
+// install" takes too.
+func daemonUpFlags(f *pflag.FlagSet, cfg *daemon.Config) {
 	f.StringVar(&cfg.Host, "host", daemon.DefaultHost(), "name of this machine's island, unique in the world")
 	f.StringVar(&cfg.NATSURL, "nats-url", "nats-leaf://127.0.0.1:7422", "URL of the world's NATS leaf node listener")
 	f.StringVar(&cfg.CredsFile, "creds", "", "path to the daemon's NATS credentials file")
 	f.StringVar(&cfg.DataDir, "data-dir", defaultDataDir(), "directory for the leaf node's JetStream store and agent worktrees")
 	f.StringVar(&cfg.SocketPath, "socket", defaultSocketPath(), "Unix socket to listen on for the local CLI")
-	return cmd
+}
+
+func newDaemonInstallCmd() *cobra.Command {
+	var cfg daemon.Config
+	return newInstallCmd(installOptions{
+		role:        "daemon",
+		description: "Skylands daemon, which makes this machine an island",
+		flags:       func(f *pflag.FlagSet) { daemonUpFlags(f, &cfg) },
+		pathFlags:   []string{"creds", "data-dir", "socket"},
+		socket:      func() string { return cfg.SocketPath },
+	})
 }
 
 func newDaemonEnrollCmd() *cobra.Command {
