@@ -38,6 +38,13 @@ type Adapter struct {
 // Registry is the adapters a daemon can launch, by name.
 type Registry map[string]Adapter
 
+// ClaudeAdapterPackage is the npm package, at an exact version, that runs
+// Claude Code over ACP. It is pinned because the adapter publishes several
+// preview builds a day, and an unpinned npx would start every new session,
+// and every resume after a daemon restart, on whatever was published last.
+// Move it on purpose, after a session with the new version works.
+const ClaudeAdapterPackage = "@agentclientprotocol/claude-agent-acp@0.100.0"
+
 // DefaultRegistry holds the fake agent built into the skylands binary and
 // the Claude Code adapter from npm.
 func DefaultRegistry() Registry {
@@ -47,7 +54,7 @@ func DefaultRegistry() Registry {
 	}
 	return Registry{
 		"fake":   {Name: "fake", Provider: "local", Command: []string{exe, "fakeagent"}},
-		"claude": {Name: "claude", Provider: "claude", Command: []string{"npx", "-y", "@agentclientprotocol/claude-agent-acp"}, ModelEnv: "ANTHROPIC_MODEL"},
+		"claude": {Name: "claude", Provider: "claude", Command: []string{"npx", "-y", ClaudeAdapterPackage}, ModelEnv: "ANTHROPIC_MODEL"},
 	}
 }
 

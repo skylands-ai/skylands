@@ -105,8 +105,9 @@ files, with the exact counts as a tooltip.
 
 Two agents are available. The built-in fake agent reads a few files and
 edits one, so you can see the loop without any API keys. Claude Code runs
-through its ACP adapter from npm, which `npx` fetches on first use, and needs
-a Claude Code login on that machine. The model chip overrides the model for
+through its ACP adapter from npm, at the exact version pinned in
+`internal/daemon/agents/agents.go`, which `npx` fetches on first use, and
+needs a Claude Code login on that machine. The model chip overrides the model for
 that session; leave it empty for Claude Code's own default. A model alias
 such as `fable` in your Claude Code settings may not work under the adapter,
 so set a full model id in the chip if a session fails on its model.
@@ -198,9 +199,8 @@ is the way out when you are done with the conversation.
 
 `devworld up` is the same code as the separate roles, with NATS started for
 you. Against your own nats-server, run `skylands citadel up --nats-url ...`
-and `skylands daemon up --nats-url ...` on each host. The remaining
-commands, such as `world init` and the request commands, print
-"unimplemented" until their milestones land.
+and `skylands daemon up --nats-url ...` on each host. `world init` and
+`daemon enroll` print "unimplemented" until credentials land.
 
 ## Development
 
