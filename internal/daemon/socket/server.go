@@ -45,27 +45,9 @@ type API interface {
 	CheckAgents(ctx context.Context) ([]v1.AgentAvailability, error)
 }
 
-// Serve listens on the Unix socket at path until ctx ends. A stale socket
-// file from an earlier daemon is replaced, and the socket is removed on
-// exit. Only the owning user can connect.
-func Serve(ctx context.Context, path string, api API) error {
-	// Unix socket paths are limited to about 104 bytes on macOS and 108 on
-	// Linux, and the OS error for a long one is unhelpful.
-	if len(path) > 100 {
-		return fmt.Errorf("socket path %s is %d bytes long; the limit is about 104, so choose a shorter --socket", path, len(path))
-	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("replace socket %s: %w", path, err)
-	}
-	ln, err := net.Listen("unix", path)
-	if err != nil {
-		return fmt.Errorf("listen on %s: %w", path, err)
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		_ = ln.Close()
-		return fmt.Errorf("protect socket %s: %w", path, err)
-	}
-
+// Serve answers the CLI on ln, a socket from Listen, until ctx ends, and
+// closes it, which removes the socket file.
+func Serve(ctx context.Context, ln net.Listener, api API) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, api.Status(r.Context()))
@@ -207,10 +189,9 @@ func Serve(ctx context.Context, path string, api API) error {
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
-	slog.Info("daemon: local API ready", "socket", path)
+	slog.Info("daemon: local API ready", "socket", ln.Addr().String())
 	select {
 	case err := <-errc:
-		_ = os.Remove(path)
 		return err
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -219,7 +200,6 @@ func Serve(ctx context.Context, path string, api API) error {
 		if serveErr := <-errc; !errors.Is(serveErr, http.ErrServerClosed) {
 			err = errors.Join(err, serveErr)
 		}
-		_ = os.Remove(path)
 		return err
 	}
 }

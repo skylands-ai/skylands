@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -73,6 +74,17 @@ func Run(ctx context.Context, cfg Config) error {
 	hostName := cleanHost(cfg.Host)
 	if hostName == "" {
 		hostName = DefaultHost()
+	}
+	// The socket is claimed before anything else starts, so a second daemon
+	// started on it stops here, before it opens the data directory it may
+	// share with the first.
+	var ln net.Listener
+	if cfg.SocketPath != "" {
+		var err error
+		if ln, err = socket.Listen(ctx, cfg.SocketPath); err != nil {
+			return err
+		}
+		defer func() { _ = ln.Close() }()
 	}
 	// The watchdog ends the agents' process groups if this process dies
 	// without ending them. Every agent is launched under ctx, so each
@@ -196,7 +208,7 @@ func Run(ctx context.Context, cfg Config) error {
 	api := &localAPI{host: hostName, world: cfg.NATSURL, version: cfg.Version, started: started, agg: agg, sessions: sessions, checker: checker}
 	errc := make(chan error, 1)
 	if cfg.SocketPath != "" {
-		go func() { errc <- socket.Serve(ctx, cfg.SocketPath, api) }()
+		go func() { errc <- socket.Serve(ctx, ln, api) }()
 	}
 	select {
 	case <-ctx.Done():

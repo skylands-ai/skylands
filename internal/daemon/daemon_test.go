@@ -381,6 +381,61 @@ func gitRepo(t *testing.T, files ...string) string {
 	return dir
 }
 
+func TestASecondDaemonLeavesTheFirstItsSocket(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	hub, err := natsembed.Start(ctx, natsembed.Config{Name: "hub", ClientAddr: "127.0.0.1:0", LeafAddr: freePort(t), StoreDir: t.TempDir(), Domain: "world"})
+	if err != nil {
+		t.Fatalf("hub: %v", err)
+	}
+	defer hub.Shutdown()
+	sockDir, err := os.MkdirTemp("", "sk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(sockDir) }()
+	fakeCmd, fakeEnv := fakeagent.TestCommand()
+	cfg := Config{
+		Host: "ws", NATSURL: hub.LeafURL(), DataDir: t.TempDir(), SocketPath: filepath.Join(sockDir, "d.sock"), Version: "v0.1.0",
+		Adapters: agents.Registry{"fake": {Name: "fake", Provider: "local", Command: fakeCmd, Env: fakeEnv}},
+	}
+
+	runCtx, stop := context.WithCancel(ctx)
+	first := make(chan error, 1)
+	go func() { first <- Run(runCtx, cfg) }()
+	defer func() {
+		stop()
+		if err := <-first; err != nil {
+			t.Errorf("first daemon: %v", err)
+		}
+	}()
+	cli := socket.Dial(cfg.SocketPath)
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		if _, err := cli.Status(ctx); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the first daemon never answered: %v", err)
+		}
+	}
+
+	// The same command again, as a second "daemon up" would run it, stops
+	// before it starts anything.
+	second := make(chan error, 1)
+	go func() { second <- Run(runCtx, cfg) }()
+	select {
+	case err := <-second:
+		if want := "the daemon for island ws is already running on " + cfg.SocketPath; err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("second daemon: err = %v, want it to say %q", err, want)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a second daemon started on the socket of one that is running")
+	}
+	if st, err := cli.Status(ctx); err != nil || st.Host != "ws" {
+		t.Errorf("after the refusal, Status = %+v, %v; want the first daemon", st, err)
+	}
+}
+
 func TestMain(m *testing.M) {
 	fakeagent.TestMainHook()
 	os.Exit(m.Run())
