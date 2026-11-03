@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	v1 "github.com/skylands-ai/skylands/api/v1"
 	"github.com/skylands-ai/skylands/internal/daemon/agents"
 	"github.com/skylands-ai/skylands/internal/daemon/socket"
 )
@@ -22,7 +23,9 @@ type host struct {
 	probes   map[string]agents.Probe
 	probeErr map[string]error
 	daemon   *socket.StatusInfo
-	probed   []string
+	// daemonAgents is what the daemon finds when asked to check.
+	daemonAgents []v1.AgentAvailability
+	probed       []string
 }
 
 func healthy() *host {
@@ -40,6 +43,10 @@ func healthy() *host {
 		},
 		probeErr: map[string]error{},
 		daemon:   &socket.StatusInfo{Host: "wopr", Version: "v1.0.0", Started: time.Now().Add(-time.Hour)},
+		daemonAgents: []v1.AgentAvailability{
+			{Name: "claude", Available: true},
+			{Name: "fake", Available: true},
+		},
 	}
 }
 
@@ -79,6 +86,9 @@ func (h *host) env() Env {
 			}
 			return *h.daemon, nil
 		},
+		CheckAgents: func(context.Context, string) ([]v1.AgentAvailability, error) {
+			return h.daemonAgents, nil
+		},
 	}
 }
 
@@ -111,7 +121,7 @@ func TestHealthyHost(t *testing.T) {
 			t.Errorf("%s found %q, want %q", name, m[name].Found, found)
 		}
 	}
-	if !strings.HasPrefix(m["daemon"].Found, "island wopr, skylands v1.0.0, up 1h0m") {
+	if !strings.HasPrefix(m["daemon"].Found, "island wopr, skylands v1.0.0, up 1h0m") || !strings.HasSuffix(m["daemon"].Found, "; runs claude, fake") {
 		t.Errorf("daemon found %q", m["daemon"].Found)
 	}
 	if got := Ready(checks); !reflect.DeepEqual(got, []string{"claude", "fake"}) {
@@ -149,6 +159,14 @@ func TestProblems(t *testing.T) {
 		{"gh logged out", func(h *host) { h.failing["gh auth status"] = true }, "gh", Warn, "not logged in", "gh auth login", []string{"claude", "fake"}},
 		{"no daemon", func(h *host) { h.daemon = nil }, "daemon", Warn, "nothing answers on /run/d.sock", "devworld install", []string{"claude", "fake"}},
 		{"older daemon", func(h *host) { h.daemon.Version = "v0.9.0" }, "daemon", Warn, "skylands v0.9.0", "restart it", []string{"claude", "fake"}},
+		{"daemon cannot run what the shell can", func(h *host) {
+			h.daemonAgents[0] = v1.AgentAvailability{Name: "claude", Notes: []v1.AvailabilityNote{{Check: "node", Failed: true, Found: "not found on PATH"}}}
+		}, "daemon", Warn, "runs fake", "this shell can run claude (node: not found on PATH) but the daemon cannot", []string{"claude", "fake"}},
+		// When neither can run it, the checks above already say why.
+		{"neither can run it", func(h *host) {
+			h.missing["npx"] = true
+			h.daemonAgents[0] = v1.AgentAvailability{Name: "claude", Notes: []v1.AvailabilityNote{{Check: "npx", Failed: true, Found: "not found on PATH"}}}
+		}, "daemon", OK, "runs fake", "", []string{"fake"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := healthy()
@@ -187,4 +205,53 @@ func TestAnAgentThatCannotStartIsNotProbed(t *testing.T) {
 func withAuth(p agents.Probe, a *agents.AuthStatus) agents.Probe {
 	p.ReportsAuth, p.Auth = true, a
 	return p
+}
+
+func TestAvailability(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		break_ func(h *host)
+		want   []v1.AgentAvailability
+	}{
+		{"healthy", func(*host) {}, []v1.AgentAvailability{
+			{Name: "claude", Available: true, Agent: "@agentclientprotocol/claude-agent-acp 0.100.0", Login: "Claude Max"},
+			{Name: "fake", Available: true, Agent: "skylands-fakeagent dev"},
+		}},
+		// The missing npx is the note, not the agent check it caused.
+		{"no npx", func(h *host) { h.missing["npx"] = true }, []v1.AgentAvailability{
+			{Name: "claude", Notes: []v1.AvailabilityNote{{Check: "npx", Failed: true, Found: "not found on PATH", Fix: "install npm, which comes with Node and provides npx"}}},
+			{Name: "fake", Available: true, Agent: "skylands-fakeagent dev"},
+		}},
+		{"logged out", func(h *host) {
+			h.probes["claude"] = withAuth(h.probes["claude"], &agents.AuthStatus{Kind: "none", Label: "Not logged in"})
+		}, []v1.AgentAvailability{
+			{Name: "claude", Agent: "@agentclientprotocol/claude-agent-acp 0.100.0", Notes: []v1.AvailabilityNote{{Check: "login claude", Failed: true, Found: "not logged in", Fix: "log in with claude"}}},
+			{Name: "fake", Available: true, Agent: "skylands-fakeagent dev"},
+		}},
+		{"no git", func(h *host) { h.missing["git"] = true }, []v1.AgentAvailability{
+			{Name: "claude", Agent: "@agentclientprotocol/claude-agent-acp 0.100.0", Login: "Claude Max", Notes: []v1.AvailabilityNote{{Check: "git", Failed: true, Found: "not found on PATH", Fix: "install git; every session works in a git worktree"}}},
+			{Name: "fake", Agent: "skylands-fakeagent dev", Notes: []v1.AvailabilityNote{{Check: "git", Failed: true, Found: "not found on PATH", Fix: "install git; every session works in a git worktree"}}},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := healthy()
+			tc.break_(h)
+			e := h.env()
+			got := Availability(RunAgents(context.Background(), e), e.Registry)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("Availability =\n%+v\nwant\n%+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRunAgentsLeavesOutGhAndTheDaemon(t *testing.T) {
+	h := healthy()
+	m := byName(RunAgents(context.Background(), h.env()))
+	if _, ok := m["gh"]; ok {
+		t.Error("RunAgents checked gh")
+	}
+	if _, ok := m["daemon"]; ok {
+		t.Error("RunAgents checked the daemon")
+	}
 }

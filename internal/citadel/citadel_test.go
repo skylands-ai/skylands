@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/skylands-ai/skylands/internal/citadel/web"
 	"github.com/skylands-ai/skylands/internal/daemon"
+	"github.com/skylands-ai/skylands/internal/daemon/agents"
+	"github.com/skylands-ai/skylands/internal/fakeagent"
 	"github.com/skylands-ai/skylands/internal/natsembed"
 )
 
@@ -101,7 +104,9 @@ func TestRunServesWebAndTracksIslands(t *testing.T) {
 	daemonCtx, stopDaemon := context.WithCancel(ctx)
 	daemonDone := make(chan error, 1)
 	go func() {
-		daemonDone <- daemon.Run(daemonCtx, daemon.Config{Host: "workstation", NATSURL: srv.LeafURL(), DataDir: t.TempDir(), Version: "v0.1.0"})
+		fakeCmd, fakeEnv := fakeagent.TestCommand()
+		daemonDone <- daemon.Run(daemonCtx, daemon.Config{Host: "workstation", NATSURL: srv.LeafURL(), DataDir: t.TempDir(), Version: "v0.1.0",
+			Adapters: agents.Registry{"fake": {Name: "fake", Provider: "local", Command: fakeCmd, Env: fakeEnv}}})
 	}()
 	waitIsland := func(reachable bool) {
 		t.Helper()
@@ -117,6 +122,21 @@ func TestRunServesWebAndTracksIslands(t *testing.T) {
 		t.Fatalf("never saw workstation with reachable=%v", reachable)
 	}
 	waitIsland(true)
+
+	// The daemon checks which agents it can launch, and the island carries
+	// what it recorded.
+	for i := 0; ; i++ {
+		if i == 50 {
+			t.Fatal("the island never listed its agents")
+		}
+		m := read()
+		if m.Type == "island" && m.Island != nil && m.Island.Host == "workstation" && len(m.Island.Agents) > 0 {
+			if a := m.Island.Agents[0]; len(m.Island.Agents) != 1 || a.Name != "fake" || !a.Available {
+				t.Errorf("island agents = %+v, want the fake agent available", m.Island.Agents)
+			}
+			break
+		}
+	}
 
 	// Stopping the daemon makes the island unreachable after a few misses.
 	stopDaemon()
@@ -134,4 +154,9 @@ func TestRunServesWebAndTracksIslands(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("Run did not stop after cancel")
 	}
+}
+
+func TestMain(m *testing.M) {
+	fakeagent.TestMainHook()
+	os.Exit(m.Run())
 }

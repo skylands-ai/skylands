@@ -156,6 +156,9 @@ type StatusInfo struct {
 	Started  time.Time     `json:"started"`
 	Repos    []RepoInfo    `json:"repos"`
 	Sessions []SessionInfo `json:"sessions,omitempty"`
+	// Agents is what the daemon last found about the agents it can
+	// launch, or empty before its first check.
+	Agents []v1.AgentAvailability `json:"agents,omitempty"`
 }
 
 // ErrorResponse is the body of every error reply.

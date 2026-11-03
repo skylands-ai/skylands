@@ -9,6 +9,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	v1 "github.com/skylands-ai/skylands/api/v1"
 )
 
 // Island is one host as the citadel last heard it. An island is never
@@ -23,6 +25,9 @@ type Island struct {
 	FirstSeen time.Time `json:"firstSeen"`
 	LastSeen  time.Time `json:"lastSeen"`
 	Daemon    Daemon    `json:"daemon"`
+	// Agents is which agents the host can launch, as its daemon last
+	// recorded, or nil before the citadel has read a record of it.
+	Agents []v1.AgentAvailability `json:"agents,omitempty"`
 }
 
 // Daemon is what a daemon reports about itself when pinged.
@@ -137,6 +142,33 @@ func (p *Islands) Observe(replies []Reply, now time.Time) {
 	for _, isl := range changed {
 		p.onChange(isl)
 	}
+}
+
+// Apply folds one host event into the projection: the agents a host can
+// launch. Other events are ignored, and so is an event for a host the
+// citadel has not seen, which cannot happen because the citadel follows a
+// host's events only once the host has answered a ping.
+func (p *Islands) Apply(host string, ev v1.Event) {
+	if ev.Type != v1.EventAdapterAvailabilityChanged {
+		return
+	}
+	var d v1.AdapterAvailabilityChanged
+	if ev.Decode(&d) != nil {
+		return
+	}
+	if d.Agents == nil {
+		d.Agents = []v1.AgentAvailability{}
+	}
+	p.mu.Lock()
+	isl, ok := p.byHost[host]
+	if !ok {
+		p.mu.Unlock()
+		return
+	}
+	isl.Agents = d.Agents
+	changed := *isl
+	p.mu.Unlock()
+	p.onChange(changed)
 }
 
 func daemonFrom(r Reply) Daemon {

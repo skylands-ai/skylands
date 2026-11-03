@@ -251,6 +251,7 @@ func (c *citadel) followHost(host string) {
 				c.sessions.Apply(host, ev)
 			} else {
 				c.terrain.Apply(host, ev)
+				c.islands.Apply(host, ev)
 			}
 		})
 		if err != nil && c.ctx.Err() == nil {

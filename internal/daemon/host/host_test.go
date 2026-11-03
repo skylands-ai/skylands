@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -160,5 +161,65 @@ func TestSetRulesRecordsAndReloads(t *testing.T) {
 	}
 	if r, ok := h2.Repo(repo.ID); !ok || len(r.Rules) != 1 || r.Rules[0].Pattern != "go test *" {
 		t.Errorf("reloaded rules = %+v", r.Rules)
+	}
+}
+
+func TestRecordAgentsRecordsOnlyChanges(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	srv, err := natsembed.Start(ctx, natsembed.Config{Name: "host", ClientAddr: "127.0.0.1:0", StoreDir: t.TempDir(), Domain: "ws"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Shutdown()
+	nc, err := nats.Connect(srv.ClientURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+	store, err := es.New(nc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.EnsureStream(ctx, v1.IslandStreamName("ws"), v1.IslandSubjects("ws")); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Load(ctx, store, "ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.Agents() != nil {
+		t.Errorf("Agents before any check = %+v, want nil", h.Agents())
+	}
+	ready := []v1.AgentAvailability{{Name: "claude", Available: true, Agent: "adapter 1.0.0", Login: "Claude Max"}, {Name: "fake", Available: true}}
+	loggedOut := []v1.AgentAvailability{{Name: "claude", Notes: []v1.AvailabilityNote{{Check: "login claude", Failed: true, Found: "not logged in"}}}, {Name: "fake", Available: true}}
+	for i, step := range []struct {
+		agents []v1.AgentAvailability
+		want   bool
+	}{{ready, true}, {ready, false}, {loggedOut, true}, {loggedOut, false}, {ready, true}} {
+		recorded, err := h.RecordAgents(ctx, step.agents)
+		if err != nil || recorded != step.want {
+			t.Errorf("step %d: recorded = %v, %v; want %v", i, recorded, err, step.want)
+		}
+	}
+	count := 0
+	if err := store.Replay(ctx, v1.IslandStreamName("ws"), []string{v1.IslandEventSubject("ws", v1.EventAdapterAvailabilityChanged)}, func(uint64, v1.Event) error { count++; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if count != 3 {
+		t.Errorf("%d events recorded, want 3, one per change", count)
+	}
+
+	// A daemon that restarts knows what it last recorded, so a check that
+	// finds the same records nothing.
+	again, err := Load(ctx, store, "ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(again.Agents(), ready) {
+		t.Errorf("reloaded Agents = %+v, want %+v", again.Agents(), ready)
+	}
+	if recorded, err := again.RecordAgents(ctx, ready); err != nil || recorded {
+		t.Errorf("same agents after a reload: recorded = %v, %v; want nothing", recorded, err)
 	}
 }

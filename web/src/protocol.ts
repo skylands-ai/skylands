@@ -19,6 +19,29 @@ export interface DaemonInfo {
   started: string
 }
 
+/** One check that failed or warned for an agent, with what to do about it. */
+export interface AvailabilityNote {
+  check: string
+  failed?: boolean
+  found: string
+  fix?: string
+}
+
+/**
+ * Whether a host can launch one agent type, as its daemon last checked by
+ * starting the agent without a session, in the daemon's own environment.
+ */
+export interface AgentAvailability {
+  name: string
+  available: boolean
+  /** What the agent calls itself, with its version. */
+  agent?: string
+  /** The login the agent reported, such as "Claude Max". */
+  login?: string
+  /** The checks that failed or warned; a failed one is why it can't run. */
+  notes?: AvailabilityNote[]
+}
+
 /** One host as the citadel last heard it. Islands are never removed, only marked unreachable. */
 export interface Island {
   host: string
@@ -26,6 +49,8 @@ export interface Island {
   firstSeen: string
   lastSeen: string
   daemon: DaemonInfo
+  /** The agents the host can launch; absent until its daemon has recorded a check. */
+  agents?: AgentAvailability[]
 }
 
 export interface TerrainFile {

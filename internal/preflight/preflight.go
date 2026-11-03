@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	v1 "github.com/skylands-ai/skylands/api/v1"
 	"github.com/skylands-ai/skylands/internal/daemon/agents"
 	"github.com/skylands-ai/skylands/internal/daemon/socket"
 )
@@ -52,6 +53,8 @@ type Check struct {
 	Fix string
 	// Agent, on an agent's checks, names the agent.
 	Agent string
+	// Login, on a login check, is the login the agent reported.
+	Login string
 }
 
 // Minimum versions. Sessions remove their worktrees with "git worktree
@@ -80,6 +83,9 @@ type Env struct {
 	Output func(ctx context.Context, name string, args ...string) (string, error)
 	Probe  func(ctx context.Context, ad agents.Adapter, cwd string, wait time.Duration) (agents.Probe, error)
 	Status func(ctx context.Context, socketPath string) (socket.StatusInfo, error)
+	// CheckAgents asks the daemon to check its agents now, in its own
+	// environment, which also updates its island.
+	CheckAgents func(ctx context.Context, socketPath string) ([]v1.AgentAvailability, error)
 }
 
 // Default is the environment for checking this machine with the daemon
@@ -100,11 +106,22 @@ func Default(socketPath, version string) Env {
 		Status: func(ctx context.Context, path string) (socket.StatusInfo, error) {
 			return socket.Dial(path).Status(ctx)
 		},
+		CheckAgents: func(ctx context.Context, path string) ([]v1.AgentAvailability, error) {
+			return socket.Dial(path).CheckAgents(ctx)
+		},
 	}
 }
 
 // Run makes every check, in the order they are shown.
 func Run(ctx context.Context, e Env) []Check {
+	checks := RunAgents(ctx, e)
+	return append(checks, ghCheck(ctx, e), daemonCheck(ctx, e, Ready(checks)))
+}
+
+// RunAgents makes the checks that decide which agents can run: git, Node
+// and npx when an agent runs on Node, and each agent. A daemon makes these
+// itself, in its own environment, to record what it can launch.
+func RunAgents(ctx context.Context, e Env) []Check {
 	var checks []Check
 	checks = append(checks, gitCheck(ctx, e))
 	nodeUsable := true
@@ -121,7 +138,6 @@ func Run(ctx context.Context, e Env) []Check {
 	for _, name := range names {
 		checks = append(checks, agentChecks(ctx, e, e.Registry[name], nodeUsable)...)
 	}
-	checks = append(checks, ghCheck(ctx, e), daemonCheck(ctx, e))
 	return checks
 }
 
@@ -153,6 +169,63 @@ func Ready(checks []Check) []string {
 		}
 	}
 	return ready
+}
+
+// Availability turns checks into what each agent in r can do, in name
+// order: whether it can run, what it is, its login, and the checks that
+// failed or warned for it. A failed git, Node, or npx check is noted on
+// each agent it stops, in place of the agent check it caused.
+func Availability(checks []Check, r agents.Registry) []v1.AgentAvailability {
+	byName := map[string]Check{}
+	for _, c := range checks {
+		byName[c.Name] = c
+	}
+	ready := map[string]bool{}
+	for _, name := range Ready(checks) {
+		ready[name] = true
+	}
+	names := make([]string, 0, len(r))
+	for name := range r {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]v1.AgentAvailability, 0, len(names))
+	for _, name := range names {
+		a := v1.AgentAvailability{Name: name, Available: ready[name]}
+		host := []string{"git"}
+		if runsOnNode(r[name]) {
+			host = append(host, "node", "npx")
+		}
+		hostFailed := false
+		for _, h := range host {
+			if c, ok := byName[h]; ok && c.Status != OK {
+				a.Notes = append(a.Notes, note(c))
+				hostFailed = hostFailed || c.Status == Fail
+			}
+		}
+		if c, ok := byName["agent "+name]; ok {
+			if c.Status != Fail {
+				a.Agent = c.Found
+			}
+			// A failure caused by a failed git, Node, or npx check is noted
+			// by that check, not again here.
+			if c.Status == Warn || c.Status == Fail && !hostFailed {
+				a.Notes = append(a.Notes, note(c))
+			}
+		}
+		if c, ok := byName["login "+name]; ok {
+			a.Login = c.Login
+			if c.Status != OK {
+				a.Notes = append(a.Notes, note(c))
+			}
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+func note(c Check) v1.AvailabilityNote {
+	return v1.AvailabilityNote{Check: c.Name, Failed: c.Status == Fail, Found: c.Found, Fix: c.Fix}
 }
 
 // needsNode says whether any agent runs on Node.
@@ -305,6 +378,7 @@ func loginCheck(e Env, ad agents.Adapter, a *agents.AuthStatus) Check {
 		if a.Detail != "" {
 			c.Found += " (" + a.Detail + ")"
 		}
+		c.Login = c.Found
 		// A key from the environment is not passed to a service, which
 		// gets only PATH from the shell that installed it.
 		if a.Kind == "api_key" && (a.Detail == "env" || strings.HasPrefix(a.Detail, "ANTHROPIC_")) {
@@ -330,7 +404,11 @@ func ghCheck(ctx context.Context, e Env) Check {
 	return c
 }
 
-func daemonCheck(ctx context.Context, e Env) Check {
+// daemonCheck asks the daemon on the socket what it runs, and has it check
+// its agents in its own environment. An agent this shell can run but the
+// daemon cannot points at the difference between the two environments,
+// such as the PATH a service was installed with.
+func daemonCheck(ctx context.Context, e Env, shellReady []string) Check {
 	c := Check{Name: "daemon"}
 	st, err := e.Status(ctx, e.SocketPath)
 	if err != nil {
@@ -344,11 +422,53 @@ func daemonCheck(ctx context.Context, e Env) Check {
 		return c
 	}
 	c.Found = fmt.Sprintf("island %s, skylands %s, up %s", st.Host, st.Version, time.Since(st.Started).Round(time.Second))
+	var fixes []string
 	if e.Version != "" && st.Version != e.Version {
+		fixes = append(fixes, fmt.Sprintf("it runs skylands %s and this binary is %s; restart it to run this one", st.Version, e.Version))
+	}
+	if e.CheckAgents != nil {
+		pctx, cancel := context.WithTimeout(ctx, e.ProbeTimeout)
+		found, err := e.CheckAgents(pctx, e.SocketPath)
+		cancel()
+		// A daemon from before agents were checked has nothing to say.
+		if err == nil {
+			here := map[string]bool{}
+			for _, name := range shellReady {
+				here[name] = true
+			}
+			var ready, differ []string
+			for _, a := range found {
+				if a.Available {
+					ready = append(ready, a.Name)
+				} else if here[a.Name] {
+					differ = append(differ, a.Name+" ("+firstFailure(a)+")")
+				}
+			}
+			if len(ready) > 0 {
+				c.Found += "; runs " + strings.Join(ready, ", ")
+			} else {
+				c.Found += "; runs no agent"
+			}
+			if len(differ) > 0 {
+				fixes = append(fixes, "this shell can run "+strings.Join(differ, ", ")+" but the daemon cannot, so its environment differs; for a service, install it again from this shell to give it this PATH")
+			}
+		}
+	}
+	if len(fixes) > 0 {
 		c.Status = Warn
-		c.Fix = fmt.Sprintf("it runs skylands %s and this binary is %s; restart it to run this one", st.Version, e.Version)
+		c.Fix = strings.Join(fixes, "; and ")
 	}
 	return c
+}
+
+// firstFailure says why an agent cannot run.
+func firstFailure(a v1.AgentAvailability) string {
+	for _, n := range a.Notes {
+		if n.Failed {
+			return n.Check + ": " + n.Found
+		}
+	}
+	return "unavailable"
 }
 
 func firstLine(s string) string {

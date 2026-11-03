@@ -234,6 +234,9 @@ button.toolchip[aria-expanded="true"]::before{ content:"\25BE"; }
 .row .grow{ display:flex; flex-direction:column; flex:1; min-width:0; }
 .row .sub{ font-size:12px; color:var(--muted); }
 .row .acts{ display:flex; gap:6px; flex-wrap:wrap; }
+.row.avail{ align-items:flex-start; }
+.row .sub.note-line.warn{ color:var(--warn); }
+.row .sub.note-line .fix{ color:var(--muted); }
 .crew{ display:flex; flex-wrap:wrap; gap:8px; }
 .crew span{ display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:var(--surface-2); border:1px solid var(--line); font-size:13px; }
 .seg{ display:flex; flex-wrap:wrap; gap:6px; }

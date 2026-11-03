@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"sort"
 	"sync"
 	"time"
@@ -55,6 +56,8 @@ type Host struct {
 	byPath map[string]string
 	// handled maps a command id to the repo it produced, for idempotency.
 	handled map[string]string
+	// agents is what the host last recorded about the agents it can launch.
+	agents []v1.AgentAvailability
 }
 
 // Load rebuilds the aggregate from the host's stream.
@@ -181,11 +184,56 @@ func (h *Host) SetRules(ctx context.Context, cmd v1.SetRepoRules) (Repo, error) 
 	return out, nil
 }
 
+// Agents is what the host last recorded about the agents it can launch,
+// or nil before its first check.
+func (h *Host) Agents() []v1.AgentAvailability {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]v1.AgentAvailability(nil), h.agents...)
+}
+
+// RecordAgents handles RecordAdapterAvailability: it records
+// AdapterAvailabilityChanged when agents differs from what was last
+// recorded, and reports whether it did. A daemon checks its agents at every
+// start and then periodically, so recording only changes keeps the stream
+// from filling with copies.
+func (h *Host) RecordAgents(ctx context.Context, agents []v1.AgentAvailability) (bool, error) {
+	h.cmdMu.Lock()
+	defer h.cmdMu.Unlock()
+	if agents == nil {
+		agents = []v1.AgentAvailability{}
+	}
+	h.mu.Lock()
+	same := h.agents != nil && reflect.DeepEqual(h.agents, agents)
+	h.mu.Unlock()
+	if same {
+		return false, nil
+	}
+	ev, err := v1.NewEvent(v1.EventAdapterAvailabilityChanged, "", v1.AdapterAvailabilityChanged{Agents: agents})
+	if err != nil {
+		return false, err
+	}
+	if _, err := h.store.Append(ctx, v1.IslandEventSubject(h.name, ev.Type), ev); err != nil {
+		return false, err
+	}
+	h.apply(ev)
+	return true, nil
+}
+
 // apply folds one event into the state.
 func (h *Host) apply(ev v1.Event) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	switch ev.Type {
+	case v1.EventAdapterAvailabilityChanged:
+		var d v1.AdapterAvailabilityChanged
+		if ev.Decode(&d) != nil {
+			return
+		}
+		h.agents = d.Agents
+		if h.agents == nil {
+			h.agents = []v1.AgentAvailability{}
+		}
 	case v1.EventRepoRulesSet:
 		var d v1.RepoRulesSet
 		if ev.Decode(&d) != nil {

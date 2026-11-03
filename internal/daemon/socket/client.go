@@ -126,6 +126,14 @@ func (c *Client) PruneSessions(ctx context.Context) ([]PruneResult, error) {
 	return out, err
 }
 
+// CheckAgents asks the daemon to check now which agents it can launch, in
+// its own environment, and returns what it found.
+func (c *Client) CheckAgents(ctx context.Context) ([]v1.AgentAvailability, error) {
+	var out []v1.AgentAvailability
+	err := c.call(ctx, http.MethodPost, "/v1/agents/check", nil, &out)
+	return out, err
+}
+
 // Rules lists every repository's rules on this host.
 func (c *Client) Rules(ctx context.Context) ([]RepoRulesInfo, error) {
 	var out []RepoRulesInfo
