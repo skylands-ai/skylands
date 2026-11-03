@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -381,7 +382,7 @@ func gitRepo(t *testing.T, files ...string) string {
 	return dir
 }
 
-func TestASecondDaemonLeavesTheFirstItsSocket(t *testing.T) {
+func TestASecondDaemonForAnIslandStops(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	hub, err := natsembed.Start(ctx, natsembed.Config{Name: "hub", ClientAddr: "127.0.0.1:0", LeafAddr: freePort(t), StoreDir: t.TempDir(), Domain: "world"})
@@ -421,18 +422,58 @@ func TestASecondDaemonLeavesTheFirstItsSocket(t *testing.T) {
 
 	// The same command again, as a second "daemon up" would run it, stops
 	// before it starts anything.
-	second := make(chan error, 1)
-	go func() { second <- Run(runCtx, cfg) }()
-	select {
-	case err := <-second:
-		if want := "the daemon for island ws is already running on " + cfg.SocketPath; err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("second daemon: err = %v, want it to say %q", err, want)
+	refused := func(c Config, want string) {
+		t.Helper()
+		done := make(chan error, 1)
+		go func() { done <- Run(runCtx, c) }()
+		select {
+		case err := <-done:
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("err = %v, want it to say %q", err, want)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("a second daemon started, where it should have said %q", want)
 		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("a second daemon started on the socket of one that is running")
 	}
+	refused(cfg, fmt.Sprintf("the daemon for island ws (process %d) is already running on %s", os.Getpid(), cfg.SocketPath))
+	// So does one on a socket of its own: the island's store and sessions
+	// in the data directory are the first daemon's.
+	other := cfg
+	other.SocketPath = filepath.Join(sockDir, "e.sock")
+	refused(other, fmt.Sprintf("the daemon for island ws (process %d) is already running with data directory %s", os.Getpid(), cfg.DataDir))
 	if st, err := cli.Status(ctx); err != nil || st.Host != "ws" {
-		t.Errorf("after the refusal, Status = %+v, %v; want the first daemon", st, err)
+		t.Errorf("after the refusals, Status = %+v, %v; want the first daemon", st, err)
+	}
+
+	// A daemon for another island can share the data directory.
+	third := cfg
+	third.Host = "ws2"
+	third.SocketPath = filepath.Join(sockDir, "f.sock")
+	thirdDone := make(chan error, 1)
+	go func() { thirdDone <- Run(runCtx, third) }()
+	defer func() {
+		stop()
+		if err := <-thirdDone; err != nil {
+			t.Errorf("third daemon: %v", err)
+		}
+	}()
+	var st socket.StatusInfo
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		if st, err = socket.Dial(third.SocketPath).Status(ctx); err == nil {
+			break
+		}
+		select {
+		case err := <-thirdDone:
+			thirdDone <- nil
+			t.Fatalf("a daemon for another island in the same data directory stopped: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("a daemon for another island in the same data directory never answered: %v", err)
+		}
+	}
+	if st.Host != "ws2" {
+		t.Errorf("third daemon's Status = %+v", st)
 	}
 }
 
