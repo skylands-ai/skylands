@@ -265,6 +265,13 @@ conversation, or run `skylands session cancel <id>` on the host. The agent
 stops, the session stays open, and your next reply steers it. End session
 is the way out when you are done with the conversation.
 
+Each agent runs in a process group of its own. When its session ends, or
+the daemon stops, the agent is asked to exit and then stopped if it
+doesn't, and whatever it started that is still running goes with it, such
+as a dev server or a test run its shell tool left behind. Ctrl-C on a
+daemon in a terminal reaches the daemon alone, which stops its agents this
+way, and its open sessions are resumed when it starts again.
+
 ### Running the roles separately
 
 `devworld up` is the same code as the separate roles, with NATS started for

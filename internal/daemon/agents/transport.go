@@ -113,8 +113,15 @@ func stamp(line []byte, seq *uint64) []byte {
 	return append(out, '\n')
 }
 
+// stopWait is how long each step of stopping an agent waits for it to
+// exit before the next, harder one. Tests shorten it.
+var stopWait = 5 * time.Second
+
 // processStdin is the agent's stdin. Closing it ends the conversation and
-// then the process: politely first, then with SIGTERM, then SIGKILL.
+// then the agent's process group: the agent is asked to exit by the close
+// itself, then with SIGTERM and SIGKILL to the whole group if it does not,
+// and whatever it leaves in its group, such as a command its shell tool
+// started, is ended once it has exited.
 type processStdin struct {
 	stdin io.WriteCloser
 	cmd   *exec.Cmd
@@ -131,34 +138,72 @@ func (p *processStdin) Close() error {
 		}
 		res := make(chan error, 1)
 		go func() { res <- p.cmd.Wait() }()
-		wait := func() (error, bool) {
-			select {
-			case err := <-res:
-				return err, true
-			case <-time.After(5 * time.Second):
-				return nil, false
+		var waitErr error
+		waited := false
+		// exited waits up to d for the agent's own process to exit. Wait
+		// also waits for the process's output pipes, which a child left in
+		// the group holds open, so the process counts as exited as soon as
+		// Wait has reaped it.
+		exited := func(d time.Duration) bool {
+			deadline := time.Now().Add(d)
+			for {
+				select {
+				case err := <-res:
+					waitErr, waited = err, true
+					return true
+				case <-time.After(20 * time.Millisecond):
+				}
+				if leaderGone(p.cmd) {
+					return true
+				}
+				if time.Now().After(deadline) {
+					return false
+				}
 			}
+		}
+		signalled := false
+		if !exited(stopWait) {
+			signalled = true
+			_ = signalGroup(p.cmd, syscall.SIGTERM)
+			if !exited(stopWait) {
+				if err := signalGroup(p.cmd, syscall.SIGKILL); err != nil {
+					p.err = errors.Join(p.err, err)
+				}
+				if !exited(stopWait) {
+					p.err = errors.Join(p.err, errors.New("unresponsive agent process"))
+					return
+				}
+			}
+		}
+		endGroup(p.cmd)
+		if !waited {
+			// WaitDelay bounds this, in case something that left the group
+			// still holds the agent's output open.
+			waitErr = <-res
 		}
 		// An agent that exits on its own after stdin closes reports its exit
 		// status. One we had to signal is expected to exit abnormally.
-		if exitErr, ok := wait(); ok {
-			p.err = errors.Join(p.err, exitErr)
-			return
-		}
-		if err := p.cmd.Process.Signal(syscall.SIGTERM); err == nil {
-			if _, ok := wait(); ok {
-				return
-			}
-		}
-		if err := p.cmd.Process.Kill(); err != nil {
-			p.err = errors.Join(p.err, err)
-			return
-		}
-		if _, ok := wait(); !ok {
-			p.err = errors.Join(p.err, errors.New("unresponsive agent process"))
+		if !signalled && !errors.Is(waitErr, exec.ErrWaitDelay) {
+			p.err = errors.Join(p.err, waitErr)
 		}
 	})
 	return p.err
+}
+
+// endGroup ends whatever is left in the group cmd leads once its own
+// process has exited: SIGTERM, then SIGKILL for anything still there after
+// stopWait.
+func endGroup(cmd *exec.Cmd) {
+	if !groupLeft(cmd) {
+		return
+	}
+	_ = signalGroup(cmd, syscall.SIGTERM)
+	for deadline := time.Now().Add(stopWait); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if !groupLeft(cmd) {
+			return
+		}
+	}
+	_ = signalGroup(cmd, syscall.SIGKILL)
 }
 
 // sequencer delivers session updates to fn in the order the agent sent

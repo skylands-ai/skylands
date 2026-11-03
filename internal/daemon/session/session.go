@@ -703,9 +703,29 @@ func (m *Manager) Get(id string) (Session, bool) {
 	return *s, true
 }
 
-// Wait blocks until every running agent has stopped. Cancel the manager's
-// context first.
-func (m *Manager) Wait() { m.runs.Wait() }
+// Wait blocks until every running agent has stopped, closing the agents
+// of open sessions so that each ends with whatever it started, rather than
+// leaving that to the daemon's exit. Cancel the manager's context first:
+// a session whose agent stops because the daemon is stopping stays open,
+// and is resumed when the daemon starts again.
+func (m *Manager) Wait() {
+	m.runs.Wait()
+	m.mu.Lock()
+	runs := make([]*agents.Run, 0, len(m.live))
+	for _, l := range m.live {
+		runs = append(runs, l.run)
+	}
+	m.mu.Unlock()
+	var wg sync.WaitGroup
+	for _, r := range runs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = r.Close()
+		}()
+	}
+	wg.Wait()
+}
 
 // Prompt handles SendPrompt: it continues an idle session with another
 // turn. A command id already in the history gets the session back.

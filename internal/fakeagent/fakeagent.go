@@ -10,10 +10,14 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/nats-io/nuid"
@@ -37,12 +41,45 @@ const EnvNoLoad = "SKYLANDS_FAKE_AGENT_NOLOAD"
 // for logged out. Unset, it reports no login, like most agents.
 const EnvAuth = "SKYLANDS_FAKE_AGENT_AUTH"
 
+// EnvChild, when set to a file path, makes the fake agent start a child
+// process that sleeps, the way a real agent's shell tool leaves a command
+// running, and write the child's PID to that file. Tests use it to see
+// that stopping an agent ends what it started.
+const EnvChild = "SKYLANDS_FAKE_AGENT_CHILD"
+
+// EnvHang, when set to 1, makes the fake agent one that will not stop: it
+// ignores SIGTERM and SIGINT and keeps running after its stdin closes.
+const EnvHang = "SKYLANDS_FAKE_AGENT_HANG"
+
 // ReplayedLine is what the fake agent says while loading a session: the
 // history it replays, which the daemon must keep out of the transcript.
 const ReplayedLine = "(history replayed by the agent)"
 
 // Run serves the fake agent over stdio until the client closes the link.
 func Run(ctx context.Context) error {
+	if path := os.Getenv(EnvChild); path != "" {
+		child := exec.Command("sleep", "300")
+		if err := child.Start(); err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, []byte(strconv.Itoa(child.Process.Pid)), 0o644); err != nil {
+			return err
+		}
+	}
+	if os.Getenv(EnvHang) == "1" {
+		signal.Ignore(syscall.SIGTERM, syscall.SIGINT)
+		// Never returns, on purpose: this mode stands in for an agent that
+		// ignores its stdin closing, SIGTERM, and SIGINT, so tests can see
+		// the daemon end it with SIGKILL. Nothing cancels the context it
+		// runs under, and honouring it would defeat the mode. It sleeps
+		// rather than waiting in an empty select, which Go would end as a
+		// deadlock.
+		defer func() {
+			for {
+				time.Sleep(time.Hour)
+			}
+		}()
+	}
 	delay := 150 * time.Millisecond
 	if d, err := time.ParseDuration(os.Getenv(EnvDelay)); err == nil {
 		delay = d

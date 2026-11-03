@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/spachava753/acp-sdk/acp"
@@ -146,6 +147,17 @@ func launch(ctx context.Context, ad Adapter, cwd, model string, obs Observer) (*
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(ctx, ad.Command[0], ad.Command[1:]...)
+	ownGroup(cmd)
+	// When ctx ends, as it does when the daemon stops, the agent's whole
+	// group is asked to stop, and killed if it has not within stopWait.
+	// Without this, only the agent's first process would be killed, and
+	// the rest of it left running.
+	cmd.Cancel = func() error {
+		_ = signalGroup(cmd, syscall.SIGTERM)
+		time.AfterFunc(stopWait, func() { _ = signalGroup(cmd, syscall.SIGKILL) })
+		return nil
+	}
+	cmd.WaitDelay = stopWait
 	cmd.Dir = cwd
 	cmd.Env = append(os.Environ(), ad.Env...)
 	if model != "" && ad.ModelEnv != "" {
