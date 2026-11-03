@@ -127,13 +127,16 @@ func TestServerAndClient(t *testing.T) {
 	defer cancel()
 	path := shortSocket(t)
 	api := &fakeAPI{}
+	ln, err := Listen(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	sctx, stop := context.WithCancel(ctx)
 	done := make(chan error, 1)
-	go func() { done <- Serve(sctx, path, api) }()
+	go func() { done <- Serve(sctx, ln, api) }()
 
 	c := Dial(path)
 	var st StatusInfo
-	var err error
 	for i := 0; i < 50; i++ {
 		if st, err = c.Status(ctx); err == nil {
 			break
