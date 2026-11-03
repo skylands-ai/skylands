@@ -2,7 +2,7 @@ MODULE  := github.com/skylands-ai/skylands
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -ldflags "-X $(MODULE)/internal/cli.version=$(VERSION)"
 
-.PHONY: all build web test lint install
+.PHONY: all build web test lint install snapshot
 
 all: build
 
@@ -27,3 +27,7 @@ lint:
 ## install: install skylands into GOBIN, or GOPATH/bin when GOBIN is unset
 install:
 	go install $(LDFLAGS) ./cmd/skylands
+
+## snapshot: build every release archive into dist/ with goreleaser, publishing nothing
+snapshot:
+	goreleaser release --snapshot --clean

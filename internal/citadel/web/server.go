@@ -223,6 +223,10 @@ func (s *Server) staticHandler() http.Handler {
 	})
 }
 
+// ReleasesURL is where release binaries, which have the web client built
+// in, are published.
+const ReleasesURL = "https://github.com/skylands-ai/skylands/releases"
+
 const placeholderHTML = `<!doctype html>
 <html lang="en">
 <head>
@@ -243,8 +247,10 @@ const placeholderHTML = `<!doctype html>
 <body>
 <main>
   <h1>Skylands</h1>
-  <p>The citadel is running, but the web client has not been built into this binary.</p>
-  <p>Run <code>make web</code> in the repository, rebuild, and start the citadel again.</p>
+  <p>The citadel is running, but the web client has not been built into this binary.
+  A binary from <code>go install</code> never has it, because npm builds the client.</p>
+  <p>Use a <a href="` + ReleasesURL + `">release binary</a>, or in a clone of the
+  repository run <code>make web &amp;&amp; make build</code> and start the citadel again.</p>
 </main>
 </body>
 </html>

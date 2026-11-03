@@ -77,6 +77,13 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("web client: %w", err)
 	}
+	// go install builds without the client, because web/dist is built by
+	// npm and not committed. Such a binary is fine for a daemon, but a
+	// citadel from it serves only a page that says so.
+	if _, err := fs.Stat(dist, "index.html"); err != nil {
+		slog.Warn("web: this binary has no web client, so the browser gets a placeholder page; " +
+			"use a release binary from " + web.ReleasesURL + ", or build with make web && make build")
+	}
 	c.web = web.New(web.Config{Addr: cfg.HTTPAddr, Snapshot: c.snapshot, Dist: dist, API: c.api(), Live: c.live})
 
 	opts := []nats.Option{
