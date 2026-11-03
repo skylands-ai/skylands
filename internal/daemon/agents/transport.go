@@ -28,6 +28,8 @@ const seqKey = "skylands_seq"
 // stdio, numbering session updates on the way in.
 type processTransport struct {
 	cmd *exec.Cmd
+	// watch, when set, hears the agent's process group start and end.
+	watch Watch
 	// read counts the session updates read from the agent so far.
 	read atomic.Uint64
 }
@@ -45,9 +47,12 @@ func (t *processTransport) Connect(ctx context.Context) (acp.Connection, error) 
 	if err := t.cmd.Start(); err != nil {
 		return nil, err
 	}
+	if t.watch != nil {
+		t.watch.Started(t.cmd.Process.Pid)
+	}
 	pr, pw := io.Pipe()
 	go t.stampUpdates(stdout, pw)
-	return (&acp.IOTransport{Reader: pr, Writer: &processStdin{stdin: stdin, cmd: t.cmd}}).Connect(ctx)
+	return (&acp.IOTransport{Reader: pr, Writer: &processStdin{stdin: stdin, cmd: t.cmd, watch: t.watch}}).Connect(ctx)
 }
 
 // stampUpdates copies newline-delimited JSON-RPC messages from the agent,
@@ -125,6 +130,7 @@ var stopWait = 5 * time.Second
 type processStdin struct {
 	stdin io.WriteCloser
 	cmd   *exec.Cmd
+	watch Watch
 	once  sync.Once
 	err   error
 }
@@ -176,6 +182,9 @@ func (p *processStdin) Close() error {
 			}
 		}
 		endGroup(p.cmd)
+		if p.watch != nil {
+			p.watch.Ended(p.cmd.Process.Pid)
+		}
 		if !waited {
 			// WaitDelay bounds this, in case something that left the group
 			// still holds the agent's output open.

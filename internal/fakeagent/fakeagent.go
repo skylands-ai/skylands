@@ -22,6 +22,7 @@ import (
 
 	"github.com/nats-io/nuid"
 	"github.com/skylands-ai/skylands/internal/titles"
+	"github.com/skylands-ai/skylands/internal/watchdog"
 	"github.com/spachava753/acp-sdk/acp"
 )
 
@@ -90,8 +91,11 @@ func Run(ctx context.Context) error {
 }
 
 // TestMainHook runs the fake agent and exits when the process was started
-// as one, so a test binary can play the agent for its own tests.
+// as one, so a test binary can play the agent for its own tests. It runs
+// the watchdog the same way, which a daemon started in a test starts from
+// the test binary.
 func TestMainHook() {
+	watchdog.MainHook()
 	if os.Getenv(EnvFlag) != "1" {
 		return
 	}

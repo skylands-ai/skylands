@@ -9,3 +9,8 @@ linters:
         - fmt.Fprint
         - fmt.Fprintf
         - fmt.Fprintln
+
+formatters:
+  # Code that gofmt would change fails lint, so it fails CI.
+  enable:
+    - gofmt
