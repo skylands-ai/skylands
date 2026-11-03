@@ -126,9 +126,11 @@ skylands daemon status
 The daemon records the repository and a snapshot of its tracked files in
 its own event stream, the citadel mirrors that stream, and a terrace with a
 building per file appears on the island. Click the island, then "Fly in" on
-the terrace, then a building. Each daemon has one local socket, so a second
-daemon on the same machine needs `--socket` on both `daemon up` and these
-commands.
+the terrace, then a building. Each daemon has its own local socket and its
+own island, so a second daemon on the same machine needs its own `--host`
+or `--data-dir`, and `--socket` on both `daemon up` and these commands. A
+daemon refuses to start on a socket, or an island in a data directory, that
+another daemon is running.
 
 ### Run an agent
 

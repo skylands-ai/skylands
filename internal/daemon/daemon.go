@@ -9,6 +9,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -29,6 +30,7 @@ import (
 	"github.com/skylands-ai/skylands/internal/daemon/session"
 	"github.com/skylands-ai/skylands/internal/daemon/socket"
 	"github.com/skylands-ai/skylands/internal/es"
+	"github.com/skylands-ai/skylands/internal/filelock"
 	"github.com/skylands-ai/skylands/internal/natsembed"
 	"github.com/skylands-ai/skylands/internal/watchdog"
 )
@@ -86,6 +88,14 @@ func Run(ctx context.Context, cfg Config) error {
 		}
 		defer func() { _ = ln.Close() }()
 	}
+	// So is the island, in the data directory: two daemons for one island
+	// there would share a store and resume the same sessions, on whichever
+	// sockets they listen.
+	island, err := claimIsland(cfg.DataDir, hostName)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = island.Release() }()
 	// The watchdog ends the agents' process groups if this process dies
 	// without ending them. Every agent is launched under ctx, so each
 	// registers with it. It closes after everything else here has stopped,
@@ -222,6 +232,24 @@ func Run(ctx context.Context, cfg Config) error {
 	case err := <-errc:
 		return err
 	}
+}
+
+// claimIsland takes the lock that a daemon for host holds in dataDir while
+// it runs. Daemons for different islands can share a data directory.
+func claimIsland(dataDir, host string) (*filelock.Lock, error) {
+	dir := filepath.Join(dataDir, "locks")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("create %s: %w", dir, err)
+	}
+	lock, err := filelock.Acquire(filepath.Join(dir, host+".lock"))
+	if held := (*filelock.HeldError)(nil); errors.As(err, &held) {
+		who := "the daemon for island " + host
+		if held.PID > 0 {
+			who += fmt.Sprintf(" (process %d)", held.PID)
+		}
+		return nil, fmt.Errorf("%s is already running with data directory %s; stop it first, or give this one its own --host or --data-dir", who, dataDir)
+	}
+	return lock, err
 }
 
 // commands handles session and repository commands sent to this host.

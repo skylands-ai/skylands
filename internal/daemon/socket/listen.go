@@ -6,24 +6,63 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
+
+	"github.com/skylands-ai/skylands/internal/filelock"
 )
 
 // Listen claims the Unix socket at path for a daemon, which does this
 // before it starts anything else. A socket file left by a daemon that died
 // is replaced. One that a daemon still answers on is not: replacing it
-// would cut the CLI off from that daemon, and with the same island name
-// and data directory, the two would resume the same sessions. Only the
-// owning user can connect.
+// would cut the CLI off from that daemon. Only the owning user can
+// connect.
 func Listen(ctx context.Context, path string) (net.Listener, error) {
 	// Unix socket paths are limited to about 104 bytes on macOS and 108 on
 	// Linux, and the OS error for a long one is unhelpful.
 	if len(path) > 100 {
 		return nil, fmt.Errorf("socket path %s is %d bytes long; the limit is about 104, so choose a shorter --socket", path, len(path))
 	}
-	// Binding fails while the file exists, so of two daemons starting at
-	// once on a fresh path, one binds and the other finds it answering.
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("create the socket's directory: %w", err)
+	}
+	// A daemon holds the lock beside its socket while it runs, so of two
+	// starting at once, only one goes on to replace a stale socket file.
+	lock, err := filelock.Acquire(path + ".lock")
+	if held := (*filelock.HeldError)(nil); errors.As(err, &held) {
+		return nil, inUse(ctx, path, held.PID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	ln, err := listen(ctx, path)
+	if err != nil {
+		_ = lock.Release()
+		return nil, err
+	}
+	return &lockedListener{Listener: ln, lock: lock}, nil
+}
+
+// lockedListener releases the socket's lock once the socket is closed, and
+// with it, removed.
+type lockedListener struct {
+	net.Listener
+	lock *filelock.Lock
+	once sync.Once
+}
+
+func (l *lockedListener) Close() error {
+	err := l.Listener.Close()
+	l.once.Do(func() { _ = l.lock.Release() })
+	return err
+}
+
+// listen binds the socket at path. Binding fails while the file exists,
+// so a daemon of a version that takes no lock, still running on it, is
+// found answering rather than replaced.
+func listen(ctx context.Context, path string) (net.Listener, error) {
 	for range 3 {
 		ln, err := net.Listen("unix", path)
 		if err == nil {
@@ -60,7 +99,7 @@ func clearStale(ctx context.Context, path string) error {
 	switch {
 	case err == nil:
 		_ = conn.Close()
-		return inUse(ctx, path)
+		return inUse(ctx, path, 0)
 	case errors.Is(err, syscall.ECONNREFUSED):
 		// Nothing listens on it, so the daemon that made it has died.
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -73,13 +112,18 @@ func clearStale(ctx context.Context, path string) error {
 	}
 }
 
-// inUse describes the daemon listening on path, by its island's name when
-// it answers. One that is still starting has not begun to.
-func inUse(ctx context.Context, path string) error {
+// inUse describes the daemon on path, by its island's name when it
+// answers, which one still starting does not yet, and by its process ID
+// when that is known.
+func inUse(ctx context.Context, path string, pid int) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
+	who := "a daemon"
 	if st, err := Dial(path).Status(ctx); err == nil {
-		return fmt.Errorf("the daemon for island %s is already running on %s; stop it first", st.Host, path)
+		who = "the daemon for island " + st.Host
 	}
-	return fmt.Errorf("a daemon is already running on %s; stop it first", path)
+	if pid > 0 {
+		who += fmt.Sprintf(" (process %d)", pid)
+	}
+	return fmt.Errorf("%s is already running on %s; stop it first", who, path)
 }
