@@ -60,6 +60,27 @@ Open <http://127.0.0.1:8080>. `devworld up` runs an embedded NATS server, a
 citadel, and a daemon for this machine in one process, so you get the castle
 and one island.
 
+### Keep it running
+
+`up` runs in the terminal you start it from. To have it start when you log
+in, restart if it fails, and keep running after the terminal closes, install
+it as a service instead, with the same flags `up` takes:
+
+```sh
+skylands devworld install
+```
+
+On a machine that only hosts agents for a world running elsewhere, install
+the daemon the same way: `skylands daemon install --nats-url ...`. Install
+writes a systemd user unit on Linux or a launchd agent on macOS that runs
+this `skylands` binary, gives it this shell's PATH so it finds npx, git, and
+gh, waits for the island to come up, and prints where the logs are. Install
+again to change the flags, restart the service after replacing the binary,
+and `skylands devworld uninstall` or `skylands daemon uninstall` stops and
+removes it, leaving the data directory alone. On Linux the service runs
+while you are logged in, unless `loginctl enable-linger` keeps it running
+from boot.
+
 ### A second island on the same machine
 
 Every island needs its own host name and data directory.

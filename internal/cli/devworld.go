@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/skylands-ai/skylands/internal/citadel"
 	"github.com/skylands-ai/skylands/internal/daemon"
@@ -18,7 +19,7 @@ func newDevworldCmd() *cobra.Command {
 		GroupID: groupWorld,
 		Short:   "Run a one-machine world in a single process",
 	}
-	cmd.AddCommand(newDevworldUpCmd())
+	cmd.AddCommand(newDevworldUpCmd(), newDevworldInstallCmd(), newUninstallCmd("devworld"))
 	return cmd
 }
 
@@ -48,14 +49,30 @@ Nothing is authenticated yet, so every listener defaults to 127.0.0.1.`,
 			return runDevworld(cmd.Context(), o)
 		},
 	}
-	f := cmd.Flags()
+	devworldUpFlags(cmd.Flags(), &o)
+	return cmd
+}
+
+// devworldUpFlags registers the flags "devworld up" takes, which
+// "devworld install" takes too.
+func devworldUpFlags(f *pflag.FlagSet, o *devworldOptions) {
 	f.StringVar(&o.dataDir, "data-dir", defaultDataDir(), "directory for the JetStream stores and daemon state")
 	f.StringVar(&o.httpAddr, "http", "127.0.0.1:8080", "address the web application listens on")
 	f.StringVar(&o.natsListen, "nats-listen", "127.0.0.1:4222", "address the embedded NATS server accepts clients on")
 	f.StringVar(&o.leafListen, "leaf-listen", "127.0.0.1:7422", "address the embedded NATS server accepts daemon leaf nodes on")
 	f.StringVar(&o.host, "host", daemon.DefaultHost(), "name of this machine's island")
 	f.StringVar(&o.socketPath, "socket", defaultSocketPath(), "Unix socket the daemon listens on for the local CLI")
-	return cmd
+}
+
+func newDevworldInstallCmd() *cobra.Command {
+	var o devworldOptions
+	return newInstallCmd(installOptions{
+		role:        "devworld",
+		description: "Skylands one-machine world: NATS, a citadel, and a daemon",
+		flags:       func(f *pflag.FlagSet) { devworldUpFlags(f, &o) },
+		pathFlags:   []string{"data-dir", "socket"},
+		socket:      func() string { return o.socketPath },
+	})
 }
 
 // runDevworld starts the embedded server, then runs the citadel and the
