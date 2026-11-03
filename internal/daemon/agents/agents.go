@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/spachava753/acp-sdk/acp"
 
@@ -177,7 +179,10 @@ type handler struct {
 	// such as its login report.
 	*acp.ExtensionMux
 	// auth gets each login the agent reports, newest kept.
-	auth  chan AuthStatus
+	auth chan AuthStatus
+	// read counts the session updates the transport has read from the
+	// agent, which catchUp waits for the sequencer to deliver.
+	read  *atomic.Uint64
 	cwd   string
 	obs   Observer
 	seq   *sequencer
@@ -280,10 +285,27 @@ func (h *handler) update(n *acp.SessionNotification) {
 // observer, which applies the host's rules or waits for a person. A side
 // session, such as a title request, is refused: it was told not to use
 // tools.
+// catchUp waits until every session update read from the agent so far has
+// been handled. A request from the agent, such as one for permission,
+// follows on the wire the updates it sent before it, but the SDK handles
+// requests and updates concurrently, so without this a request can
+// overtake the reports that came first: an edit asked about would go on
+// the record before a read the agent had already reported.
+func (h *handler) catchUp() {
+	if h.read == nil {
+		return
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for h.seq.Delivered() < h.read.Load() && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
 func (h *handler) RequestPermission(ctx context.Context, req *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
 	h.mu.Lock()
 	_, side := h.side[req.SessionID]
 	h.mu.Unlock()
+	h.catchUp()
 	if side {
 		for _, o := range req.Options {
 			if o.Kind == acp.PermissionOptionKindRejectOnce || o.Kind == acp.PermissionOptionKindRejectAlways {
@@ -327,6 +349,7 @@ func (h *handler) CreateElicitation(ctx context.Context, req *acp.CreateElicitat
 	h.mu.Lock()
 	_, side := h.side[req.SessionID]
 	h.mu.Unlock()
+	h.catchUp()
 	if side || req.Mode != acp.CreateElicitationRequestTypeForm {
 		return &acp.CreateElicitationResponse{Action: acp.CreateElicitationResponseTypeDecline}, nil
 	}

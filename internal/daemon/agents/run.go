@@ -173,6 +173,7 @@ func launch(ctx context.Context, ad Adapter, cwd, model string, obs Observer) (*
 		return nil, nil, err
 	}
 	transport := &processTransport{cmd: cmd}
+	h.read = &transport.read
 	client, err := acp.Connect(ctx, transport, h)
 	if err != nil {
 		cancel()
@@ -264,12 +265,7 @@ func tokenUsage(u *acp.Usage) (v1.TokenUsage, bool) {
 // the wire, but their handlers run concurrently, so without this a turn
 // could be recorded as over while its last words were still arriving, or
 // a loaded session's history could leak out after the load.
-func (r *Run) drain() {
-	deadline := time.Now().Add(3 * time.Second)
-	for r.seq.Delivered() < r.transport.read.Load() && time.Now().Before(deadline) {
-		time.Sleep(2 * time.Millisecond)
-	}
-}
+func (r *Run) drain() { r.handler.catchUp() }
 
 // Title asks the agent, in a side session of its own, to name the
 // conversation that begins with the given request. Nothing it says reaches
