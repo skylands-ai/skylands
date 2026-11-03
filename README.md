@@ -18,14 +18,42 @@ The design is in [docs/DESIGN.md](docs/DESIGN.md) and the current plan in
 islands, with each island rising as its daemon connects and going grey when
 the citadel can't reach it. Agents, repositories, and approvals come next.
 
-## Quickstart
+## Install
 
-You need Go 1.26 and Node 22 or newer. Node builds the web client, which the
-Go build embeds.
+Skylands is one binary, `skylands`, for Linux and macOS on amd64 and arm64.
+
+**From a release.** Download the archive for your machine from the
+[releases page](https://github.com/skylands-ai/skylands/releases), unpack
+it, and put `skylands` on your PATH:
 
 ```sh
-make web && make build
-./bin/skylands devworld up
+tar xzf skylands_*_linux_amd64.tar.gz skylands
+sudo install skylands /usr/local/bin/
+```
+
+On macOS, a binary downloaded with a browser is quarantined, and
+`xattr -d com.apple.quarantine skylands` clears it.
+
+**From source.** You need Go 1.26 and Node 22 or newer. Node builds the web
+client, which the Go build embeds.
+
+```sh
+make web && make install
+```
+
+`make install` puts `skylands` in your Go bin directory, and `make build`
+puts it in `bin/` instead. `go install` alone builds a binary without the
+web client, which is fine for a machine that only runs a daemon, but a
+citadel from it serves a page saying the client is missing.
+
+Every machine that runs agents needs git, and Node 22 or newer for Claude
+Code, whose adapter comes from npm. `gh` is needed only to open pull
+requests from a conversation.
+
+## Quickstart
+
+```sh
+skylands devworld up
 ```
 
 Open <http://127.0.0.1:8080>. `devworld up` runs an embedded NATS server, a
@@ -37,7 +65,7 @@ and one island.
 Every island needs its own host name and data directory.
 
 ```sh
-./bin/skylands daemon up --host other --data-dir /tmp/skylands-other
+skylands daemon up --host other --data-dir /tmp/skylands-other
 ```
 
 Its island rises within a few seconds. Stop it with Ctrl-C and the island
@@ -49,8 +77,8 @@ comes back.
 On the machine whose island should carry it:
 
 ```sh
-./bin/skylands repo register ~/code/storefront
-./bin/skylands daemon status
+skylands repo register ~/code/storefront
+skylands daemon status
 ```
 
 The daemon records the repository and a snapshot of its tracked files in
@@ -142,13 +170,13 @@ embedded server listens on localhost unless told otherwise.
 On the machine running the world:
 
 ```sh
-./bin/skylands devworld up --leaf-listen 0.0.0.0:7422
+skylands devworld up --leaf-listen 0.0.0.0:7422
 ```
 
 On the other machine, with `LAPTOP` as the first machine's address:
 
 ```sh
-./bin/skylands daemon up --nats-url nats-leaf://LAPTOP:7422
+skylands daemon up --nats-url nats-leaf://LAPTOP:7422
 ```
 
 The daemon keeps running while the world is unreachable and reconnects on
@@ -211,6 +239,16 @@ and `skylands daemon up --nats-url ...` on each host. `world init` and
 | `make test` | Runs every Go test, including a whole-world test under `test/e2e` |
 | `make lint` | Runs `go vet` and golangci-lint |
 | `make install` | Installs `skylands` into your Go bin directory |
+| `make snapshot` | Builds every release archive into `dist/` with goreleaser, publishing nothing |
 
 For client work, `cd web && npm run dev` serves the client with live reload
 and proxies the WebSocket to a citadel running on port 8080.
+
+### Releasing
+
+Push a version tag, such as `git tag v0.1.0 && git push origin v0.1.0`.
+The release workflow builds the archives, uploads them to a draft release,
+runs `scripts/release-smoke.sh` on the Linux binary, and publishes the
+release only if that passes. The smoke test runs a world on its own ports
+and checks that the binary serves the web client, and it runs the same way
+on any binary: `scripts/release-smoke.sh dist/skylands_linux_amd64_v1/skylands`.

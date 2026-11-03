@@ -63,8 +63,8 @@ func TestServesBuiltClient(t *testing.T) {
 func TestServesPlaceholderWithoutBuild(t *testing.T) {
 	ts := newTestServer(t, nil)
 	code, body := get(t, ts.URL+"/")
-	if code != http.StatusOK || !strings.Contains(body, "make web") {
-		t.Errorf("GET / = %d, want 200 with build instructions; body:\n%s", code, body)
+	if code != http.StatusOK || !strings.Contains(body, "make web") || !strings.Contains(body, ReleasesURL) {
+		t.Errorf("GET / = %d, want 200 with build instructions and a link to releases; body:\n%s", code, body)
 	}
 	if code, _ := get(t, ts.URL+"/missing"); code != http.StatusNotFound {
 		t.Errorf("GET /missing = %d, want 404", code)

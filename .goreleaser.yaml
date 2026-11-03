@@ -1,0 +1,37 @@
+# Release binaries for Linux and macOS, with the web client built in.
+# The release workflow runs this on a version tag; `make snapshot` runs it
+# locally without publishing anything.
+version: 2
+
+project_name: skylands
+
+before:
+  hooks:
+    # The Go build embeds web/dist, which npm builds and git does not keep.
+    - make web
+
+builds:
+  - id: skylands
+    main: ./cmd/skylands
+    binary: skylands
+    env:
+      - CGO_ENABLED=0
+    # Windows builds, but the daemon has never run there.
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/skylands-ai/skylands/internal/cli.version=v{{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+# Archives are tar.gz with README.md and LICENSE beside the binary, and
+# checksums go in one file; both are goreleaser's defaults.
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-dev+{{ .ShortCommit }}"
+
+release:
+  # The workflow smoke-tests the built binary and then publishes the draft,
+  # so a release that fails the test never becomes the latest.
+  draft: true
+  replace_existing_draft: true
