@@ -32,6 +32,11 @@ const EnvDelay = "SKYLANDS_FAKE_AGENT_DELAY"
 // session, so a daemon restart has to seed a new one with the transcript.
 const EnvNoLoad = "SKYLANDS_FAKE_AGENT_NOLOAD"
 
+// EnvAuth, when set, makes the fake agent report a login the way Claude
+// Code's adapter does, with this as its kind, such as "account" or "none"
+// for logged out. Unset, it reports no login, like most agents.
+const EnvAuth = "SKYLANDS_FAKE_AGENT_AUTH"
+
 // ReplayedLine is what the fake agent says while loading a session: the
 // history it replays, which the daemon must keep out of the transcript.
 const ReplayedLine = "(history replayed by the agent)"
@@ -43,7 +48,7 @@ func Run(ctx context.Context) error {
 		delay = d
 	}
 	return acp.RunAgent(ctx, &acp.StdioTransport{}, func(conn *acp.AgentConnection) any {
-		return &agent{conn: conn, delay: delay, noLoad: os.Getenv(EnvNoLoad) == "1", sessions: map[acp.SessionId]*session{}}
+		return &agent{conn: conn, delay: delay, noLoad: os.Getenv(EnvNoLoad) == "1", auth: os.Getenv(EnvAuth), sessions: map[acp.SessionId]*session{}}
 	})
 }
 
@@ -77,6 +82,8 @@ type agent struct {
 	conn   *acp.AgentConnection
 	delay  time.Duration
 	noLoad bool
+	// auth is the kind of login to report, or empty to report none.
+	auth string
 	// canAsk means the client fills in forms, so the agent may ask a person
 	// a question.
 	canAsk   bool
@@ -88,10 +95,21 @@ func (a *agent) Initialize(_ context.Context, req *acp.InitializeRequest) (*acp.
 	a.mu.Lock()
 	a.canAsk = req.ClientCapabilities != nil && req.ClientCapabilities.Elicitation != nil && req.ClientCapabilities.Elicitation.Form != nil
 	a.mu.Unlock()
+	caps := &acp.AgentCapabilities{LoadSession: !a.noLoad}
+	if a.auth != "" {
+		// Like Claude Code's adapter: advertise the report, then send it
+		// once initialize has been answered.
+		caps.Meta = acp.Meta{"authStatus": map[string]any{}}
+		go func() {
+			time.Sleep(a.delay)
+			_ = a.conn.NotifyExtension(context.Background(), "_auth/status_update",
+				map[string]any{"authStatus": map[string]any{"kind": a.auth, "label": "Fake " + a.auth}})
+		}()
+	}
 	return &acp.InitializeResponse{
 		ProtocolVersion:   acp.ProtocolVersion(1),
 		AgentInfo:         &acp.Implementation{Name: "skylands-fakeagent", Version: "dev"},
-		AgentCapabilities: &acp.AgentCapabilities{LoadSession: !a.noLoad},
+		AgentCapabilities: caps,
 	}, nil
 }
 

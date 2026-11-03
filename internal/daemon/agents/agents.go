@@ -33,6 +33,9 @@ type Adapter struct {
 	// such as ANTHROPIC_MODEL for Claude Code. Empty means the adapter has
 	// no model choice.
 	ModelEnv string
+	// Login tells a person how to log the agent in, for an agent that
+	// reports its login.
+	Login string
 }
 
 // Registry is the adapters a daemon can launch, by name.
@@ -53,8 +56,9 @@ func DefaultRegistry() Registry {
 		exe = "skylands"
 	}
 	return Registry{
-		"fake":   {Name: "fake", Provider: "local", Command: []string{exe, "fakeagent"}},
-		"claude": {Name: "claude", Provider: "claude", Command: []string{"npx", "-y", ClaudeAdapterPackage}, ModelEnv: "ANTHROPIC_MODEL"},
+		"fake": {Name: "fake", Provider: "local", Command: []string{exe, "fakeagent"}},
+		"claude": {Name: "claude", Provider: "claude", Command: []string{"npx", "-y", ClaudeAdapterPackage}, ModelEnv: "ANTHROPIC_MODEL",
+			Login: "run claude and log in with /login, or set ANTHROPIC_API_KEY"},
 	}
 }
 
@@ -169,6 +173,11 @@ type Decision struct {
 
 // handler answers the agent's calls to the client side of ACP.
 type handler struct {
+	// ExtensionMux receives the agent's underscore-prefixed notifications,
+	// such as its login report.
+	*acp.ExtensionMux
+	// auth gets each login the agent reports, newest kept.
+	auth  chan AuthStatus
 	cwd   string
 	obs   Observer
 	seq   *sequencer
