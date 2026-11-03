@@ -75,6 +75,10 @@ func (f *fakeAPI) AnswerQuestion(_ context.Context, id, _ string, answers json.R
 	}
 	return QuestionInfo{ID: id, Message: string(answers), Agent: fmt.Sprint(decline)}, nil
 }
+func (f *fakeAPI) CheckAgents(context.Context) ([]v1.AgentAvailability, error) {
+	return []v1.AgentAvailability{{Name: "fake", Available: true}}, nil
+}
+
 func (f *fakeAPI) Rules(context.Context) []RepoRulesInfo {
 	out := []RepoRulesInfo{}
 	for _, r := range f.repos {
@@ -141,6 +145,9 @@ func TestServerAndClient(t *testing.T) {
 	}
 	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
 		t.Errorf("socket mode = %v, %v; want 0600", info.Mode(), err)
+	}
+	if agents, err := c.CheckAgents(ctx); err != nil || len(agents) != 1 || agents[0].Name != "fake" || !agents[0].Available {
+		t.Errorf("CheckAgents = %+v, %v", agents, err)
 	}
 
 	repo, err := c.RegisterRepo(ctx, "/code/storefront")

@@ -40,6 +40,9 @@ type API interface {
 	// Rules lists every repository's rules.
 	Rules(ctx context.Context) []RepoRulesInfo
 	SetRepoRules(ctx context.Context, repoID, commandID string, rules []v1.Rule) (RepoRulesInfo, error)
+	// CheckAgents checks now which agents this host can launch, in the
+	// daemon's own environment, records what changed, and returns it.
+	CheckAgents(ctx context.Context) ([]v1.AgentAvailability, error)
 }
 
 // Serve listens on the Unix socket at path until ctx ends. A stale socket
@@ -175,6 +178,14 @@ func Serve(ctx context.Context, path string, api API) error {
 
 	mux.HandleFunc("GET /v1/rules", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, api.Rules(r.Context()))
+	})
+	mux.HandleFunc("POST /v1/agents/check", func(w http.ResponseWriter, r *http.Request) {
+		agents, err := api.CheckAgents(r.Context())
+		if err != nil {
+			reply(w, http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+			return
+		}
+		reply(w, http.StatusOK, agents)
 	})
 	mux.HandleFunc("PUT /v1/repos/{id}/rules", func(w http.ResponseWriter, r *http.Request) {
 		var req SetRulesRequest

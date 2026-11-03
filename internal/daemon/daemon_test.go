@@ -44,7 +44,9 @@ func TestRunAnswersPingsFromTheWorld(t *testing.T) {
 	runCtx, stop := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(runCtx, Config{Host: "Test.Host", NATSURL: hub.LeafURL(), DataDir: t.TempDir(), Version: "v1.2.3-rc1"})
+		fakeCmd, fakeEnv := fakeagent.TestCommand()
+		done <- Run(runCtx, Config{Host: "Test.Host", NATSURL: hub.LeafURL(), DataDir: t.TempDir(), Version: "v1.2.3-rc1",
+			Adapters: agents.Registry{"fake": {Name: "fake", Provider: "local", Command: fakeCmd, Env: fakeEnv}}})
 	}()
 
 	nc, err := nats.Connect(hub.ClientURL())
@@ -145,6 +147,25 @@ func TestStartSessionOverNATS(t *testing.T) {
 			t.Fatalf("register repo: %v", err)
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+
+	// The daemon checked its agents when it started, and checks again when
+	// asked over the socket.
+	var st socket.StatusInfo
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		if st, err = cli.Status(ctx); err == nil && len(st.Agents) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no agents recorded after startup: %+v, %v", st.Agents, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if len(st.Agents) != 1 || st.Agents[0].Name != "fake" || !st.Agents[0].Available || st.Agents[0].Agent != "skylands-fakeagent dev" {
+		t.Errorf("agents after startup = %+v, want the fake agent available", st.Agents)
+	}
+	if checked, err := cli.CheckAgents(ctx); err != nil || len(checked) != 1 || !checked[0].Available {
+		t.Errorf("CheckAgents = %+v, %v", checked, err)
 	}
 
 	// The world sends StartSession to the host and gets the worktree back.

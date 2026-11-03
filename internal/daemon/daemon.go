@@ -59,6 +59,10 @@ type Config struct {
 	// Adapters are the agents this daemon can launch. Nil means the default
 	// registry: the built-in fake agent and Claude Code.
 	Adapters agents.Registry
+	// AgentCheckInterval is how often the daemon checks again which agents
+	// it can launch, after its check at startup. Zero means
+	// DefaultAgentCheckInterval.
+	AgentCheckInterval time.Duration
 }
 
 // Run joins the world and runs agents until ctx is cancelled. The daemon
@@ -156,7 +160,27 @@ func Run(ctx context.Context, cfg Config) error {
 
 	slog.Info("daemon: island up", "host", hostName, "world", cfg.NATSURL, "version", cfg.Version, "repos", len(agg.Repos()), "sessions", len(sessions.List()))
 
-	api := &localAPI{host: hostName, world: cfg.NATSURL, version: cfg.Version, started: started, agg: agg, sessions: sessions}
+	// Which agents this host can launch is checked in the background, so
+	// a slow agent never holds the island up, and the island panel shows
+	// the outcome once it is recorded.
+	checker := newAgentChecker(agg, cfg.Adapters)
+	every := cfg.AgentCheckInterval
+	if every <= 0 {
+		every = DefaultAgentCheckInterval
+	}
+	checkCtx, stopChecks := context.WithCancel(ctx)
+	checksDone := make(chan struct{})
+	go func() {
+		defer close(checksDone)
+		checker.run(checkCtx, every)
+	}()
+	// Runs before the deferred closes above, so no check outlives the store.
+	defer func() {
+		stopChecks()
+		<-checksDone
+	}()
+
+	api := &localAPI{host: hostName, world: cfg.NATSURL, version: cfg.Version, started: started, agg: agg, sessions: sessions, checker: checker}
 	errc := make(chan error, 1)
 	if cfg.SocketPath != "" {
 		go func() { errc <- socket.Serve(ctx, cfg.SocketPath, api) }()
@@ -413,6 +437,11 @@ type localAPI struct {
 	started  time.Time
 	agg      *host.Host
 	sessions *session.Manager
+	checker  *agentChecker
+}
+
+func (a *localAPI) CheckAgents(ctx context.Context) ([]v1.AgentAvailability, error) {
+	return a.checker.check(ctx)
 }
 
 func (a *localAPI) Status(context.Context) socket.StatusInfo {
@@ -421,7 +450,7 @@ func (a *localAPI) Status(context.Context) socket.StatusInfo {
 	for _, r := range repos {
 		infos = append(infos, repoInfo(r))
 	}
-	return socket.StatusInfo{Host: a.host, World: a.world, Version: a.version, Started: a.started, Repos: infos, Sessions: a.Sessions(context.Background())}
+	return socket.StatusInfo{Host: a.host, World: a.world, Version: a.version, Started: a.started, Repos: infos, Sessions: a.Sessions(context.Background()), Agents: a.agg.Agents()}
 }
 
 func (a *localAPI) Sessions(context.Context) []socket.SessionInfo {

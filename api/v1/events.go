@@ -123,6 +123,44 @@ type SetRepoRules struct {
 	Rules  []Rule `json:"rules"`
 }
 
+// EventAdapterAvailabilityChanged records which agents the host can
+// launch, each time the daemon's check of them comes out differently.
+const EventAdapterAvailabilityChanged = "AdapterAvailabilityChanged"
+
+// AdapterAvailabilityChanged lists every agent type the daemon knows, by
+// name, as the daemon found it when it last checked. The daemon checks by
+// starting each agent without a session, in the daemon's own environment,
+// and reading the login an agent reports.
+type AdapterAvailabilityChanged struct {
+	Agents []AgentAvailability `json:"agents"`
+}
+
+// AgentAvailability is whether the host can launch one agent type.
+type AgentAvailability struct {
+	// Name is the agent type a session asks for, such as "claude".
+	Name string `json:"name"`
+	// Available means a session with this agent can start.
+	Available bool `json:"available"`
+	// Agent is what the agent calls itself, with its version, when it
+	// started.
+	Agent string `json:"agent,omitempty"`
+	// Login is the login the agent reported, such as "Claude Max".
+	Login string `json:"login,omitempty"`
+	// Notes are the checks that failed or warned for this agent. A failed
+	// one is why the agent is not available.
+	Notes []AvailabilityNote `json:"notes,omitempty"`
+}
+
+// AvailabilityNote is one check that failed or warned, with what to do
+// about it.
+type AvailabilityNote struct {
+	// Check names what was checked, such as "node" or "login claude".
+	Check  string `json:"check"`
+	Failed bool   `json:"failed,omitempty"`
+	Found  string `json:"found"`
+	Fix    string `json:"fix,omitempty"`
+}
+
 // CommandSetRepoRules is sent to a host by request-reply, or over its
 // socket.
 const CommandSetRepoRules = "SetRepoRules"

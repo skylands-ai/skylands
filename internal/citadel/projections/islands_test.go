@@ -2,9 +2,12 @@ package projections
 
 import (
 	"context"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
+
+	v1 "github.com/skylands-ai/skylands/api/v1"
 )
 
 func reply(host, id string) Reply {
@@ -110,4 +113,43 @@ func TestPollDrivesTheProjection(t *testing.T) {
 	next(false)
 	pinger.set([]Reply{reply("ws", "d1")})
 	next(true)
+}
+
+func TestIslandsCarryTheAgentsTheirHostCanLaunch(t *testing.T) {
+	var changes []Island
+	p := NewIslands(func(i Island) { changes = append(changes, i) })
+	now := time.Now()
+	p.Observe([]Reply{{ID: "a", Version: "1.0.0", Metadata: map[string]string{"host": "ws"}}}, now)
+	changes = nil
+
+	agents := []v1.AgentAvailability{
+		{Name: "claude", Notes: []v1.AvailabilityNote{{Check: "login claude", Failed: true, Found: "not logged in"}}},
+		{Name: "fake", Available: true, Agent: "skylands-fakeagent dev"},
+	}
+	ev, err := v1.NewEvent(v1.EventAdapterAvailabilityChanged, "", v1.AdapterAvailabilityChanged{Agents: agents})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Apply("ws", ev)
+	if len(changes) != 1 || !reflect.DeepEqual(changes[0].Agents, agents) {
+		t.Fatalf("changes = %+v, want ws with its agents", changes)
+	}
+	if isl, _ := p.Get("ws"); !reflect.DeepEqual(isl.Agents, agents) {
+		t.Errorf("Get(ws).Agents = %+v", isl.Agents)
+	}
+
+	// The agents stay when the daemon restarts and the island changes.
+	p.Observe([]Reply{{ID: "b", Version: "1.0.0", Metadata: map[string]string{"host": "ws"}}}, now.Add(time.Second))
+	if isl, _ := p.Get("ws"); !reflect.DeepEqual(isl.Agents, agents) {
+		t.Errorf("after a daemon restart, Agents = %+v", isl.Agents)
+	}
+
+	// Other host events, and hosts never seen, change nothing.
+	changes = nil
+	other, _ := v1.NewEvent(v1.EventRepoRegistered, "", v1.RepoRegistered{RepoID: "r"})
+	p.Apply("ws", other)
+	p.Apply("elsewhere", ev)
+	if len(changes) != 0 {
+		t.Errorf("changes = %+v, want none", changes)
+	}
 }

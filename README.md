@@ -61,6 +61,15 @@ daemon on the local socket which version it runs. Each problem comes with
 what to do about it, and the command exits with status 1 when a check
 fails.
 
+The daemon makes the same agent checks itself, in its own environment,
+when it starts and every ten minutes, and records which agents it can run
+whenever that changes. The island's panel in the world lists those agents,
+with each one's login and version, and `skylands daemon status` names them.
+An agent the host can't run isn't listed; the daemon's log and
+`skylands preflight` say why. Preflight also asks the daemon to check
+again, which updates the island at once, and warns when this shell can run
+an agent the daemon can't, as when a service has a different PATH.
+
 ## Quickstart
 
 ```sh

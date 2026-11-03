@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -105,6 +106,26 @@ func newDaemonStatusCmd() *cobra.Command {
 					label = "Repos:    "
 				}
 				fmt.Fprintf(w, "%s%s  %d files  %s\n", label, r.Name, r.Files, r.Path)
+			}
+			// Only the agents this host can run are listed; skylands
+			// preflight says why another can't.
+			var ready []string
+			for _, a := range st.Agents {
+				if a.Available {
+					name := a.Name
+					if a.Login != "" {
+						name += " (" + a.Login + ")"
+					}
+					ready = append(ready, name)
+				}
+			}
+			switch {
+			case st.Agents == nil:
+				fmt.Fprintln(w, "Agents:   not checked yet")
+			case len(ready) == 0:
+				fmt.Fprintln(w, "Agents:   none can run here; skylands preflight says why")
+			default:
+				fmt.Fprintf(w, "Agents:   %s\n", strings.Join(ready, ", "))
 			}
 			for i, s := range st.Sessions {
 				label := "          "

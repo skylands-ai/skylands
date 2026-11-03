@@ -1,7 +1,46 @@
 import { el } from '../dom'
-import type { Island, Repo, Session } from '../protocol'
-import { clockText, islandStatus, isOpen } from '../status'
-import { factsBox, header, note, section, timeNode } from './parts'
+import type { AgentAvailability, Island, Repo, Session } from '../protocol'
+import { agentLabel, clockText, islandStatus, isOpen } from '../status'
+import { agentGlyph, factsBox, header, note, section, timeNode } from './parts'
+
+/**
+ * The agents an island can run, as its daemon last checked: what each is,
+ * who it's logged in as, and any warning with what to do about it. An
+ * agent the host can't run isn't listed; skylands preflight on the host
+ * says why.
+ */
+function agentsSection(i: Island, current: boolean): HTMLElement {
+  if (!i.agents) {
+    return section('Agents', [
+      el('p', {
+        class: 'note',
+        text: 'The daemon hasn’t said yet which agents it can run. It checks when it starts, and skylands preflight on the host asks it to check now.',
+      }),
+    ])
+  }
+  const ready = i.agents.filter((a) => a.available)
+  if (!ready.length) {
+    return section('Agents', [el('p', { class: 'note', text: 'This host can’t run any agent yet. On it, skylands preflight says why.' })])
+  }
+  return section('Agents', [current ? null : el('p', { class: 'note', text: 'As the daemon last recorded them.' }), ...ready.map(agentRow)])
+}
+
+function agentRow(a: AgentAvailability): HTMLElement {
+  const what = [a.login, a.agent].filter(Boolean).join(' · ')
+  // An agent that runs can still carry a warning, such as a login the
+  // agent didn't report in time.
+  const warnings = (a.notes ?? []).map((n) =>
+    el('span', { class: 'sub note-line warn' }, [`${n.check}: ${n.found}`, n.fix ? el('span', { class: 'fix', text: `. ${n.fix[0].toUpperCase()}${n.fix.slice(1)}` }) : null]),
+  )
+  return el('div', { class: 'row avail' }, [
+    agentGlyph(a.name),
+    el('span', { class: 'grow' }, [
+      el('span', { style: 'font-weight:600', text: agentLabel(a.name) }),
+      what ? el('span', { class: 'sub', text: what }) : null,
+      ...warnings,
+    ]),
+  ])
+}
 
 /** The island-level panel: one host, as the citadel last heard it. */
 export function renderIslandPanel(
@@ -53,6 +92,7 @@ export function renderIslandPanel(
       ]),
     )
   }
+  panel.appendChild(agentsSection(i, !stale && i.reachable))
   if (repos.length) {
     panel.appendChild(
       section(
