@@ -42,7 +42,7 @@ function agentRow(a: AgentAvailability): HTMLElement {
   ])
 }
 
-/** The island-level panel: one host, as the citadel last heard it. */
+/** The island-level panel: one host, as the citadel last saw it. */
 export function renderIslandPanel(
   panel: HTMLElement,
   i: Island,
@@ -63,9 +63,9 @@ export function renderIslandPanel(
     )
     panel.appendChild(
       factsBox([
-        ['Link, as last heard', i.reachable ? 'Connected' : 'Unreachable'],
+        ['Link, as last seen', i.reachable ? 'Connected' : 'Unreachable'],
         ['Daemon, as last reported', `skylands ${d.version}`],
-        ['Last heard by the citadel', timeNode(i.lastSeen)],
+        ['Last seen by the citadel', timeNode(i.lastSeen)],
       ]),
     )
   } else if (i.reachable) {
@@ -75,18 +75,18 @@ export function renderIslandPanel(
         ['Link', 'Connected'],
         ['Daemon', daemon],
         ['First seen', timeNode(i.firstSeen)],
-        ['Last heard', timeNode(i.lastSeen)],
+        ['Last seen', timeNode(i.lastSeen)],
       ]),
     )
   } else {
     panel.appendChild(
       note(
-        'The citadel can’t reach this host, and it can’t tell whether the network dropped or the daemon stopped. Everything here is the last state it heard. If the daemon is still running, it’s holding its events, and any decision it needs, until the link comes back.',
+        'The citadel can’t reach this host, and it can’t tell whether the network dropped or the daemon stopped. Everything here is the last state it saw. If the daemon is still running, it’s holding its events, and any decision it needs, until the link comes back.',
       ),
     )
     panel.appendChild(
       factsBox([
-        ['Last heard', timeNode(i.lastSeen)],
+        ['Last seen', timeNode(i.lastSeen)],
         ['Daemon, as last reported', `skylands ${d.version}`],
         ['First seen', timeNode(i.firstSeen)],
       ]),
@@ -104,7 +104,7 @@ export function renderIslandPanel(
           return el('div', { class: 'row' }, [
             el('span', { class: 'grow' }, [
               el('span', { style: 'font-weight:600', text: r.name }),
-              el('span', { class: 'sub', text: (!stale && i.reachable ? '' : 'As last heard: ') + detail }),
+              el('span', { class: 'sub', text: (!stale && i.reachable ? '' : 'As last seen: ') + detail }),
             ]),
             el('button', { type: 'button', class: 'btn small', text: 'Fly in', onclick: () => land(r.id) }),
           ])

@@ -54,10 +54,10 @@ Every visible element in the 3D world stands for one thing in the system, and it
 | Citadel crystal, under the castle | The world's NATS server or cluster; every tether attaches here |
 | Citadel beacon, on the top tower | Lit and pulsing while anything in the world is waiting on a person |
 | Island | One host running one daemon |
-| Island crystal, under the island | The daemon as the citadel last heard it: lit while the host is reachable, grey while the citadel can't reach it |
+| Island crystal, under the island | The daemon as the citadel last saw it: lit while the host is reachable, grey while the citadel can't reach it |
 | Tether | The daemon's leaf node connection to NATS |
 | Sparks moving up a tether | Events flowing from the island to the citadel |
-| Slack tether, island drifted outward, grey crystal | The citadel can't reach the host. A dropped network and a stopped daemon look the same from the citadel, so the island holds the last state it heard until the host returns |
+| Slack tether, island drifted outward, grey crystal | The citadel can't reach the host. A dropped network and a stopped daemon look the same from the citadel, so the island holds the last state it saw until the host returns |
 | Burst of fast sparks | The host is reachable again, and the events its daemon held are syncing in order |
 | Terrace | One repository on that host |
 | Stanchions and colored rope | The repository boundary; the rope color identifies the repo everywhere it appears |
@@ -269,7 +269,7 @@ The daemon runs nats-server in-process as a leaf node, which is a NATS server th
 
 ### Unreachable hosts
 
-A citadel learns which daemons it can reach by pinging the skylands-daemon micro service, which uses request-reply and no heartbeat timestamps. When a daemon stops answering, the citadel can't tell a network failure from a stopped or crashed daemon, so the world shows one state for both. The island drifts out on a slack tether, its crystal goes grey, and everything on it holds the last state the citadel heard, along with when it last heard it. The cause shows only after the host returns: a daemon that kept running syncs the events it held, and a daemon that stopped reports its restart and expires anything that was waiting on a person. Decisions and work orders for the host wait until it's reachable again.
+A citadel learns which daemons it can reach by pinging the skylands-daemon micro service, which uses request-reply and no heartbeat timestamps. When a daemon stops answering, the citadel can't tell a network failure from a stopped or crashed daemon, so the world shows one state for both. The island drifts out on a slack tether, its crystal goes grey, and everything on it holds the last state the citadel heard, along with when it last saw it. The cause shows only after the host returns: a daemon that kept running syncs the events it held, and a daemon that stopped reports its restart and expires anything that was waiting on a person. Decisions and work orders for the host wait until it's reachable again.
 
 ### Running agents
 

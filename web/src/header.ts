@@ -58,7 +58,7 @@ export function renderHeader(crumbs: HTMLElement, connected: HTMLElement, link: 
   }
   const { reachable, total } = islandCounts(s)
   const counts = total ? `${reachable} of ${total} islands connected` : 'No islands yet'
-  connected.textContent = isStale(s) && total ? `${counts}, as last heard` : counts
+  connected.textContent = isStale(s) && total ? `${counts}, as last seen` : counts
 
   const [text, color] =
     s.link === 'connected'

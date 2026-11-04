@@ -202,7 +202,7 @@ func (c *citadel) onIsland(isl projections.Island) {
 		slog.Info("citadel: island reachable", "host", isl.Host, "daemon", isl.Daemon.Version, "os", isl.Daemon.OS+"/"+isl.Daemon.Arch)
 		c.followHost(isl.Host)
 	} else {
-		slog.Info("citadel: island unreachable", "host", isl.Host, "lastHeard", isl.LastSeen.Format(time.RFC3339))
+		slog.Info("citadel: island unreachable", "host", isl.Host, "lastSeen", isl.LastSeen.Format(time.RFC3339))
 	}
 	c.web.Broadcast(web.Message{Type: "island", Island: &isl})
 }

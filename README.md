@@ -267,7 +267,7 @@ skylands daemon up --nats-url nats-leaf://LAPTOP:7422
 The daemon keeps running while the world is unreachable and reconnects on
 its own, as does the citadel if NATS restarts, and the browser if the
 citadel restarts. While the browser can't reach the citadel, the world dims
-and shows the last state it heard. A daemon restart does not end its
+and shows the last state it saw. A daemon restart does not end its
 sessions: on the way back up it brings each open session's agent back,
 through the agent's own session when it can load one (Claude Code can) and
 otherwise through a new session given the transcript, and a turn the

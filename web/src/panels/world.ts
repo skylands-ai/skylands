@@ -44,7 +44,7 @@ export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: stri
   panel.textContent = ''
   const stale = isStale(s)
   const { reachable, total } = islandCounts(s)
-  const counts = `${reachable} of ${total}${stale && total ? ', as last heard' : ''}`
+  const counts = `${reachable} of ${total}${stale && total ? ', as last seen' : ''}`
   // The same count as the Inbox badge and the tab title.
   const waiting = waitingCount(s)
   panel.appendChild(header('Citadel', 'Web app and observer for this world', citadelStatus(s)))
@@ -56,7 +56,7 @@ export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: stri
   panel.appendChild(
     factsBox([
       ['Islands connected', counts],
-      ['Waiting on you', `${waiting}${stale && waiting ? ', as last heard' : ''}`],
+      ['Waiting on you', `${waiting}${stale && waiting ? ', as last seen' : ''}`],
     ]),
   )
   panel.appendChild(themeSwitch(s.worldTheme, setTheme))

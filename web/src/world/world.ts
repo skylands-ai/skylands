@@ -497,7 +497,7 @@ export class World {
       isl.pos.set(Math.cos(h.angle) * dist, y + bob, Math.sin(h.angle) * dist)
       isl.group.position.copy(isl.pos)
       isl.group.rotation.y = -h.angle + Math.PI / 2
-      // the crystal is the daemon as the citadel last heard it: lit while reachable, grey while it can't tell
+      // the crystal is the daemon as the citadel last saw it: lit while reachable, grey while it can't tell
       isl.core.mat.emissiveIntensity = up ? 1.1 : 0
       isl.core.mat.color.set(up ? 0x7fe0f0 : 0x4a5866)
       isl.core.light.intensity = up ? 1.3 : 0
