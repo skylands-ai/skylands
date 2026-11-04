@@ -363,8 +363,9 @@ Rules settle most tool calls on the host, so only what no rule covers reaches a 
 
 ### Signatures
 
-- The approver's browser signs, with its approver key, a challenge that is the digest of the world, host, session, request id, decision, and the exact tool input.
-- The daemon verifies that signature against its projection of approver keys before it records PermissionGranted or PermissionDenied.
+- The approver's browser signs, with its approver key, the SHA-256 of the canonical JSON (RFC 8785) of `{v: 1, world, host, session, request, decision, option, input}`: the world's owner key, the request's ids, "allow" or "deny", the option an approval chose (none for a denial), and the SHA-256 of the exact tool input. `internal/canonical` and `web/src/canonical.ts` write the same bytes, checked against the RFC's test vectors and a shared vector both must reproduce.
+- The daemon builds the same decision from its own record of the request and verifies the signature over it, after reading the approver registry up to its latest record, so a revocation stored before a decision arrived counts against it. Only then does it record PermissionGranted or PermissionDenied, with the approver's key and the signature.
+- Once the world exists, a decision through the citadel without a valid signature is refused. Decisions an approver signed before it was revoked stand; `skylands request history` shows them as signed by an approver that no longer approves.
 - `PermissionRequested` names the tool input by the SHA-256 of its exact bytes and its size, with a preview that is the whole input when it is at most 8 KB, so events stay small. The daemon keeps the whole input while the request waits and serves it on request. The browser shows the whole input, from the preview or fetched, hashes it itself, and its approval names that hash; the daemon refuses an approval through the citadel whose hash isn't that of the input the agent proposed, so an input changed on its way to the person can't be approved.
 - The first valid decision wins, and any later decision for the same request is rejected.
 - Approvals made at the host through the local CLI are accepted from the OS user that owns the daemon.

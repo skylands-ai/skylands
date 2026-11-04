@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/nats-io/nats.go/micro"
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
+	"github.com/skylands-ai/skylands/internal/approval"
 	"github.com/skylands-ai/skylands/internal/daemon/agents"
 	"github.com/skylands-ai/skylands/internal/daemon/fetch"
 	"github.com/skylands-ai/skylands/internal/daemon/host"
@@ -176,6 +178,8 @@ func Run(ctx context.Context, cfg Config) error {
 		Registry:       cfg.Adapters,
 		Repos:          agg,
 		Publish:        nc.Publish,
+		World:          pin.get,
+		VerifyDecision: appr.verify,
 	})
 	if err != nil {
 		return err
@@ -646,6 +650,68 @@ func (a *localAPI) requestInfo(r session.Request) socket.RequestInfo {
 		ID: r.Permission.RequestID, Session: r.Session.ID, Conversation: title, Repo: name, Agent: r.Session.Agent,
 		Tool: r.Permission.Title, Kind: r.Permission.Kind, Locations: r.Permission.Locations, Input: a.requestInput(r.Session.ID, r.Permission.RequestID), Options: options, Since: r.Permission.At,
 	}
+}
+
+// History lists the requests answered or expired on this host, oldest
+// first, and checks each signature through the citadel against the
+// world's approvers as they stand.
+func (a *localAPI) History(_ context.Context, sessionID string) []socket.DecisionInfo {
+	out := []socket.DecisionInfo{}
+	world, reg := a.pin.get(), a.approvers.registry()
+	for _, s := range a.sessions.List() {
+		if sessionID != "" && s.ID != sessionID {
+			continue
+		}
+		name := s.RepoID
+		if repo, ok := a.agg.Repo(s.RepoID); ok {
+			name = repo.Name
+		}
+		title := s.Title
+		if title == "" {
+			title = s.Prompt
+		}
+		for _, d := range s.Decided {
+			info := socket.DecisionInfo{
+				Request: d.Permission.RequestID, Session: s.ID, Conversation: title, Repo: name, Agent: s.Agent,
+				Tool: d.Permission.Title, Kind: d.Permission.Kind, Answer: d.Answer, Option: d.OptionID, By: d.By,
+				Approver: d.Approver, Reason: d.Reason, Asked: d.Permission.At, At: d.At,
+			}
+			if reg != nil && d.Approver != "" {
+				if ap, ok := reg.Approver(d.Approver); ok {
+					info.ApproverName = ap.Name
+				}
+			}
+			info.Signature = a.signatureStatus(world, reg, s.ID, d)
+			out = append(out, info)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
+	return out
+}
+
+// signatureStatus says whether a decision through the citadel is signed,
+// whether its signature is over the decision as the daemon recorded it,
+// and whether its approver still approves.
+func (a *localAPI) signatureStatus(world string, reg *approval.Registry, sessionID string, d session.Decided) string {
+	switch {
+	case d.By != "citadel":
+		return ""
+	case d.Approver == "":
+		return "unsigned"
+	case world == "" || reg == nil:
+		return "not checked"
+	}
+	dec := approval.Decision{V: approval.DecisionVersion, World: world, Host: a.host, Session: sessionID, Request: d.Permission.RequestID, Decision: "deny", Input: d.Permission.InputHash}
+	if d.Answer == "allowed" {
+		dec.Decision, dec.Option = "allow", d.OptionID
+	}
+	if approval.VerifyDecision(dec, v1.DecisionSignature{Approver: d.Approver, Sig: d.Signature}) != nil {
+		return "doesn't verify"
+	}
+	if !reg.Valid(d.Approver) {
+		return "verified, but the approver no longer approves"
+	}
+	return "verified"
 }
 
 func (a *localAPI) Questions(context.Context) []socket.QuestionInfo {

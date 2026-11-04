@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 
 	"github.com/nats-io/nuid"
 
@@ -56,6 +57,14 @@ func (c *Client) RegisterRepo(ctx context.Context, path string) (RepoInfo, error
 func (c *Client) Requests(ctx context.Context) ([]RequestInfo, error) {
 	var out []RequestInfo
 	err := c.call(ctx, http.MethodGet, "/v1/requests", nil, &out)
+	return out, err
+}
+
+// History lists every request answered or expired on this host, oldest
+// first, in one session or, with "", in all of them.
+func (c *Client) History(ctx context.Context, session string) ([]DecisionInfo, error) {
+	var out []DecisionInfo
+	err := c.call(ctx, http.MethodGet, "/v1/requests/history?session="+url.QueryEscape(session), nil, &out)
 	return out, err
 }
 

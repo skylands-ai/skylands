@@ -64,7 +64,7 @@ func newRequestCmd() *cobra.Command {
 		GroupID: groupLocal,
 		Short:   "List, approve, and deny requests waiting on a person on this host",
 	}
-	cmd.AddCommand(newRequestListCmd(), newRequestApproveCmd(), newRequestDenyCmd(), newRequestAnswerCmd())
+	cmd.AddCommand(newRequestListCmd(), newRequestHistoryCmd(), newRequestApproveCmd(), newRequestDenyCmd(), newRequestAnswerCmd())
 	return cmd
 }
 
@@ -116,6 +116,74 @@ long it has waited. Approve or deny one by its id.`,
 	}
 	socketFlag(cmd, &socketPath)
 	return cmd
+}
+
+func newRequestHistoryCmd() *cobra.Command {
+	var socketPath string
+	cmd := &cobra.Command{
+		Use:   "history [session]",
+		Short: "List the decisions made on this host's requests",
+		Long: `Request history lists every tool call that waited on a person on this host,
+in one session or in all of them, oldest first: the tool, the answer, when,
+and who gave it. A decision made through the citadel carries the signature
+of the approver who made it, which is checked again here against the
+world's approvers as they stand now. It reads from this host's daemon, so it
+works while the citadel is unreachable.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			session := ""
+			if len(args) == 1 {
+				session = args[0]
+			}
+			history, err := socket.Dial(socketPath).History(cmd.Context(), session)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if len(history) == 0 {
+				fmt.Fprintln(out, "No decisions yet.")
+				return nil
+			}
+			tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "WHEN\tCONVERSATION\tTOOL\tANSWER\tBY\tSIGNATURE")
+			for _, d := range history {
+				answer := d.Answer
+				if d.Reason != "" {
+					answer += " (" + d.Reason + ")"
+				}
+				sig := d.Signature
+				if sig == "" {
+					sig = "-"
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", d.At.Local().Format("Jan 2 15:04:05"), cut(d.Conversation, 30), cut(d.Tool, 40), answer, decidedBy(d), sig)
+			}
+			return tw.Flush()
+		},
+	}
+	socketFlag(cmd, &socketPath)
+	return cmd
+}
+
+// decidedBy names who settled a request: an approver by name, the host's
+// own CLI, a session's trust, or a rule.
+func decidedBy(d socket.DecisionInfo) string {
+	switch d.By {
+	case "citadel":
+		switch {
+		case d.ApproverName != "":
+			return d.ApproverName
+		case d.Approver != "":
+			return d.Approver[:10] + "\u2026"
+		}
+		return "a browser"
+	case "local":
+		return "this host's CLI"
+	case "trust":
+		return "trusted session"
+	case "":
+		return "-"
+	}
+	return d.By
 }
 
 func newRequestApproveCmd() *cobra.Command {

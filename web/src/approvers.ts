@@ -1,5 +1,6 @@
 import { keepStorage, keyFromSeed, loadApprover, newApproverKey, seedOf, sign, type Signed } from './approver'
-import type { ApproverInfo, VoucherInfo } from './protocol'
+import { DECISION_VERSION, signDecision, type Decision, type DecisionSignature } from './decision'
+import type { ApproverInfo, Permission, Session, VoucherInfo } from './protocol'
 import type { State, Store } from './store'
 
 /** What the Approvers section can do: show an "Add an approver" link, and revoke an approver once confirmed. */
@@ -95,4 +96,17 @@ export function approverActions(store: Store): ApproverActions {
 /** Asks the browser to keep this origin's storage, and records whether it will. */
 export async function keepThisBrowser(store: Store): Promise<void> {
   store.update({ persisted: await keepStorage() })
+}
+
+/**
+ * This browser's signature over a decision on a waiting request, as the
+ * daemon will check it, or why it can't sign: it has no approver key for
+ * this world, or the key no longer approves.
+ */
+export function signFor(s: State, x: Session, p: Permission, decision: 'allow' | 'deny', option: string, inputHash: string): DecisionSignature | string {
+  const mine = myApprover(s)
+  if (!s.me || !mine || !s.world?.owner) return 'This browser isn’t an approver for this world, so it can’t answer here.'
+  if (!mine.valid) return 'This browser no longer approves for this world, so it can’t answer here.'
+  const d: Decision = { v: DECISION_VERSION, world: s.world.owner, host: x.host, session: x.id, request: p.requestId, decision, option: decision === 'allow' ? option : '', input: inputHash }
+  return signDecision(keyFromSeed(s.me.seed), d)
 }

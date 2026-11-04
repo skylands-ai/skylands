@@ -1,0 +1,20 @@
+{
+  "canonical": "{\"decision\":\"allow\",\"host\":\"workstation\",\"input\":\"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\",\"option\":\"allow_once\",\"request\":\"Req1\",\"session\":\"Ses5ion-éh\",\"v\":1,\"world\":\"ODE7BE5F3RFG7BT4DDDPM4IEADOOTWSZ7ONDYHZJHW6OO6DO6BXOOR2L\"}",
+  "comment": "A test key and a decision it signed, which Go and the browser must reproduce byte for byte. The seed is for tests only.",
+  "decision": {
+    "v": 1,
+    "world": "ODE7BE5F3RFG7BT4DDDPM4IEADOOTWSZ7ONDYHZJHW6OO6DO6BXOOR2L",
+    "host": "workstation",
+    "session": "Ses5ion-éh",
+    "request": "Req1",
+    "decision": "allow",
+    "option": "allow_once",
+    "input": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+  },
+  "digest": "eec5964fb90495c77e83d11276da250a346ec2236502d466c5076603e6721a46",
+  "seed": "SUACQSE5J5SK2CEK6XQK5JC3UUSFKHCCK6EFDJAX3KIKINAFWYWPJWPV2A",
+  "signature": {
+    "approver": "UDQYWRNGZABJOUSCVVISFHT5WGZNB2DRRWKLJX7KJHIGXJYOAKEBWYXX",
+    "sig": "tfy4bD2VgbJeWrlEpujTh568mn2ZjAUNHk_uPbuXnvgKD8C0S8LPXtXrNegjOg8muuj_AySCqzbRTcMBzW-0DA"
+  }
+}

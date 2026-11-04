@@ -145,7 +145,7 @@ export async function ownerFromRecovery(file: RecoveryFile, passphrase: string):
   return kp
 }
 
-function toBase64url(b: Uint8Array): string {
+export function toBase64url(b: Uint8Array): string {
   let s = ''
   for (const x of b) s += String.fromCharCode(x)
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')

@@ -314,9 +314,13 @@ On the host itself, `skylands request list` shows what is waiting, and
 over the daemon's socket, which works while the citadel is unreachable.
 Every request and every answer is recorded in the session's history, with
 who answered: the host's CLI, a browser through the citadel, or trust.
-Browser approvals are not yet signed, so anyone who can reach the citadel
-can approve. The browser that set the world up already holds the approver
-key that will sign them.
+Answers from a browser are signed. Allowing or denying a tool call signs
+the decision with the browser's approver key, and the daemon checks the
+signature, against the world's approvers and against its own record of the
+request, before it acts, so a citadel can pass decisions along but can't
+make one. A browser that isn't an approver sees the request but can't
+answer it. `skylands request history` lists every decision on the host,
+with who made it and whether its signature still verifies.
 
 ### An island on another machine
 

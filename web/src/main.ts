@@ -27,7 +27,7 @@ import { providerOf } from './world/airship'
 import type { AgentState } from './world/agents'
 import { World } from './world/world'
 import { connectToCitadel } from './ws'
-import { approverActions, keepThisBrowser, loadThisBrowser } from './approvers'
+import { approverActions, keepThisBrowser, loadThisBrowser, signFor } from './approvers'
 
 const stage = byId<HTMLElement>('stage')
 const canvas = byId<HTMLCanvasElement>('world')
@@ -106,8 +106,18 @@ const inboxActions: InboxActions = {
   cancel: (x) => sessionCommand(x.host, x.id, 'cancel', {}),
   stop: (x) => sessionCommand(x.host, x.id, 'stop', {}),
   redraw: () => store.update({}),
-  approve: (x, p, optionId, inputHash) => sessionCommand(x.host, x.id, `requests/${encodeURIComponent(p.requestId)}/approve`, { optionId, inputHash }),
-  deny: (x, p) => sessionCommand(x.host, x.id, `requests/${encodeURIComponent(p.requestId)}/deny`, {}),
+  approve: (x, p, optionId, inputHash) => {
+    const signature = signFor(store.state, x, p, 'allow', optionId, inputHash)
+    if (typeof signature === 'string') return Promise.resolve(signature)
+    return sessionCommand(x.host, x.id, `requests/${encodeURIComponent(p.requestId)}/approve`, { optionId, inputHash, signature })
+  },
+  // A denial signs the input as the request was recorded: refusing needs no
+  // look at the whole input.
+  deny: (x, p) => {
+    const signature = signFor(store.state, x, p, 'deny', '', p.inputHash)
+    if (typeof signature === 'string') return Promise.resolve(signature)
+    return sessionCommand(x.host, x.id, `requests/${encodeURIComponent(p.requestId)}/deny`, { signature })
+  },
   answer: (x, q, answers) => sessionCommand(x.host, x.id, `questions/${encodeURIComponent(q.questionId)}/answer`, { answers }),
   decline: (x, q) => sessionCommand(x.host, x.id, `questions/${encodeURIComponent(q.questionId)}/answer`, { decline: true }),
   trust: (x, trusted) => sessionCommand(x.host, x.id, 'trust', { trusted }),
