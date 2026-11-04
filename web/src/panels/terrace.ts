@@ -25,7 +25,7 @@ export function renderTerracePanel(
       repo.name,
       `Repo on ${island.host}`,
       down
-        ? ['Unreachable, last state heard', 'var(--idle)']
+        ? ['Unreachable, last state seen', 'var(--idle)']
         : running
           ? [`${running} ${running === 1 ? 'agent' : 'agents'}`, 'var(--ok)']
           : [sessions.length ? 'No agents running' : 'No agents yet', 'var(--idle)'],

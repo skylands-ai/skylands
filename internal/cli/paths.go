@@ -19,10 +19,6 @@ func defaultHome() string {
 // daemon's other state.
 func defaultDataDir() string { return defaultHome() }
 
-// defaultWorldDir is where "world init" writes the owner key and NATS
-// settings unless told otherwise.
-func defaultWorldDir() string { return filepath.Join(defaultHome(), "world") }
-
 // defaultSocketPath is the Unix socket the daemon listens on and the local
 // CLI dials.
 func defaultSocketPath() string { return filepath.Join(defaultHome(), "daemon.sock") }

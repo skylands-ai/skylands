@@ -11,6 +11,22 @@ export interface ServerInfo {
   domain?: string
 }
 
+/** The world as the citadel knows it. */
+export interface WorldInfo {
+  /** Whether the citadel has looked for the world since it reached NATS. */
+  checked: boolean
+  /** Whether the world has been set up. */
+  ready: boolean
+  name?: string
+  /** The owner key's public nkey, which a daemon on another host pins with --world. */
+  owner?: string
+  /** The address daemons on other hosts dial, when the citadel knows it. */
+  leafUrl?: string
+  /** NATS settings the world needs that are missing. */
+  problems?: string[]
+  natsSettingsUrl?: string
+}
+
 export interface DaemonInfo {
   id: string
   version: string
@@ -291,6 +307,7 @@ export interface Message {
   id?: string
   live?: Live
   server?: ServerInfo
+  world?: WorldInfo
   islands?: Island[]
   island?: Island
   repos?: Repo[]

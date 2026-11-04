@@ -103,6 +103,11 @@ the new one. "skylands %[1]s uninstall" stops and removes it.`, o.role),
 			st, waitErr := waitForDaemon(ctx, sock, began)
 			if waitErr == nil {
 				fmt.Fprintf(w, "Island:   %s is up, skylands %s, joining %s\n", st.Host, st.Version, st.World)
+				if o.role == "devworld" {
+					if link := waitForSetupLink(ctx, sock); link != "" {
+						fmt.Fprintf(w, "Set up:   open %s to set the world up\n", link)
+					}
+				}
 			}
 			for _, h := range m.Hints(ctx, name) {
 				fmt.Fprintln(w, h)
@@ -139,6 +144,29 @@ func serviceArgs(f *pflag.FlagSet, pathFlags []string) ([]string, error) {
 		args = append(args, "--"+fl.Name+"="+v)
 	})
 	return args, err
+}
+
+// setupLinkWait is how long "devworld install" waits for the citadel to
+// say whether the world needs setting up, which it knows once it has
+// reached NATS.
+const setupLinkWait = 10 * time.Second
+
+// waitForSetupLink waits for devworld's daemon to report either the link
+// to set the world up, or the world it joined, and returns the link, or
+// "" when the world is already set up or nothing was reported in time.
+func waitForSetupLink(ctx context.Context, path string) string {
+	ctx, cancel := context.WithTimeout(ctx, setupLinkWait)
+	defer cancel()
+	for {
+		if st, err := socket.Dial(path).Status(ctx); err == nil && (st.SetupURL != "" || st.WorldOwner != "") {
+			return st.SetupURL
+		}
+		select {
+		case <-ctx.Done():
+			return ""
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
 }
 
 // waitForDaemon waits for a daemon started after since to answer on its

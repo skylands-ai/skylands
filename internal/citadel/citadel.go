@@ -2,8 +2,8 @@
 // and observer. A citadel serves the 3D client and the phone inbox,
 // authenticates people with passkeys, builds projections from the world's
 // streams, relays signed approvals to the daemon that owns each session,
-// sends push notifications, and answers NATS auth callout requests. It
-// connects to NATS as an ordinary client and embeds no server. Any number of
+// and sends push notifications. It connects to NATS as an ordinary client
+// and embeds no server. Any number of
 // citadels can run against one world, and they are interchangeable.
 package citadel
 
@@ -35,6 +35,15 @@ type Config struct {
 	CredsFile string
 	// HTTPAddr is the address the web application listens on.
 	HTTPAddr string
+	// PublicURL is where people open the citadel, used in the links it
+	// prints and shows. Empty means http:// and HTTPAddr.
+	PublicURL string
+	// LeafURL is the address daemons on other hosts dial to join the
+	// world, shown where the citadel tells a person how to add a host.
+	LeafURL string
+	// OnSetupLink, if set, is told the link to set the world up while
+	// there is no world, and "" once there is one.
+	OnSetupLink func(link string)
 	// PollInterval is how often the citadel pings daemons, and PollWindow
 	// how long it collects replies. Zero means the defaults of two seconds
 	// and one second.
@@ -53,7 +62,9 @@ type citadel struct {
 	store    *es.Store
 
 	mu sync.Mutex
-	nc *nats.Conn
+	// world is what the citadel knows about the world it serves.
+	world worldView
+	nc    *nats.Conn
 	// following holds the hosts whose streams this citadel mirrors and
 	// follows.
 	following map[string]bool
@@ -84,7 +95,7 @@ func Run(ctx context.Context, cfg Config) error {
 		slog.Warn("web: this binary has no web client, so the browser gets a placeholder page; " +
 			"use a release binary from " + web.ReleasesURL + ", or build with make web && make build")
 	}
-	c.web = web.New(web.Config{Addr: cfg.HTTPAddr, Snapshot: c.snapshot, Dist: dist, API: c.api(), Live: c.live})
+	c.web = web.New(web.Config{Addr: cfg.HTTPAddr, Snapshot: c.snapshot, Dist: dist, API: c.api(), Live: c.live, NeedsSetup: c.needsSetup, Canonical: c.publicURL()})
 
 	opts := []nats.Option{
 		nats.Name("skylands-citadel"),
@@ -106,6 +117,13 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
+	// Daemons ask any citadel for the world's record, to check it against
+	// the owner key they pinned.
+	recordSub, err := nc.QueueSubscribe(v1.WorldRecordSubject, "skylands-citadel", c.answerWorldRecord)
+	if err != nil {
+		return fmt.Errorf("answer world record requests: %w", err)
+	}
+	defer func() { _ = recordSub.Unsubscribe() }()
 	c.mu.Lock()
 	c.nc = nc
 	c.store = store
@@ -155,7 +173,7 @@ func plainToken(s string) bool {
 
 func (c *citadel) snapshot() web.Message {
 	info := c.serverInfo()
-	return web.Message{Type: "snapshot", Server: &info, Islands: c.islands.List(), Repos: c.terrain.List(), Sessions: c.sessions.List()}
+	return web.Message{Type: "snapshot", Server: &info, World: c.worldInfo(), Islands: c.islands.List(), Repos: c.terrain.List(), Sessions: c.sessions.List()}
 }
 
 // serverInfo describes the NATS server as the citadel sees it right now.
@@ -186,6 +204,7 @@ func (c *citadel) onConnect(nc *nats.Conn) {
 	info := infoFrom(nc)
 	slog.Info("citadel: connected to NATS", "server", info.Name, "version", info.Version, "url", info.URL, "domain", info.Domain)
 	c.web.Broadcast(web.Message{Type: "server", Server: &info})
+	go c.checkWorld(nc)
 }
 
 func (c *citadel) onDisconnect(nc *nats.Conn, err error) {

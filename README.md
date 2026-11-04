@@ -84,9 +84,16 @@ an agent the daemon can't, as when a service has a different PATH.
 skylands devworld up
 ```
 
-Open <http://127.0.0.1:8080>. `devworld up` runs an embedded NATS server, a
-citadel, and a daemon for this machine in one process, so you get the castle
-and one island.
+`devworld up` runs an embedded NATS server, a citadel, and a daemon for this
+machine in one process, so you get the castle and one island. The first time,
+it prints a link to set the world up:
+
+```
+citadel: this world isn't set up yet; open this link to set it up url=http://127.0.0.1:8080/setup#...
+```
+
+Open it and set the world up, as the next section describes. After that, the
+world is at <http://127.0.0.1:8080>.
 
 The world has two themes, switched from the citadel's panel: Default, a
 castle and floating islands in a daytime sky, and Sci-fi, a space station
@@ -95,6 +102,28 @@ towers lit by landing-strip lights for terraces, and starships for
 airships, always in a starfield. A theme changes only how
 the 3D world is drawn, never what it shows or the rest of the page, and the
 choice is kept in your browser.
+
+### Set up the world
+
+The setup page names the world and makes you its owner. Your browser makes
+the world's owner key and puts it in a recovery file for you to download,
+encrypted with a passphrase if you give one. Save the file before you finish:
+it is the only copy of the owner key, which never leaves your browser any
+other way, and the browser forgets it once setup is done. The browser also
+makes an approver key of its own, kept in its storage for the citadel's
+address, which will sign your approvals.
+
+Use the address the citadel prints. A browser keeps its key per address, so
+to it `http://localhost:8080` and `http://127.0.0.1:8080` are different
+places; the citadel sends `localhost` and `[::1]` on to the address it prints.
+Don't set up in a private window, which forgets the key when it closes.
+
+To enroll another browser, or this one again if its storage was cleared, open
+`/setup` there and give it the recovery file. Until the world is set up,
+every page leads to `/setup`, and only the link's one-time code sets it up; a
+citadel prints a new link each time it starts, and stops once the world
+exists. The first setup wins: a second citadel on the same NATS finds the
+world and offers no setup.
 
 ### Keep it running
 
@@ -107,10 +136,12 @@ skylands devworld install
 ```
 
 On a machine that only hosts agents for a world running elsewhere, install
-the daemon the same way: `skylands daemon install --nats-url ...`. Install
+the daemon the same way, with the command under "Add a host" in the citadel's
+panel: `skylands daemon install --world ... --nats-url ...`. Install
 writes a systemd user unit on Linux or a launchd agent on macOS that runs
 this `skylands` binary, gives it this shell's PATH so it finds npx, git, and
-gh, waits for the island to come up, and prints where the logs are. Install
+gh, waits for the island to come up, and prints where the logs are, and the
+setup link while the world isn't set up yet. Install
 again to change the flags, restart the service after replacing the binary,
 and `skylands devworld uninstall` or `skylands daemon uninstall` stops and
 removes it, leaving the data directory alone. On Linux the service runs
@@ -120,11 +151,16 @@ environment does not reach it, and `skylands preflight` warns about that.
 
 ### A second island on the same machine
 
-Every island needs its own host name and data directory.
+Every island needs its own host name and data directory, and every daemon
+outside devworld needs the world's owner key, which "Add a host" in the
+citadel's panel shows:
 
 ```sh
-skylands daemon up --host other --data-dir /tmp/skylands-other
+skylands daemon up --world O... --host other --data-dir /tmp/skylands-other
 ```
+
+The daemon pins that key, and refuses to start without one or to run in a
+world whose owner key is different.
 
 Its island rises within a few seconds. Stop it with Ctrl-C and the island
 drifts out on a slack tether about six seconds later. Start it again and it
@@ -262,12 +298,16 @@ over the daemon's socket, which works while the citadel is unreachable.
 Every request and every answer is recorded in the session's history, with
 who answered: the host's CLI, a browser through the citadel, or trust.
 Browser approvals are not yet signed, so anyone who can reach the citadel
-can approve; passkeys come with user enrollment.
+can approve. The browser that set the world up already holds the approver
+key that will sign them.
 
 ### An island on another machine
 
-Nothing is authenticated yet, so only do this on a network you trust. The
-embedded server listens on localhost unless told otherwise.
+devworld's NATS server asks for no credentials, so any daemon that can
+reach its leaf listener joins the world: only do this on a network you
+trust. The embedded server listens on localhost unless told otherwise. A
+world on your own nats-server admits daemons by the credentials you give
+them; see [docs/NATS.md](docs/NATS.md).
 
 On the machine running the world:
 
@@ -275,10 +315,12 @@ On the machine running the world:
 skylands devworld up --leaf-listen 0.0.0.0:7422
 ```
 
-On the other machine, with `LAPTOP` as the first machine's address:
+On the other machine, with `LAPTOP` as the first machine's address and the
+owner key from "Add a host" in the citadel's panel, which shows the whole
+command:
 
 ```sh
-skylands daemon up --nats-url nats-leaf://LAPTOP:7422
+skylands daemon up --world O... --nats-url nats-leaf://LAPTOP:7422
 ```
 
 The daemon keeps running while the world is unreachable and reconnects on
@@ -339,9 +381,11 @@ running once the daemon is gone.
 ### Running the roles separately
 
 `devworld up` is the same code as the separate roles, with NATS started for
-you. Against your own nats-server, run `skylands citadel up --nats-url ...`
-and `skylands daemon up --nats-url ...` on each host. `world init` and
-`daemon enroll` print "unimplemented" until credentials land.
+you. Against your own nats-server, configured as
+[docs/NATS.md](docs/NATS.md) describes, run `skylands citadel up --nats-url
+... --url ... --leaf-url ...`, set the world up from the link it prints, and
+run the command under "Add a host" on each host. `--url` is the address
+people open the citadel at, and `--leaf-url` the one daemons dial.
 
 ## Development
 

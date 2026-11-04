@@ -23,7 +23,7 @@ const (
 
 // Main runs the skylands CLI with args, which exclude the program name, and
 // returns the process exit code. Errors are written to stderr prefixed with
-// the path of the command that failed, such as "skylands world init".
+// the path of the command that failed, such as "skylands daemon up".
 func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	root := NewRoot()
 	root.SetArgs(args)
@@ -68,7 +68,6 @@ devworld up" runs both with an embedded NATS server for a one-machine world.`,
 		newCitadelCmd(),
 		newDaemonCmd(),
 		newDevworldCmd(),
-		newWorldCmd(),
 		newRepoCmd(),
 		newRequestCmd(),
 		newSessionCmd(),

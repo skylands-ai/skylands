@@ -1,4 +1,4 @@
-import type { Island, Live, Message, Repo, Session } from './protocol'
+import type { Island, Live, Message, Repo, Session, WorldInfo } from './protocol'
 import type { Store } from './store'
 
 /** The browser's side of the socket, beyond listening. */
@@ -47,9 +47,14 @@ export function connectToCitadel(store: Store, onLive: (host: string, id: string
           for (const r of m.repos ?? []) repos[r.id] = r
           const sessions: Record<string, Session> = {}
           for (const x of m.sessions ?? []) sessions[x.id] = normalizeSession(x)
-          store.update({ server: m.server ?? null, islands, repos, sessions })
+          store.update({ server: m.server ?? null, world: m.world ?? null, islands, repos, sessions })
+          if (needsSetup(m.world)) location.assign('/setup')
           break
         }
+        case 'world':
+          if (m.world) store.update({ world: m.world })
+          if (needsSetup(m.world)) location.assign('/setup')
+          break
         case 'server':
           if (m.server) store.update({ server: m.server })
           break
@@ -80,4 +85,9 @@ export function connectToCitadel(store: Store, onLive: (host: string, id: string
       tell()
     },
   }
+}
+
+/** A world the citadel has looked for and not found: the page to show is setup. */
+function needsSetup(w: WorldInfo | undefined): boolean {
+  return !!w && w.checked && !w.ready
 }

@@ -105,7 +105,7 @@ func TestRunServesWebAndTracksIslands(t *testing.T) {
 	daemonDone := make(chan error, 1)
 	go func() {
 		fakeCmd, fakeEnv := fakeagent.TestCommand()
-		daemonDone <- daemon.Run(daemonCtx, daemon.Config{Host: "workstation", NATSURL: srv.LeafURL(), DataDir: t.TempDir(), Version: "v0.1.0",
+		daemonDone <- daemon.Run(daemonCtx, daemon.Config{Host: "workstation", NATSURL: srv.LeafURL(), DataDir: t.TempDir(), TrustFirstWorld: true, Version: "v0.1.0",
 			Adapters: agents.Registry{"fake": {Name: "fake", Provider: "local", Command: fakeCmd, Env: fakeEnv}}})
 	}()
 	waitIsland := func(reachable bool) {

@@ -16,12 +16,19 @@ function keepGitkeep(): Plugin {
 export default defineConfig({
   plugins: [keepGitkeep()],
   // three.js is one chunk on purpose, so the default 500 kB warning is noise.
-  build: { outDir: 'dist', emptyOutDir: true, chunkSizeWarningLimit: 700 },
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    chunkSizeWarningLimit: 700,
+    // The world's page, and the page that sets a world up.
+    rollupOptions: { input: { main: resolve(import.meta.dirname, 'index.html'), setup: resolve(import.meta.dirname, 'setup.html') } },
+  },
   server: {
     // During "npm run dev", a running citadel answers the WebSocket.
     proxy: {
       '/ws': { target: 'ws://127.0.0.1:8080', ws: true },
       '/healthz': 'http://127.0.0.1:8080',
+      '/api': 'http://127.0.0.1:8080',
     },
   },
 })

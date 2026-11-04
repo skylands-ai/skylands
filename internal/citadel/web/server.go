@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,13 @@ type Config struct {
 	// Live, if set, starts delivering one session's transcript appends and
 	// returns how to stop.
 	Live func(host, id string, deliver func(v1.Live)) (stop func(), err error)
+	// NeedsSetup, if set and true, sends the world's page to /setup,
+	// because there is no world to show yet.
+	NeedsSetup func() bool
+	// Canonical is the URL people open the citadel at. A page asked for
+	// through another loopback name, such as localhost for 127.0.0.1, is
+	// sent there, so a browser always finds what it keeps for this origin.
+	Canonical string
 }
 
 // Server serves the web client and the WebSocket browsers subscribe to.
@@ -56,7 +64,7 @@ func New(cfg Config) *Server {
 	if cfg.API != nil {
 		mux.Handle("/api/", cfg.API)
 	}
-	mux.Handle("/", s.staticHandler())
+	mux.Handle("/", s.pages(s.staticHandler()))
 	s.mux = mux
 	return s
 }
@@ -195,6 +203,61 @@ func sendJSON(ctx context.Context, c *websocket.Conn, m Message) error {
 
 // staticHandler serves the built client, or the placeholder when there is
 // no build.
+// pages sends a page asked for through another loopback name to the
+// canonical one, the world's page to setup while there is no world, and
+// /setup to the setup page.
+func (s *Server) pages(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			if to := s.loopbackRedirect(r); to != "" {
+				http.Redirect(w, r, to, http.StatusTemporaryRedirect)
+				return
+			}
+			if (r.URL.Path == "/" || r.URL.Path == "/index.html") && s.cfg.NeedsSetup != nil && s.cfg.NeedsSetup() {
+				http.Redirect(w, r, "/setup", http.StatusFound)
+				return
+			}
+			if r.URL.Path == "/setup" {
+				r = r.Clone(r.Context())
+				r.URL.Path = "/setup.html"
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// loopbackRedirect is where to send a page request that reached the
+// citadel through a loopback name other than the canonical one, or "".
+func (s *Server) loopbackRedirect(r *http.Request) string {
+	u, err := url.Parse(s.cfg.Canonical)
+	if err != nil || u.Host == "" || strings.HasPrefix(r.URL.Path, "/assets/") {
+		return ""
+	}
+	if !isLoopback(u.Hostname()) || !isLoopback(hostOnly(r.Host)) || strings.EqualFold(r.Host, u.Host) {
+		return ""
+	}
+	_, reqPort, _ := net.SplitHostPort(r.Host)
+	if reqPort != u.Port() {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host + r.URL.RequestURI()
+}
+
+func hostOnly(hostport string) string {
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		return h
+	}
+	return hostport
+}
+
+func isLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
+}
+
 func (s *Server) staticHandler() http.Handler {
 	if s.cfg.Dist != nil {
 		if _, err := fs.Stat(s.cfg.Dist, "index.html"); err == nil {

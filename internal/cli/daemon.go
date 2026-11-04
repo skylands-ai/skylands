@@ -10,7 +10,6 @@ import (
 
 	"github.com/skylands-ai/skylands/internal/daemon"
 	"github.com/skylands-ai/skylands/internal/daemon/socket"
-	"github.com/skylands-ai/skylands/internal/world"
 )
 
 func newDaemonCmd() *cobra.Command {
@@ -19,7 +18,7 @@ func newDaemonCmd() *cobra.Command {
 		GroupID: groupRoles,
 		Short:   "Run, enroll, and inspect the daemon that makes this machine an island",
 	}
-	cmd.AddCommand(newDaemonUpCmd(), newDaemonInstallCmd(), newUninstallCmd("daemon"), newDaemonEnrollCmd(), newDaemonStatusCmd())
+	cmd.AddCommand(newDaemonUpCmd(), newDaemonInstallCmd(), newUninstallCmd("daemon"), newDaemonStatusCmd())
 	return cmd
 }
 
@@ -51,6 +50,7 @@ func daemonUpFlags(f *pflag.FlagSet, cfg *daemon.Config) {
 	f.StringVar(&cfg.CredsFile, "creds", "", "path to the daemon's NATS credentials file")
 	f.StringVar(&cfg.DataDir, "data-dir", defaultDataDir(), "directory for the leaf node's JetStream store and agent worktrees")
 	f.StringVar(&cfg.SocketPath, "socket", defaultSocketPath(), "Unix socket to listen on for the local CLI")
+	f.StringVar(&cfg.World, "world", "", `owner key of the world to join, from "Add a host" on the citadel`)
 }
 
 func newDaemonInstallCmd() *cobra.Command {
@@ -62,24 +62,6 @@ func newDaemonInstallCmd() *cobra.Command {
 		pathFlags:   []string{"creds", "data-dir", "socket"},
 		socket:      func() string { return cfg.SocketPath },
 	})
-}
-
-func newDaemonEnrollCmd() *cobra.Command {
-	var opts world.EnrollDaemonOptions
-	cmd := &cobra.Command{
-		Use:   "enroll <host>",
-		Short: "Enroll the daemon on a host and issue its credentials",
-		Long: `Daemon enroll signs a daemon enrollment with the world's owner key and issues
-the credentials the daemon on that host uses to join the world. Run it where
-the owner key is kept, which should stay offline.`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			opts.Host = args[0]
-			return world.EnrollDaemon(cmd.Context(), opts)
-		},
-	}
-	cmd.Flags().StringVar(&opts.WorldDir, "world", defaultWorldDir(), "directory holding the world's owner key")
-	return cmd
 }
 
 func newDaemonStatusCmd() *cobra.Command {
@@ -96,6 +78,12 @@ func newDaemonStatusCmd() *cobra.Command {
 			w := cmd.OutOrStdout()
 			fmt.Fprintf(w, "Host:     %s\n", st.Host)
 			fmt.Fprintf(w, "World:    %s\n", st.World)
+			if st.WorldOwner != "" {
+				fmt.Fprintf(w, "Owner:    %s\n", st.WorldOwner)
+			}
+			if st.SetupURL != "" {
+				fmt.Fprintf(w, "Set up:   %s\n", st.SetupURL)
+			}
 			fmt.Fprintf(w, "Daemon:   skylands %s, up %s\n", st.Version, time.Since(st.Started).Round(time.Second))
 			if len(st.Repos) == 0 {
 				fmt.Fprintln(w, "Repos:    none registered")

@@ -46,7 +46,7 @@ func TestRunAnswersPingsFromTheWorld(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		fakeCmd, fakeEnv := fakeagent.TestCommand()
-		done <- Run(runCtx, Config{Host: "Test.Host", NATSURL: hub.LeafURL(), DataDir: t.TempDir(), Version: "v1.2.3-rc1",
+		done <- Run(runCtx, Config{Host: "Test.Host", NATSURL: hub.LeafURL(), DataDir: t.TempDir(), Version: "v1.2.3-rc1", TrustFirstWorld: true,
 			Adapters: agents.Registry{"fake": {Name: "fake", Provider: "local", Command: fakeCmd, Env: fakeEnv}}})
 	}()
 
@@ -130,7 +130,8 @@ func TestStartSessionOverNATS(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- Run(runCtx, Config{
-			Host: "ws", NATSURL: hub.LeafURL(), DataDir: t.TempDir(), SocketPath: sock, Version: "v0.1.0",
+			TrustFirstWorld: true,
+			Host:            "ws", NATSURL: hub.LeafURL(), DataDir: t.TempDir(), SocketPath: sock, Version: "v0.1.0",
 			Adapters: agents.Registry{"fake": {Name: "fake", Provider: "local", Command: fakeCmd, Env: fakeEnv}},
 		})
 	}()
@@ -397,7 +398,8 @@ func TestASecondDaemonForAnIslandStops(t *testing.T) {
 	defer func() { _ = os.RemoveAll(sockDir) }()
 	fakeCmd, fakeEnv := fakeagent.TestCommand()
 	cfg := Config{
-		Host: "ws", NATSURL: hub.LeafURL(), DataDir: t.TempDir(), SocketPath: filepath.Join(sockDir, "d.sock"), Version: "v0.1.0",
+		TrustFirstWorld: true,
+		Host:            "ws", NATSURL: hub.LeafURL(), DataDir: t.TempDir(), SocketPath: filepath.Join(sockDir, "d.sock"), Version: "v0.1.0",
 		Adapters: agents.Registry{"fake": {Name: "fake", Provider: "local", Command: fakeCmd, Env: fakeEnv}},
 	}
 

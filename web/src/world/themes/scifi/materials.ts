@@ -45,8 +45,6 @@ export const SG = {
   hex: new THREE.CylinderGeometry(0.5, 0.5, 1, 6),
   /** A hexagonal band with no caps, for the lit rings around towers. */
   hexBand: new THREE.CylinderGeometry(0.5, 0.5, 1, 6, 1, true),
-  /** A thin square mast, one unit tall. */
-  mast: new THREE.CylinderGeometry(0.5, 0.5, 1, 4),
   pole: new THREE.CylinderGeometry(0.025, 0.035, 0.85, 6),
   lamp: new THREE.SphereGeometry(0.07, 8, 6),
   halo: new THREE.SphereGeometry(0.17, 8, 6),

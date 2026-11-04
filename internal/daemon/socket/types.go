@@ -150,8 +150,15 @@ type DecideRequest struct {
 
 // StatusInfo is what GET /v1/status returns.
 type StatusInfo struct {
-	Host     string        `json:"host"`
-	World    string        `json:"world"`
+	Host string `json:"host"`
+	// World is the NATS URL the daemon joins the world through.
+	World string `json:"world"`
+	// WorldOwner is the owner key of the world this island belongs to, or
+	// empty before a devworld's daemon has pinned it.
+	WorldOwner string `json:"worldOwner,omitempty"`
+	// SetupURL is the link to set the world up, while there is no world
+	// and the daemon knows it, as devworld's daemon does.
+	SetupURL string        `json:"setupUrl,omitempty"`
 	Version  string        `json:"version"`
 	Started  time.Time     `json:"started"`
 	Repos    []RepoInfo    `json:"repos"`
