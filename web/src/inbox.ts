@@ -6,6 +6,7 @@ import { agentGlyph, timeNode } from './panels/parts'
 import type { Permission, Question, QuestionField, Session } from './protocol'
 import { replyBox } from './reply'
 import { inputsVersion, requestInput } from './requestinput'
+import { myApprover } from './approvers'
 import { HOST_DEFAULTS, proposeRule, ruleText, rulesSheet } from './rules'
 import { agentLabel, isOpen, sessionLabel, sessionStatus, tokensBreakdown, tokensLabel, tokensText } from './status'
 import { conversationList, isUnread, isWaiting, sumTokens, type State } from './store'
@@ -73,7 +74,7 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live
   // Once the agent is not mid-turn, where its changes stand is read from the
   // host, and read again after each event, such as a commit.
   const changes = open && open.status !== 'running' && !open.worktreeRemoved ? cache.get('changes', open.host, open.id, 0, Date.parse(open.updatedAt)) : undefined
-  const deps = [s.sessions, s.repos, s.viewed, s.inbox, s.inboxFilter, open, inputsVersion(), fetched?.at, fetched?.loading, fetched?.error, fetched?.text, changes?.at, changes?.loading, changes?.error, changes?.changes, rulesToggles, ...(open ? chipDeps(open, cache) : [])]
+  const deps = [s.sessions, s.repos, s.viewed, s.inbox, s.inboxFilter, open, inputsVersion(), s.approvers, s.me, s.world, fetched?.at, fetched?.loading, fetched?.error, fetched?.text, changes?.at, changes?.loading, changes?.error, changes?.changes, rulesToggles, ...(open ? chipDeps(open, cache) : [])]
   if (lastDeps && lastDeps.length === deps.length && lastDeps.every((d, i) => d === deps[i])) return
   lastDeps = deps
 
@@ -109,10 +110,13 @@ function approvalCard(s: State, x: Session, p: Permission, actions: InboxActions
   // The whole input, which the person sees and approves by its hash. Until
   // it is here and its hash checks out, nothing can be allowed.
   const view = requestInput(x.host, x.id, p, actions.redraw)
+  // Only an approver's browser can answer: the daemon checks its signature.
+  const me = myApprover(s)
+  const canSign = !!me?.valid
   const note = el('span', { class: 'sub' })
   const buttons: HTMLButtonElement[] = []
   const enable = (): void => {
-    for (const b of buttons) b.disabled = b.dataset.allows === 'true' && !view.hash
+    for (const b of buttons) b.disabled = !canSign || (b.dataset.allows === 'true' && !view.hash)
   }
   const decide = async (run: () => Promise<string>, saying: string): Promise<void> => {
     for (const b of buttons) b.disabled = true
@@ -129,6 +133,15 @@ function approvalCard(s: State, x: Session, p: Permission, actions: InboxActions
   if (view.error) {
     note.textContent = view.error
     note.style.color = 'var(--bad)'
+  }
+  if (!canSign) {
+    note.replaceChildren(
+      me ? 'This browser no longer approves for this world, so it can’t answer here. ' : 'This browser isn’t an approver for this world, so it can’t answer here. ',
+      'Add it with an \u201cAdd an approver\u201d link from an approver, use your recovery file on the ',
+      el('a', { href: '/setup', text: 'setup page' }),
+      ', or answer on the host with skylands request approve.',
+    )
+    note.style.color = ''
   }
   const allows = p.options.filter((o) => o.kind.startsWith('allow'))
   const rejects = p.options.filter((o) => o.kind.startsWith('reject'))

@@ -25,6 +25,7 @@ import (
 	"github.com/nats-io/nuid"
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
+	"github.com/skylands-ai/skylands/internal/approval"
 	"github.com/skylands-ai/skylands/internal/daemon/agents"
 	"github.com/skylands-ai/skylands/internal/daemon/host"
 	"github.com/skylands-ai/skylands/internal/es"
@@ -98,7 +99,9 @@ type Session struct {
 	Resumed Resumed
 	// Pending holds the tool calls waiting on a person, oldest first, and
 	// Questions the questions the agent is waiting on an answer to.
-	Pending   []Permission
+	Pending []Permission
+	// Decided is every request answered or expired, oldest first.
+	Decided   []Decided
 	Questions []Question
 	// Turns counts the prompts sent so far.
 	Turns     int
@@ -151,6 +154,25 @@ type Permission struct {
 	At           time.Time
 }
 
+// Decided is a request that was answered or expired: what the agent asked,
+// and how it was settled. The history lists these.
+type Decided struct {
+	Permission Permission
+	// Answer is "allowed", "denied", or "expired".
+	Answer   string
+	OptionID string
+	// By is "local", "citadel", "trust", or "rule", and empty when the
+	// request expired.
+	By string
+	// Approver and Signature are the approver key and signature of a
+	// decision through the citadel.
+	Approver  string
+	Signature string
+	// Reason is why a request expired.
+	Reason string
+	At     time.Time
+}
+
 // Repos finds registered repositories, which the Host aggregate provides.
 type Repos interface {
 	Repo(id string) (host.Repo, bool)
@@ -176,6 +198,13 @@ type Config struct {
 	// PermissionTimeout is how long a request waits for a person before it
 	// expires. Zero means 30 minutes.
 	PermissionTimeout time.Duration
+	// World is the owner key of the world the host belongs to, or "" before
+	// it is known. Once it is known, a decision through the citadel must be
+	// signed by one of the world's approvers.
+	World func() string
+	// VerifyDecision checks an approver's signature over a decision that
+	// came through the citadel, against the world's approvers.
+	VerifyDecision func(ctx context.Context, d approval.Decision, s v1.DecisionSignature) error
 }
 
 // DefaultAllowKinds are the tool call kinds a host allows when no rule
@@ -385,8 +414,47 @@ func (m *Manager) resume(id string) {
 // the agent proposed, so an input changed on the way to the person isn't
 // approved. Approvals on the host, and through a session's trust, need
 // none.
+//
+// Once the world exists, an approval or a denial through the citadel must
+// also carry an approver's signature over the decision, which is checked
+// against the daemon's own record of the request.
 func (m *Manager) Approve(ctx context.Context, cmd v1.ApproveToolCall, by string) (Session, error) {
-	return m.decide(ctx, cmd.ID, cmd.SessionID, cmd.RequestID, by, cmd.OptionID, cmd.InputHash, true)
+	return m.decide(ctx, cmd.ID, cmd.SessionID, cmd.RequestID, by, cmd.OptionID, cmd.InputHash, cmd.Signature, true)
+}
+
+// checkSigned checks a decision through the citadel, once the world
+// exists: an approver must have signed it, and the signature must be over
+// the decision as the daemon itself records it, with the host, session,
+// request, option, and input hash it knows. It returns the approver and
+// signature to record, or none for a decision that needs no signature.
+func (m *Manager) checkSigned(ctx context.Context, sessionID, requestID, by, optionID, option string, sig *v1.DecisionSignature, pending *Permission, allow bool) (string, string, error) {
+	if by != "citadel" || m.cfg.World == nil {
+		return "", "", nil
+	}
+	world := m.cfg.World()
+	if world == "" {
+		return "", "", nil
+	}
+	if sig == nil {
+		return "", "", ErrUnsigned
+	}
+	d := approval.Decision{V: approval.DecisionVersion, World: world, Host: m.cfg.Host, Session: sessionID, Request: requestID, Decision: "deny", Input: pending.InputHash}
+	if allow {
+		// The option signed is the option chosen, which the agent must
+		// offer.
+		if optionID == "" || option != optionID {
+			return "", "", fmt.Errorf("%w: a signed approval must name one of the options the agent offers", ErrUnsigned)
+		}
+		d.Decision, d.Option = "allow", optionID
+	}
+	if m.cfg.VerifyDecision == nil {
+		return "", "", errors.New("this daemon can't check signatures")
+	}
+	if err := m.cfg.VerifyDecision(ctx, d, *sig); err != nil {
+		slog.Warn("session: a decision's signature was refused", "session", sessionID, "request", requestID, "approver", sig.Approver, "err", err)
+		return "", "", err
+	}
+	return sig.Approver, sig.Sig, nil
 }
 
 // RequestInput is the whole input of a request that is waiting.
@@ -415,14 +483,17 @@ func permissionRequested(sessionID, requestID string, tc agents.ToolCall, req ag
 // Deny handles DenyToolCall: it answers a waiting request with a reject
 // option and records who did.
 func (m *Manager) Deny(ctx context.Context, cmd v1.DenyToolCall, by string) (Session, error) {
-	return m.decide(ctx, cmd.ID, cmd.SessionID, cmd.RequestID, by, "", "", false)
+	return m.decide(ctx, cmd.ID, cmd.SessionID, cmd.RequestID, by, "", "", cmd.Signature, false)
 }
+
+// ErrUnsigned is a decision through the citadel that no approver signed.
+var ErrUnsigned = errors.New("an answer through the citadel must be signed by one of the world's approvers")
 
 // ErrInputMismatch is an approval through the citadel that names no input,
 // or another input than the one the agent proposed.
 var ErrInputMismatch = errors.New("the input this approval names isn't the input the agent asked about")
 
-func (m *Manager) decide(ctx context.Context, commandID, sessionID, requestID, by, optionID, inputHash string, allow bool) (Session, error) {
+func (m *Manager) decide(ctx context.Context, commandID, sessionID, requestID, by, optionID, inputHash string, sig *v1.DecisionSignature, allow bool) (Session, error) {
 	m.cmdMu.Lock()
 	defer m.cmdMu.Unlock()
 	m.mu.Lock()
@@ -461,12 +532,16 @@ func (m *Manager) decide(ctx context.Context, commandID, sessionID, requestID, b
 		}
 	}
 	option := pickOption(pending.Options, allow, optionID)
+	approver, signature, err := m.checkSigned(ctx, sessionID, requestID, by, optionID, option, sig, pending, allow)
+	if err != nil {
+		return *s, err
+	}
 	if option == "" {
 		if allow {
 			return *s, errors.New("the agent offers no allow option for this request")
 		}
 		// No reject option: cancelling the request is the refusal.
-		if err := m.record(ctx, sessionID, commandID, v1.EventPermissionDenied, v1.PermissionDenied{SessionID: sessionID, RequestID: requestID, By: by}); err != nil {
+		if err := m.record(ctx, sessionID, commandID, v1.EventPermissionDenied, v1.PermissionDenied{SessionID: sessionID, RequestID: requestID, By: by, Approver: approver, Signature: signature}); err != nil {
 			return Session{}, err
 		}
 		m.transcript(sessionID).Line(ToolLine(pending.Title+" (denied)", pending.ToolCallID))
@@ -475,11 +550,11 @@ func (m *Manager) decide(ctx context.Context, commandID, sessionID, requestID, b
 		return out, nil
 	}
 	if allow {
-		if err := m.record(ctx, sessionID, commandID, v1.EventPermissionGranted, v1.PermissionGranted{SessionID: sessionID, RequestID: requestID, OptionID: option, By: by}); err != nil {
+		if err := m.record(ctx, sessionID, commandID, v1.EventPermissionGranted, v1.PermissionGranted{SessionID: sessionID, RequestID: requestID, OptionID: option, By: by, Approver: approver, Signature: signature}); err != nil {
 			return Session{}, err
 		}
 	} else {
-		if err := m.record(ctx, sessionID, commandID, v1.EventPermissionDenied, v1.PermissionDenied{SessionID: sessionID, RequestID: requestID, OptionID: option, By: by}); err != nil {
+		if err := m.record(ctx, sessionID, commandID, v1.EventPermissionDenied, v1.PermissionDenied{SessionID: sessionID, RequestID: requestID, OptionID: option, By: by, Approver: approver, Signature: signature}); err != nil {
 			return Session{}, err
 		}
 		m.transcript(sessionID).Line(ToolLine(pending.Title+" (denied)", pending.ToolCallID))
@@ -1292,6 +1367,11 @@ func (m *Manager) apply(ev v1.Event) {
 		var d struct {
 			SessionID string `json:"sessionId"`
 			RequestID string `json:"requestId"`
+			OptionID  string `json:"optionId"`
+			By        string `json:"by"`
+			Approver  string `json:"approver"`
+			Signature string `json:"signature"`
+			Reason    string `json:"reason"`
 		}
 		if ev.Decode(&d) == nil {
 			if s := touch(d.SessionID); s != nil {
@@ -1299,7 +1379,10 @@ func (m *Manager) apply(ev v1.Event) {
 				for _, p := range s.Pending {
 					if p.RequestID != d.RequestID {
 						kept = append(kept, p)
+						continue
 					}
+					answer := map[string]string{v1.EventPermissionGranted: "allowed", v1.EventPermissionDenied: "denied", v1.EventPermissionExpired: "expired"}[ev.Type]
+					s.Decided = append(s.Decided, Decided{Permission: p, Answer: answer, OptionID: d.OptionID, By: d.By, Approver: d.Approver, Signature: d.Signature, Reason: d.Reason, At: ev.Time})
 				}
 				s.Pending = kept
 				if ev.CommandID != "" {

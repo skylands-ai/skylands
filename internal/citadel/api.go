@@ -154,18 +154,23 @@ func (c *citadel) stopAgent(w http.ResponseWriter, r *http.Request) {
 func (c *citadel) approve(w http.ResponseWriter, r *http.Request) {
 	host, id, rid := r.PathValue("host"), r.PathValue("id"), r.PathValue("rid")
 	var body struct {
-		OptionID  string `json:"optionId"`
-		InputHash string `json:"inputHash"`
+		OptionID  string                `json:"optionId"`
+		InputHash string                `json:"inputHash"`
+		Signature *v1.DecisionSignature `json:"signature"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	cmd := v1.ApproveToolCall{ID: nuid.Next(), SessionID: id, RequestID: rid, OptionID: body.OptionID, InputHash: body.InputHash}
+	cmd := v1.ApproveToolCall{ID: nuid.Next(), SessionID: id, RequestID: rid, OptionID: body.OptionID, InputHash: body.InputHash, Signature: body.Signature}
 	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandApproveToolCall), cmd, http.StatusOK)
 }
 
 // deny answers a waiting tool call with a reject option.
 func (c *citadel) deny(w http.ResponseWriter, r *http.Request) {
 	host, id, rid := r.PathValue("host"), r.PathValue("id"), r.PathValue("rid")
-	cmd := v1.DenyToolCall{ID: nuid.Next(), SessionID: id, RequestID: rid}
+	var body struct {
+		Signature *v1.DecisionSignature `json:"signature"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	cmd := v1.DenyToolCall{ID: nuid.Next(), SessionID: id, RequestID: rid, Signature: body.Signature}
 	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandDenyToolCall), cmd, http.StatusOK)
 }
 

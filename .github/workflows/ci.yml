@@ -58,3 +58,4 @@ jobs:
       - run: npm ci
       # Type-checks with tsc, then bundles with Vite.
       - run: npm run build
+      - run: npm test

@@ -55,6 +55,7 @@ button:focus-visible,a:focus-visible{ outline:2px solid var(--accent); outline-o
 .btn.small{ min-height:36px; padding:0 12px; font-size:13px; }
 .btn.primary{ background:var(--flare); border-color:var(--flare); color:var(--flare-ink); }
 .btn.ghost{ background:transparent; }
+.btn:disabled{ opacity:0.45; cursor:not-allowed; }
 .muted{ color:var(--muted); }
 .spacer{ flex:1 1 0; }
 .meter{ display:flex; flex-direction:column; gap:4px; min-width:160px; font-size:12px; }
@@ -293,7 +294,6 @@ button.row{ color:inherit; font:inherit; }
 .setup .check{ display:flex; gap:8px; align-items:center; font-weight:400; }
 .setup a.btn{ color:var(--text); text-decoration:none; }
 .setup a.btn.primary{ color:var(--flare-ink); }
-.setup .btn:disabled{ opacity:0.45; cursor:not-allowed; }
 .setup code, .addhost code{ font-family:"JetBrains Mono",monospace; font-size:12px; word-break:break-all; }
 .addhost pre{ margin:6px 0; padding:8px 10px; border-radius:8px; background:var(--surface-2); border:1px solid var(--line); white-space:pre-wrap; word-break:break-all; }
 

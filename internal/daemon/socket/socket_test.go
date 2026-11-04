@@ -97,6 +97,9 @@ func (f *fakeAPI) SetRepoRules(_ context.Context, repoID, _ string, rules []v1.R
 }
 
 func (f *fakeAPI) Requests(context.Context) []RequestInfo { return []RequestInfo{} }
+func (f *fakeAPI) History(context.Context, string) []DecisionInfo {
+	return []DecisionInfo{}
+}
 func (f *fakeAPI) Approve(_ context.Context, requestID, _ string) (RequestInfo, error) {
 	return RequestInfo{ID: requestID}, nil
 }

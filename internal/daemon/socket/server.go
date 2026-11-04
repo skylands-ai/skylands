@@ -23,6 +23,9 @@ type API interface {
 	RegisterRepo(ctx context.Context, path, commandID string) (RepoInfo, error)
 	// Requests lists every tool call waiting on a person.
 	Requests(ctx context.Context) []RequestInfo
+	// History lists every request answered or expired, oldest first, in
+	// one session or, with "", in all of them.
+	History(ctx context.Context, session string) []DecisionInfo
 	Approve(ctx context.Context, requestID, commandID string) (RequestInfo, error)
 	Deny(ctx context.Context, requestID, commandID string) (RequestInfo, error)
 	// Sessions lists every session on this host, newest first.
@@ -74,6 +77,9 @@ func Serve(ctx context.Context, ln net.Listener, api API) error {
 		}
 	})
 
+	mux.HandleFunc("GET /v1/requests/history", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, http.StatusOK, api.History(r.Context(), r.URL.Query().Get("session")))
+	})
 	mux.HandleFunc("GET /v1/requests", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, api.Requests(r.Context()))
 	})

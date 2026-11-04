@@ -588,6 +588,10 @@ type PermissionGranted struct {
 	// By is who decided: "local" for the host's CLI, "citadel" for a browser
 	// through a citadel, or "trust" for a trusted session.
 	By string `json:"by"`
+	// Approver and Signature are the approver key that signed a decision
+	// through the citadel, and its signature, kept as the audit trail.
+	Approver  string `json:"approver,omitempty"`
+	Signature string `json:"signature,omitempty"`
 }
 
 // PermissionDenied records who refused a request.
@@ -596,6 +600,9 @@ type PermissionDenied struct {
 	RequestID string `json:"requestId"`
 	OptionID  string `json:"optionId,omitempty"`
 	By        string `json:"by"`
+	// Approver and Signature are as in PermissionGranted.
+	Approver  string `json:"approver,omitempty"`
+	Signature string `json:"signature,omitempty"`
 }
 
 // PermissionExpired records a request nobody answered: Reason is "timeout",
@@ -665,6 +672,9 @@ type ApproveToolCall struct {
 	// must name it, and the daemon refuses one whose hash isn't that of the
 	// input the agent proposed.
 	InputHash string `json:"inputHash,omitempty"`
+	// Signature is an approver's signature over the decision. Once the
+	// world exists, an approval through the citadel needs one.
+	Signature *DecisionSignature `json:"signature,omitempty"`
 }
 
 // DenyToolCall answers a waiting request with a reject option.
@@ -672,6 +682,8 @@ type DenyToolCall struct {
 	ID        string `json:"id"`
 	SessionID string `json:"sessionId"`
 	RequestID string `json:"requestId"`
+	// Signature is as in ApproveToolCall.
+	Signature *DecisionSignature `json:"signature,omitempty"`
 }
 
 // TrustSession allows every tool call in a session without asking, or

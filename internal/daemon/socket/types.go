@@ -108,6 +108,37 @@ type RequestInfo struct {
 	Since        time.Time       `json:"since"`
 }
 
+// DecisionInfo is one request that was answered or expired, as GET
+// /v1/requests/history lists them.
+type DecisionInfo struct {
+	Request      string `json:"request"`
+	Session      string `json:"session"`
+	Conversation string `json:"conversation"`
+	Repo         string `json:"repo"`
+	Agent        string `json:"agent"`
+	Tool         string `json:"tool"`
+	Kind         string `json:"kind,omitempty"`
+	// Answer is "allowed", "denied", or "expired".
+	Answer string `json:"answer"`
+	Option string `json:"option,omitempty"`
+	// By is "local" for the host's CLI, "citadel" for an approver through
+	// a citadel, "trust", or "rule"; empty when the request expired.
+	By string `json:"by,omitempty"`
+	// Approver and ApproverName are the approver that signed a decision
+	// through the citadel.
+	Approver     string `json:"approver,omitempty"`
+	ApproverName string `json:"approverName,omitempty"`
+	// Signature says whether a decision through the citadel is signed and
+	// verifies: "verified", "verified, but the approver no longer
+	// approves", "doesn't verify", "unsigned", or "not checked" before the
+	// daemon has read the world's approvers. It is empty for a decision
+	// that needs no signature.
+	Signature string    `json:"signature,omitempty"`
+	Reason    string    `json:"reason,omitempty"`
+	Asked     time.Time `json:"asked"`
+	At        time.Time `json:"at"`
+}
+
 // RepoRulesInfo is one repository's rules, as GET /v1/rules lists them.
 type RepoRulesInfo struct {
 	RepoID string    `json:"repoId"`
