@@ -1,7 +1,7 @@
 import { el } from '../dom'
 import type { ServerInfo } from '../protocol'
 import { citadelStatus, islandCounts, islandStatus, isStale, shortId } from '../status'
-import { islandList, type State } from '../store'
+import { islandList, waitingCount, type State } from '../store'
 import { WORLD_THEMES, type WorldThemeId } from '../worldthemes'
 import { factsBox, header, hint, note, section } from './parts'
 
@@ -45,13 +45,20 @@ export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: stri
   const stale = isStale(s)
   const { reachable, total } = islandCounts(s)
   const counts = `${reachable} of ${total}${stale && total ? ', as last heard' : ''}`
+  // The same count as the Inbox badge and the tab title.
+  const waiting = waitingCount(s)
   panel.appendChild(header('Citadel', 'Web app and observer for this world', citadelStatus(s)))
   panel.appendChild(
     note(
       'Every island’s daemon keeps its own event log and syncs it to the world’s NATS server, where every tether ends at the citadel. Decisions you make here travel back down the tethers.',
     ),
   )
-  panel.appendChild(factsBox([['Islands connected', counts], ['Waiting on you', '0']]))
+  panel.appendChild(
+    factsBox([
+      ['Islands connected', counts],
+      ['Waiting on you', `${waiting}${stale && waiting ? ', as last heard' : ''}`],
+    ]),
+  )
   panel.appendChild(themeSwitch(s.worldTheme, setTheme))
 
   const islands = islandList(s)

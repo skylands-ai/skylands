@@ -184,7 +184,7 @@ function panelDeps(s: State, stale: boolean): unknown[] {
     case 'island':
       return ['island', island, stale, stale ? s.lastContact : 0, ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
     default:
-      return ['world', s.server, s.link, s.worldTheme, ...islandList(s)]
+      return ['world', s.server, s.link, s.worldTheme, waitingCount(s), ...islandList(s)]
   }
 }
 
