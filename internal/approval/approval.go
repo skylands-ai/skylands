@@ -97,6 +97,80 @@ func OpenOwnerApprover(s v1.Signed, owner string) (v1.ApproverEntry, error) {
 	return a, nil
 }
 
+// OpenVouchedApprover verifies an approver entry signed with a voucher's
+// claim key, for the world owner names. Whether the voucher counts is
+// the registry's to decide.
+func OpenVouchedApprover(s v1.Signed, owner string) (v1.ApproverEntry, error) {
+	var a v1.ApproverEntry
+	if err := open(s, &a); err != nil {
+		return a, err
+	}
+	if a.Type != "approver" {
+		return a, fmt.Errorf("an approver entry has type %q", a.Type)
+	}
+	if a.World != owner {
+		return a, errors.New("the approver entry is for another world")
+	}
+	if !nkeys.IsValidPublicUserKey(a.Voucher) {
+		return a, errors.New("the approver entry names no voucher")
+	}
+	if s.Signer != a.Voucher {
+		return a, errors.New("the approver entry is not signed by its voucher's claim key")
+	}
+	if !nkeys.IsValidPublicUserKey(a.Key) || a.Key == a.Voucher {
+		return a, errors.New("the approver's key is not a user public nkey of its own")
+	}
+	if err := checkName(a.Name, "the approver"); err != nil {
+		return a, err
+	}
+	return a, nil
+}
+
+// OpenVoucher verifies a voucher signed by an approver key, for the world
+// owner names. Whether its signer is an approver is the registry's to
+// decide.
+func OpenVoucher(s v1.Signed, owner string) (v1.Voucher, error) {
+	var v v1.Voucher
+	if err := open(s, &v); err != nil {
+		return v, err
+	}
+	if v.Type != "voucher" {
+		return v, fmt.Errorf("a voucher has type %q", v.Type)
+	}
+	if v.World != owner {
+		return v, errors.New("the voucher is for another world")
+	}
+	if !nkeys.IsValidPublicUserKey(s.Signer) {
+		return v, errors.New("the voucher is not signed by an approver key")
+	}
+	if !nkeys.IsValidPublicUserKey(v.Claim) || v.Claim == s.Signer {
+		return v, errors.New("the voucher's claim key is not a user public nkey of its own")
+	}
+	return v, nil
+}
+
+// OpenRevocation verifies a revocation signed by the owner key or an
+// approver key, for the world owner names.
+func OpenRevocation(s v1.Signed, owner string) (v1.Revocation, error) {
+	var r v1.Revocation
+	if err := open(s, &r); err != nil {
+		return r, err
+	}
+	if r.Type != "revocation" {
+		return r, fmt.Errorf("a revocation has type %q", r.Type)
+	}
+	if r.World != owner {
+		return r, errors.New("the revocation is for another world")
+	}
+	if s.Signer != owner && !nkeys.IsValidPublicUserKey(s.Signer) {
+		return r, errors.New("the revocation is not signed by the owner key or an approver key")
+	}
+	if !nkeys.IsValidPublicUserKey(r.Key) {
+		return r, errors.New("the revocation names no approver key")
+	}
+	return r, nil
+}
+
 // open verifies s and decodes its payload into v.
 func open(s v1.Signed, v any) error {
 	if err := Verify(s); err != nil {

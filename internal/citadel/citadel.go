@@ -173,7 +173,7 @@ func plainToken(s string) bool {
 
 func (c *citadel) snapshot() web.Message {
 	info := c.serverInfo()
-	return web.Message{Type: "snapshot", Server: &info, World: c.worldInfo(), Islands: c.islands.List(), Repos: c.terrain.List(), Sessions: c.sessions.List()}
+	return web.Message{Type: "snapshot", Server: &info, World: c.worldInfo(), Approvers: c.approverInfo(), Islands: c.islands.List(), Repos: c.terrain.List(), Sessions: c.sessions.List()}
 }
 
 // serverInfo describes the NATS server as the citadel sees it right now.

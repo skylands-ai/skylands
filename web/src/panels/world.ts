@@ -3,6 +3,8 @@ import type { ServerInfo, WorldInfo } from '../protocol'
 import { citadelStatus, islandCounts, islandStatus, isStale, shortId } from '../status'
 import { islandList, waitingCount, type State } from '../store'
 import { WORLD_THEMES, type WorldThemeId } from '../worldthemes'
+import type { ApproverActions } from '../approvers'
+import { approversSection } from './approvers'
 import { copyButton, factsBox, header, hint, note, section } from './parts'
 
 function natsFacts(s: ServerInfo | null, link: State['link']): [string, string][] {
@@ -95,7 +97,7 @@ function leafAddress(leafUrl: string | undefined): { url: string; note: string |
 }
 
 /** The world-level panel: the citadel itself, the world's theme, its islands, and the NATS server it is on. */
-export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: string) => void, setTheme: (id: WorldThemeId) => void): void {
+export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: string) => void, setTheme: (id: WorldThemeId) => void, approvers: ApproverActions, keepStorage: () => void): void {
   panel.textContent = ''
   const stale = isStale(s)
   const { reachable, total } = islandCounts(s)
@@ -143,6 +145,8 @@ export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: stri
     const add = addHost(s.world)
     if (add) panel.appendChild(add)
   }
+  const appr = approversSection(s, approvers, keepStorage)
+  if (appr) panel.appendChild(appr)
 
   panel.appendChild(
     section('NATS', [

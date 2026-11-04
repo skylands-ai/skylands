@@ -306,7 +306,7 @@ Skylands runs on nats-server with JetStream, and NATS holds no Skylands logic. D
 
 ### Setting up a world
 
-A world is set up in the browser. When a citadel starts and finds no world record in NATS, it prints a setup link with a one-time token in its fragment, and every page it serves leads to the setup page. Whoever opens the link names the world, and the page makes the world's owner key and this browser's approver key with nkeys.js. The owner key signs the world record and an entry enrolling the approver key, and the page offers a recovery file holding the owner key, encrypted with a passphrase if one is given. Only after the owner confirms saving it does the page send the signed record and entry, with the token. The citadel writes the record create-only, so the first setup wins and a second citadel skips setup, and the browser forgets the owner key. The recovery file later enrolls another browser on the same page, if every approver device is lost.
+A world is set up in the browser. When a citadel starts and finds no world record in NATS, it prints a setup link with a one-time token in its fragment, and every page it serves leads to the setup page. Whoever opens the link names the world, and the page makes the world's owner key and this browser's approver key with nkeys.js. The owner key signs the world record and an entry enrolling the approver key, and the page offers a recovery file holding the owner key, encrypted with a passphrase if one is given. Only after the owner confirms saving it does the page send the signed record and entry, with the token. The citadel writes the record create-only, so the first setup wins and a second citadel skips setup, and the browser forgets the owner key. The recovery file later enrolls another browser on the same page, if every approver is lost.
 
 Each daemon pins the world's owner key. devworld's daemon takes it from the world record, and every other daemon from `--world` in its install command, which the citadel shows under "Add a host". A daemon with no owner key refuses to start, and one whose pinned key differs from the world record's refuses to run.
 
@@ -350,7 +350,7 @@ Citadels have no roles. Each one does work as soon as it's available, a second c
 - Commands and queries are endpoints of the skylands-citadel micro service, so NATS hands each request to one citadel without any of them holding a role.
 - Each citadel builds its own projections from the world's streams. Projections are derived, so every citadel's copy agrees.
 - A command relayed by two citadels still produces its events once, because the receiving aggregate recognizes the repeated command id.
-- An approval signed on a device is valid through any citadel, because the daemon verifies the signature rather than trusting the relay.
+- An approval signed by an approver is valid through any citadel, because the daemon verifies the signature rather than trusting the relay.
 - Stopping a citadel disconnects only its own browsers, and the shared consumer and queue groups hand its work to the others.
 
 ## Approvals and security
@@ -370,7 +370,10 @@ Rules settle most tool calls on the host, so only what no rule covers reaches a 
 
 ### Keys
 
-- Each world has an owner key, made in the owner's browser when the world is set up and kept only in the recovery file the owner downloads. It signs the world record and the entries that enroll approvers.
+- Each world has an owner key, made in the owner's browser when the world is set up and kept only in the recovery file the owner downloads. It signs the world record and the entries that enroll approvers through setup or the recovery file.
+- An approver adds another with a voucher: a one-time grant it signs, naming a claim key whose seed travels only in the link's fragment. The browser that opens the link signs its approver entry with that seed. A voucher works once, within 15 minutes of when it was stored, by the NATS server's clock.
+- The owner key or any approver can revoke any approver, and a revocation is never undone. An approver approves only while it, and every approver back to the owner key that added it, isn't revoked, so revoking one removes everything added through it.
+- The approver registry is the `skylands-approvers` bucket. Each record is written once, to a key of its own, and the registry is decided from the records in revision order, so every citadel and daemon reading the same bucket agrees on it.
 - Each daemon pins the owner key and refuses to run in a world whose record names another.
 - NATS decides which daemons and citadels join the world. The owner gives each one credentials for the world's NATS account, however they run NATS, and Skylands adds no enrollment of its own: whatever NATS admits to that account is trusted as a daemon.
 - The citadel holds only a scoped signing key, which can mint credentials for limited roles such as integrations.

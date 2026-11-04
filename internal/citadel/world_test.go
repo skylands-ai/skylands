@@ -10,11 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nkeys"
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
 	"github.com/skylands-ai/skylands/internal/approval"
+	"github.com/skylands-ai/skylands/internal/citadel/web"
 	"github.com/skylands-ai/skylands/internal/natsembed"
 )
 
@@ -161,5 +163,168 @@ func TestSettingUpAWorld(t *testing.T) {
 	body, _ = json.Marshal(map[string]any{"approver": forged})
 	if code, out := post("/api/world/approvers", body); code != http.StatusBadRequest {
 		t.Errorf("an entry not signed by the owner = %d %s, want 400", code, out)
+	}
+}
+
+// startCitadel runs a citadel on a fresh NATS server and returns its base
+// URL and the token from the setup link it offers.
+func startCitadel(t *testing.T) (base, token string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	t.Cleanup(cancel)
+	srv, err := natsembed.Start(ctx, natsembed.Config{Name: "hub", ClientAddr: "127.0.0.1:0", StoreDir: t.TempDir(), Domain: "world"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.Shutdown)
+	addr := freeAddr(t)
+	links := make(chan string, 4)
+	runCtx, stop := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(runCtx, Config{NATSURL: srv.ClientURL(), HTTPAddr: addr, OnSetupLink: func(l string) { links <- l }})
+	}()
+	t.Cleanup(func() {
+		stop()
+		if err := <-done; err != nil {
+			t.Errorf("citadel.Run returned %v", err)
+		}
+	})
+	base = "http://" + addr
+	select {
+	case l := <-links:
+		return base, strings.TrimPrefix(l, base+"/setup#")
+	case <-time.After(15 * time.Second):
+		t.Fatal("the citadel never offered a setup link")
+	}
+	return "", ""
+}
+
+func postJSON(t *testing.T, url string, body any) (int, string) {
+	t.Helper()
+	data, _ := json.Marshal(body)
+	resp, err := http.Post(url, "application/json", bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var out bytes.Buffer
+	_, _ = out.ReadFrom(resp.Body)
+	return resp.StatusCode, out.String()
+}
+
+func userKey(t *testing.T) (nkeys.KeyPair, string) {
+	t.Helper()
+	kp, err := nkeys.CreateUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, _ := kp.PublicKey()
+	return kp, pub
+}
+
+// TestApproversThroughTheCitadel adds an approver with a voucher, refuses
+// a second use of it, and revokes, taking along what was enrolled through
+// the revoked approver.
+func TestApproversThroughTheCitadel(t *testing.T) {
+	base, token := startCitadel(t)
+	owner, err := nkeys.CreateOperator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerPub, _ := owner.PublicKey()
+	laptop, laptopPub := userKey(t)
+	world, _ := approval.Sign(owner, v1.WorldRecord{Type: "world", Name: "w", Owner: ownerPub, Created: approval.Now()})
+	first, _ := approval.Sign(owner, v1.ApproverEntry{Type: "approver", World: ownerPub, Key: laptopPub, Name: "laptop", Created: approval.Now()})
+	if code, out := postJSON(t, base+"/api/world/setup", setupRequest{Token: token, World: world, Approver: first}); code != http.StatusOK {
+		t.Fatalf("setup = %d %s", code, out)
+	}
+
+	// The laptop makes a link; the phone uses it.
+	claim, claimPub := userKey(t)
+	voucher, _ := approval.Sign(laptop, v1.Voucher{Type: "voucher", World: ownerPub, Claim: claimPub, Created: approval.Now()})
+	code, out := postJSON(t, base+"/api/world/vouchers", map[string]any{"voucher": voucher})
+	var vi struct {
+		By, ByName, Expires string
+		Valid               bool
+	}
+	_ = json.Unmarshal([]byte(out), &vi)
+	if code != http.StatusOK || vi.By != laptopPub || vi.ByName != "laptop" || !vi.Valid {
+		t.Fatalf("voucher = %d %s", code, out)
+	}
+	if exp, err := time.Parse(time.RFC3339, vi.Expires); err != nil || time.Until(exp) < 14*time.Minute || time.Until(exp) > 16*time.Minute {
+		t.Errorf("the voucher expires at %q, want about 15 minutes from now", vi.Expires)
+	}
+	if resp, err := http.Get(base + "/api/world/vouchers/" + claimPub); err != nil || resp.StatusCode != http.StatusOK {
+		t.Errorf("GET the voucher = %v, %v", resp, err)
+	}
+	_, phonePub := userKey(t)
+	phoneEntry, _ := approval.Sign(claim, v1.ApproverEntry{Type: "approver", World: ownerPub, Key: phonePub, Name: "phone", Created: approval.Now(), Voucher: claimPub})
+	if code, out := postJSON(t, base+"/api/world/approvers", map[string]any{"approver": phoneEntry}); code != http.StatusOK {
+		t.Fatalf("using the link = %d %s", code, out)
+	}
+	_, againPub := userKey(t)
+	again, _ := approval.Sign(claim, v1.ApproverEntry{Type: "approver", World: ownerPub, Key: againPub, Name: "again", Created: approval.Now(), Voucher: claimPub})
+	if code, out := postJSON(t, base+"/api/world/approvers", map[string]any{"approver": again}); code != http.StatusConflict {
+		t.Errorf("using the link twice = %d %s, want 409", code, out)
+	}
+	// A key that isn't an approver can't make a link.
+	stranger, _ := userKey(t)
+	_, otherClaim := userKey(t)
+	forged, _ := approval.Sign(stranger, v1.Voucher{Type: "voucher", World: ownerPub, Claim: otherClaim, Created: approval.Now()})
+	if code, out := postJSON(t, base+"/api/world/vouchers", map[string]any{"voucher": forged}); code != http.StatusForbidden {
+		t.Errorf("a voucher from a stranger = %d %s, want 403", code, out)
+	}
+
+	approvers := func() map[string]web.ApproverInfo {
+		t.Helper()
+		resp, err := http.Get(base + "/api/world/approvers")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var body struct{ Approvers []web.ApproverInfo }
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		out := map[string]web.ApproverInfo{}
+		for _, a := range body.Approvers {
+			out[a.Key] = a
+		}
+		return out
+	}
+	got := approvers()
+	if l, p := got[laptopPub], got[phonePub]; !l.Valid || l.By != "owner" || len(l.Through) != 1 || l.Through[0] != phonePub || !p.Valid || p.By != laptopPub || p.Voucher != claimPub {
+		t.Fatalf("approvers = %+v", got)
+	}
+
+	// The owner key revokes the laptop, and the phone it enrolled goes too.
+	revocation, _ := approval.Sign(owner, v1.Revocation{Type: "revocation", World: ownerPub, Key: laptopPub, Created: approval.Now()})
+	if code, out := postJSON(t, base+"/api/world/revocations", map[string]any{"revocation": revocation}); code != http.StatusOK {
+		t.Fatalf("revoke = %d %s", code, out)
+	}
+	got = approvers()
+	if l, p := got[laptopPub], got[phonePub]; l.Valid || l.RevokedBy != "owner" || l.Revoked == "" || p.Valid || p.Revoked != "" {
+		t.Errorf("after revoking the laptop: %+v", got)
+	}
+	// A revoked approver can't revoke or make links.
+	byLaptop, _ := approval.Sign(laptop, v1.Revocation{Type: "revocation", World: ownerPub, Key: phonePub, Created: approval.Now()})
+	if code, out := postJSON(t, base+"/api/world/revocations", map[string]any{"revocation": byLaptop}); code != http.StatusForbidden {
+		t.Errorf("a revoked approver revoking = %d %s, want 403", code, out)
+	}
+	_, lateClaim := userKey(t)
+	late, _ := approval.Sign(laptop, v1.Voucher{Type: "voucher", World: ownerPub, Claim: lateClaim, Created: approval.Now()})
+	if code, out := postJSON(t, base+"/api/world/vouchers", map[string]any{"voucher": late}); code != http.StatusForbidden {
+		t.Errorf("a revoked approver making a link = %d %s, want 403", code, out)
+	}
+
+	// A browser connecting now gets the registry in its snapshot.
+	c, _, err := websocket.Dial(context.Background(), strings.Replace(base, "http", "ws", 1)+"/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.CloseNow() }()
+	_, data, err := c.Read(context.Background())
+	var snap web.Message
+	if err != nil || json.Unmarshal(data, &snap) != nil || snap.Type != "snapshot" || len(snap.Approvers) != 2 {
+		t.Errorf("snapshot = %s, %v; want two approvers", data, err)
 	}
 }

@@ -27,6 +27,7 @@ import { providerOf } from './world/airship'
 import type { AgentState } from './world/agents'
 import { World } from './world/world'
 import { connectToCitadel } from './ws'
+import { approverActions, keepThisBrowser, loadThisBrowser } from './approvers'
 
 const stage = byId<HTMLElement>('stage')
 const canvas = byId<HTMLCanvasElement>('world')
@@ -43,6 +44,8 @@ const modeInbox = byId<HTMLButtonElement>('modeInbox')
 const inboxCount = byId<HTMLElement>('inboxCount')
 
 const store = new Store()
+const approverActs = approverActions(store)
+void loadThisBrowser(store)
 const bar = new CommandBar()
 const cache = new FetchCache(() => store.touch())
 const live = new LiveText()
@@ -184,7 +187,7 @@ function panelDeps(s: State, stale: boolean): unknown[] {
     case 'island':
       return ['island', island, stale, stale ? s.lastContact : 0, ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
     default:
-      return ['world', s.server, s.world, s.link, s.worldTheme, waitingCount(s), ...islandList(s)]
+      return ['world', s.server, s.world, s.link, s.worldTheme, waitingCount(s), s.approvers, s.me, s.persisted, s.invite, s.revoking, s.approverError, s.invite ? Date.now() > Date.parse(s.invite.expires) : false, ...islandList(s)]
   }
 }
 
@@ -258,7 +261,7 @@ function renderPanelContent(s: State, stale: boolean): void {
       }
       break
   }
-  renderWorldPanel(panelEl, s, nav.select, (id) => store.setWorldTheme(id))
+  renderWorldPanel(panelEl, s, nav.select, (id) => store.setWorldTheme(id), approverActs, () => void keepThisBrowser(store))
 }
 
 store.subscribe((s0) => {

@@ -7,8 +7,9 @@ import './style.css'
 import type { KeyPair } from '@nats-io/nkeys'
 import {
   canEncrypt,
-  deviceName,
+  browserName,
   keepStorage,
+  keyFromSeed,
   loadApprover,
   newApproverKey,
   newOwnerKey,
@@ -21,19 +22,41 @@ import {
   type Signed,
 } from './approver'
 import { byId, el } from './dom'
-import type { WorldInfo } from './protocol'
+import type { ApproverInfo, VoucherInfo, WorldInfo } from './protocol'
 
 /**
  * The setup page. Until a world exists, whoever opens the link the citadel
  * printed sets it up here: the owner key is made in this browser and leaves
  * it only inside the recovery file the person downloads, and this browser
  * becomes the world's first approver. Once the world exists, a browser
- * that isn't an approver can become one with the recovery file.
+ * that isn't an approver becomes one here with an "Add an approver" link
+ * from an approver, or with the recovery file.
  */
 
 const root = byId<HTMLElement>('setup')
-/** The setup token, from the link's fragment, which the browser never sends to the server by itself. */
-const token = (): string => location.hash.replace(/^#/, '')
+/**
+ * The link's fragment, which the browser never sends to the server by
+ * itself: the setup token, or "approver=" and the claim seed of an "Add an
+ * approver" link.
+ */
+const token = (): string => (claimSeed() ? '' : location.hash.replace(/^#/, ''))
+const claimSeed = (): string | null => /^#approver=(.+)$/.exec(location.hash)?.[1] ?? null
+
+/** Every approver key the world's registry knows, or none if the citadel can't say yet. */
+async function getApprovers(): Promise<ApproverInfo[]> {
+  const resp = await fetch('/api/world/approvers').catch(() => null)
+  if (!resp?.ok) return []
+  return ((await resp.json()) as { approvers?: ApproverInfo[] }).approvers ?? []
+}
+
+/** name, or name with a number added if an approver already has it, so every approver's name is its own. */
+function uniqueName(name: string, approvers: ApproverInfo[]): string {
+  const taken = new Set(approvers.filter((a) => a.valid).map((a) => a.name))
+  if (!taken.has(name)) return name
+  for (let n = 2; ; n++) if (!taken.has(`${name} ${n}`)) return `${name} ${n}`
+}
+
+const timeOf = (iso: string): string => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 
 function show(...kids: (Node | string | null)[]): void {
   root.replaceChildren(...kids.filter((k): k is Node | string => k !== null))
@@ -81,7 +104,10 @@ async function render(): Promise<void> {
     setTimeout(() => void render(), 2000)
     return
   }
-  if (w.ready) return renderReady(w)
+  if (w.ready) {
+    const seed = claimSeed()
+    return seed ? renderClaim(w, seed) : renderReady(w)
+  }
   if (!token()) {
     show(
       el('h1', { text: 'Set up this world' }),
@@ -96,27 +122,27 @@ async function render(): Promise<void> {
 /** The form that creates the world. */
 function renderCreate(w: WorldInfo): void {
   const name = el('input', { type: 'text', id: 'worldName', value: 'Skylands', maxlength: '80', autocomplete: 'off' })
-  const device = el('input', { type: 'text', id: 'deviceName', value: deviceName(), maxlength: '80', autocomplete: 'off' })
+  const nameInput = el('input', { type: 'text', id: 'browserName', value: browserName(), maxlength: '80', autocomplete: 'off' })
   const pass = el('input', { type: 'password', id: 'passphrase', autocomplete: 'new-password' })
   const error = el('div')
   const create = el('button', { type: 'button', class: 'btn primary', text: 'Create the world' })
   create.addEventListener('click', () => {
     const worldName = name.value.trim()
-    const deviceLabel = device.value.trim() || deviceName()
+    const label = nameInput.value.trim() || browserName()
     if (!worldName) {
       error.replaceChildren(errorBox('Give the world a name.'))
       return
     }
-    void prepare(worldName, deviceLabel, canEncrypt() ? pass.value : '')
+    void prepare(worldName, label, canEncrypt() ? pass.value : '')
   })
   show(
     el('h1', { text: 'Set up this world' }),
-    el('p', { text: 'You’ll own this world. Its owner key is made here, in this browser, and only you keep it, in a recovery file you download next. This browser becomes the first device that can approve what agents do.' }),
+    el('p', { text: 'You’ll own this world. Its owner key is made here, in this browser, and only you keep it, in a recovery file you download next. This browser becomes the world’s first approver, which can approve what agents do.' }),
     problems(w),
     el('label', { for: 'worldName', text: 'World name' }),
     name,
-    el('label', { for: 'deviceName', text: 'Name for this browser' }),
-    device,
+    el('label', { for: 'browserName', text: 'Name for this browser' }),
+    nameInput,
     canEncrypt()
       ? el('div', {}, [
           el('label', { for: 'passphrase', text: 'Passphrase for the recovery file (optional)' }),
@@ -131,13 +157,13 @@ function renderCreate(w: WorldInfo): void {
 }
 
 /** Makes the keys and the recovery file, then asks the person to save it before anything is sent. */
-async function prepare(worldName: string, deviceLabel: string, passphrase: string): Promise<void> {
+async function prepare(worldName: string, label: string, passphrase: string): Promise<void> {
   let owner: KeyPair | null = newOwnerKey()
   const approver = newApproverKey()
   const created = new Date().toISOString().replace(/\.\d+Z$/, 'Z')
   const ownerPub = owner.getPublicKey()
   const world: Signed = sign(owner, { type: 'world', name: worldName, owner: ownerPub, created })
-  const entry: Signed = sign(owner, { type: 'approver', world: ownerPub, key: approver.getPublicKey(), name: deviceLabel, created })
+  const entry: Signed = sign(owner, { type: 'approver', world: ownerPub, key: approver.getPublicKey(), name: label, created })
   const file = await recoveryFile(worldName, owner, passphrase)
   // From here the owner key exists only in the recovery file.
   owner.clear()
@@ -156,7 +182,7 @@ async function prepare(worldName: string, deviceLabel: string, passphrase: strin
     finish.disabled = true
     void (async () => {
       try {
-        await saveApprover({ seed: seedOf(approver), key: approver.getPublicKey(), name: deviceLabel, world: ownerPub, created })
+        await saveApprover({ seed: seedOf(approver), key: approver.getPublicKey(), name: label, world: ownerPub, created })
       } catch (err) {
         error.replaceChildren(errorBox(`This browser can’t keep its key: ${(err as Error).message}`))
         finish.disabled = false
@@ -175,7 +201,7 @@ async function prepare(worldName: string, deviceLabel: string, passphrase: strin
   })
   show(
     el('h1', { text: 'Save your recovery file' }),
-    el('p', { text: 'It holds the world’s owner key, and it’s the only copy. With it you can enroll a browser again if every device that approves for this world is lost. Nobody else, the citadel included, can do that for you.' }),
+    el('p', { text: 'It holds the world’s owner key, and it’s the only copy. With it you can make a browser an approver again if every approver for this world is lost. Nobody else, the citadel included, can do that for you.' }),
     file.encrypted ? el('p', { class: 'hint', text: 'It’s encrypted with your passphrase, which you’ll need with it.' }) : el('p', { class: 'hint', text: 'It isn’t encrypted, so anyone who has it owns this world. Keep it private.' }),
     el('div', { class: 'actions' }, [download]),
     el('label', { class: 'check' }, [saved, 'I saved the recovery file somewhere safe']),
@@ -186,14 +212,20 @@ async function prepare(worldName: string, deviceLabel: string, passphrase: strin
 
 /** The world exists: this browser approves for it, or can become an approver with the recovery file. */
 async function renderReady(w: WorldInfo): Promise<void> {
-  const mine = await loadApprover().catch(() => null)
-  if (mine && mine.world === w.owner) {
+  const [mine, approvers] = await Promise.all([loadApprover().catch(() => null), getApprovers()])
+  const entry = mine && mine.world === w.owner ? approvers.find((a) => a.key === mine.key) : undefined
+  if (mine && entry?.valid) {
     show(el('h1', { text: w.name ?? 'Skylands' }), el('p', { text: `This world is set up, and this browser, “${mine.name}”, approves for it.` }), el('div', { class: 'actions' }, [el('a', { class: 'btn primary', href: '/', text: 'Open the world' })]))
     return
   }
+  const why = !entry
+    ? 'This world is set up, but this browser doesn’t approve for it.'
+    : entry.revoked
+      ? 'This browser’s key was revoked, so it no longer approves for this world.'
+      : 'This browser’s key was removed along with the approver that added it, so it no longer approves for this world.'
   const fileInput = el('input', { type: 'file', id: 'recoveryFile', accept: 'application/json,.json' })
   const pass = el('input', { type: 'password', id: 'recoveryPass', autocomplete: 'current-password' })
-  const device = el('input', { type: 'text', id: 'deviceName', value: deviceName(), maxlength: '80', autocomplete: 'off' })
+  const nameInput = el('input', { type: 'text', id: 'browserName', value: uniqueName(browserName(), approvers), maxlength: '80', autocomplete: 'off' })
   const error = el('div')
   const recover = el('button', { type: 'button', class: 'btn primary', text: 'Enroll this browser' })
   recover.addEventListener('click', () => {
@@ -211,7 +243,7 @@ async function renderReady(w: WorldInfo): Promise<void> {
         const owner = await ownerFromRecovery(file, pass.value)
         const approver = newApproverKey()
         const created = new Date().toISOString().replace(/\.\d+Z$/, 'Z')
-        const label = device.value.trim() || deviceName()
+        const label = uniqueName(nameInput.value.trim() || browserName(), approvers)
         const entry = sign(owner, { type: 'approver', world: file.owner, key: approver.getPublicKey(), name: label, created })
         owner.clear()
         await saveApprover({ seed: seedOf(approver), key: approver.getPublicKey(), name: label, world: file.owner, created })
@@ -226,16 +258,91 @@ async function renderReady(w: WorldInfo): Promise<void> {
   })
   show(
     el('h1', { text: w.name ?? 'Skylands' }),
-    el('p', { text: 'This world is set up, but this browser doesn’t approve for it. If you own the world, enroll this browser with your recovery file. Otherwise, open the world from a device that already approves for it.' }),
+    el('p', { text: `${why} To make it an approver, open an “Add an approver” link from a browser that approves for this world, or, if you own the world, use your recovery file here.` }),
     el('label', { for: 'recoveryFile', text: 'Recovery file' }),
     fileInput,
     el('label', { for: 'recoveryPass', text: 'Passphrase, if the file has one' }),
     pass,
-    el('label', { for: 'deviceName', text: 'Name for this browser' }),
-    device,
+    el('label', { for: 'browserName', text: 'Name for this browser' }),
+    nameInput,
     privateNote(),
     error,
     el('div', { class: 'actions' }, [recover, el('a', { class: 'btn ghost', href: '/', text: 'Open the world' })]),
+  )
+}
+
+/** An "Add an approver" link: this browser becomes an approver with the voucher whose claim seed the link carries. */
+async function renderClaim(w: WorldInfo, seed: string): Promise<void> {
+  const title = el('h1', { text: w.name ?? 'Skylands' })
+  let claim: KeyPair
+  try {
+    claim = keyFromSeed(seed)
+  } catch {
+    show(title, errorBox('This link is damaged. Ask the approver who made it for a new one.'))
+    return
+  }
+  const claimPub = claim.getPublicKey()
+  const [mine, approvers] = await Promise.all([loadApprover().catch(() => null), getApprovers()])
+  if (mine && mine.world === w.owner && approvers.find((a) => a.key === mine.key)?.valid) {
+    show(
+      title,
+      el('p', { text: `This browser, “${mine.name}”, already approves for this world, so it left the link unused. Open it on the browser you meant to add; it works until it expires.` }),
+      el('div', { class: 'actions' }, [el('a', { class: 'btn primary', href: '/', text: 'Open the world' })]),
+    )
+    return
+  }
+  const resp = await fetch(`/api/world/vouchers/${encodeURIComponent(claimPub)}`)
+  const v = (await resp.json().catch(() => ({}))) as VoucherInfo & { error?: string }
+  const refuse = !resp.ok
+    ? (v.error ?? `The citadel answered ${resp.status}.`)
+    : v.usedBy
+      ? 'This link was already used. Ask an approver for a new one.'
+      : v.expired
+        ? 'This link expired. Ask an approver for a new one.'
+        : !v.valid
+          ? 'The approver that made this link no longer approves for this world. Ask another for a new one.'
+          : ''
+  if (refuse) {
+    show(title, errorBox(refuse))
+    return
+  }
+  const nameInput = el('input', { type: 'text', id: 'browserName', value: uniqueName(browserName(), approvers), maxlength: '80', autocomplete: 'off' })
+  const error = el('div')
+  const join = el('button', { type: 'button', class: 'btn primary', text: 'Become an approver' })
+  join.addEventListener('click', () => {
+    join.disabled = true
+    void (async () => {
+      const label = uniqueName(nameInput.value.trim() || browserName(), approvers)
+      const approver = newApproverKey()
+      const created = new Date().toISOString().replace(/\.\d+Z$/, 'Z')
+      const entry = sign(claim, { type: 'approver', world: w.owner, key: approver.getPublicKey(), name: label, created, voucher: claimPub })
+      try {
+        await saveApprover({ seed: seedOf(approver), key: approver.getPublicKey(), name: label, world: w.owner ?? '', created })
+      } catch (err) {
+        error.replaceChildren(errorBox(`This browser can’t keep its key: ${(err as Error).message}`))
+        join.disabled = false
+        return
+      }
+      const r = await post('/api/world/approvers', { approver: entry })
+      if (!r.ok) {
+        error.replaceChildren(errorBox(r.error))
+        join.disabled = r.status === 409 || r.status === 410
+        return
+      }
+      claim.clear()
+      // The link is used up; keep its seed out of the address bar and history.
+      history.replaceState(null, '', '/setup')
+      await done(w.name ?? 'Skylands', `This browser, “${label}”, now approves for ${w.name ?? 'this world'}.`)
+    })()
+  })
+  show(
+    title,
+    el('p', { text: `${v.byName} invited this browser to approve what agents do in ${w.name ?? 'this world'}. The link works once, until ${timeOf(v.expires)}.` }),
+    el('label', { for: 'browserName', text: 'Name for this browser' }),
+    nameInput,
+    privateNote(),
+    error,
+    el('div', { class: 'actions' }, [join]),
   )
 }
 
@@ -249,7 +356,7 @@ async function done(title: string, message: string): Promise<void> {
       class: 'hint',
       text: kept
         ? 'This browser promised to keep its key.'
-        : 'This browser didn’t promise to keep its key, so it may clear it if it runs short of space. Your recovery file brings it back.',
+        : 'This browser didn’t promise to keep its key, so it may clear it if it runs short of space. Another approver, or your recovery file, brings it back.',
     }),
     el('div', { class: 'actions' }, [el('a', { class: 'btn primary', href: '/', text: 'Open the world' })]),
   )

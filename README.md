@@ -118,12 +118,29 @@ to it `http://localhost:8080` and `http://127.0.0.1:8080` are different
 places; the citadel sends `localhost` and `[::1]` on to the address it prints.
 Don't set up in a private window, which forgets the key when it closes.
 
-To enroll another browser, or this one again if its storage was cleared, open
-`/setup` there and give it the recovery file. Until the world is set up,
+Until the world is set up,
 every page leads to `/setup`, and only the link's one-time code sets it up; a
 citadel prints a new link each time it starts, and stops once the world
 exists. The first setup wins: a second citadel on the same NATS finds the
 world and offers no setup.
+
+### Approvers
+
+An approver is a browser that can approve what agents do in the world: the
+one that set it up, and any it adds. The Approvers section of the citadel's
+panel lists them. To add one, such as your phone, press "Add an approver":
+it shows a QR code and a link, which work once, within 15 minutes, and make
+whichever browser opens them first an approver, so share them only with
+yourself. Opening a link in a browser that already approves leaves it
+unused.
+
+Any approver can revoke any other, or itself, and a revocation is never
+undone. Revoking an approver also removes every approver added through it,
+and the section says which before you confirm, so revoking a stolen laptop
+removes anything the thief added with it. A revoked browser becomes an
+approver again only with a new link or the recovery file, which on the
+setup page, `/setup`, adds the browser it is opened in. The recovery file
+is also how you get back in if no approver is left.
 
 ### Keep it running
 

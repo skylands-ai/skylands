@@ -33,7 +33,7 @@ export function keyFromSeed(seed: string): KeyPair {
 }
 
 /** A name for this browser, such as "Chrome on Linux", which a person can change. */
-export function deviceName(): string {
+export function browserName(): string {
   const ua = navigator.userAgent
   const browser = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser'
   const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Mac OS X/.test(ua) ? 'macOS' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : 'this device'
