@@ -3,7 +3,7 @@ import { el } from '../dom'
 import type { ApproverInfo } from '../protocol'
 import { qrCode } from '../qr'
 import type { State } from '../store'
-import { copyButton, factsBox, hint, section, timeNode } from './parts'
+import { copyButton, factsBox, foldSection, hint, timeNode } from './parts'
 
 /**
  * The Approvers section of the citadel's panel: every browser that can
@@ -55,7 +55,7 @@ export function approversSection(s: State, actions: ApproverActions, keepStorage
       ]),
     )
   }
-  return section('Approvers', kids)
+  return foldSection('approvers', 'Approvers', kids, valid.length)
 }
 
 function approverRow(a: ApproverInfo, s: State, actions: ApproverActions, canAct: boolean, nameOf: (key: string | undefined) => string): HTMLElement {
@@ -73,10 +73,13 @@ function approverRow(a: ApproverInfo, s: State, actions: ApproverActions, canAct
   const through = a.through ?? []
   const me = myKey(s)
   const loseMe = mine || (!!me && through.includes(me))
-  const others = through.filter((k) => k !== me).map((k) => nameOf(k))
+  // Everyone added through it, directly or by an approver it added, at any depth.
+  const names = through.map((k) => (k === me ? 'this browser' : nameOf(k)))
   const left = (s.approvers ?? []).filter((x) => x.valid && x.key !== a.key && !through.includes(x.key)).length
   const lines = [
-    others.length ? `Also removes ${others.join(', ')}, added through it.` : '',
+    names.length
+      ? `Also removes ${names.length} ${names.length === 1 ? 'approver' : 'approvers'} added through it, directly or in turn: ${listText(names)}.`
+      : '',
     loseMe ? 'This browser stops approving too, until it’s added again.' : '',
     left ? '' : 'No approver will be left: only your recovery file can add one after this.',
   ].filter(Boolean)
@@ -137,4 +140,10 @@ function goneText(a: ApproverInfo, byKey: Map<string, ApproverInfo>, nameOf: (ke
     if (up.revoked) return `removed with ${up.name}`
   }
   return 'removed'
+}
+
+/** "A", "A and B", or "A, B, and C". */
+function listText(items: string[]): string {
+  if (items.length < 3) return items.join(' and ')
+  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`
 }

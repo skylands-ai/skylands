@@ -58,6 +58,39 @@ export function section(title: string, kids: (Node | null)[]): HTMLElement {
   return el('section', { class: 'sec', 'aria-label': title }, [el('h3', { text: title }), ...kids])
 }
 
+const FOLDED_KEY = 'skylands.folded'
+
+/** The ids of the sections a person closed, kept in this browser. */
+const folded: Set<string> = (() => {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(FOLDED_KEY) ?? '[]') as string[])
+  } catch {
+    return new Set<string>()
+  }
+})()
+
+/**
+ * A section that opens and closes from its heading. It starts open, and
+ * stays as the person left it across panel rebuilds and reloads. count,
+ * if given, shows beside the title, so a closed section still says how
+ * much is in it.
+ */
+export function foldSection(id: string, title: string, kids: (Node | null)[], count?: number): HTMLElement {
+  const summary = el('summary', {}, [el('h3', { text: title }), count === undefined ? null : el('span', { class: 'fold-count', text: String(count) })])
+  const details = el('details', { class: 'fold' }, [summary, el('div', { class: 'fold-body' }, kids)])
+  details.open = !folded.has(id)
+  details.addEventListener('toggle', () => {
+    if (details.open) folded.delete(id)
+    else folded.add(id)
+    try {
+      localStorage.setItem(FOLDED_KEY, JSON.stringify([...folded]))
+    } catch {
+      // Storage may be unavailable; the section still opens and closes.
+    }
+  })
+  return el('section', { class: 'sec', 'aria-label': title }, [details])
+}
+
 export function note(text: string): HTMLElement {
   return el('p', { class: 'note', text })
 }

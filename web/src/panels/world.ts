@@ -1,11 +1,11 @@
 import { el } from '../dom'
-import type { ServerInfo, WorldInfo } from '../protocol'
+import type { Island, ServerInfo, WorldInfo } from '../protocol'
 import { citadelStatus, islandCounts, islandStatus, isStale, shortId } from '../status'
 import { islandList, waitingCount, type State } from '../store'
 import { WORLD_THEMES, type WorldThemeId } from '../worldthemes'
 import type { ApproverActions } from '../approvers'
 import { approversSection } from './approvers'
-import { copyButton, factsBox, header, hint, note, section } from './parts'
+import { copyButton, factsBox, foldSection, header, hint, note, section } from './parts'
 
 function natsFacts(s: ServerInfo | null, link: State['link']): [string, string][] {
   if (link !== 'connected') return [['Connected through', 'Unknown while the citadel is unreachable']]
@@ -27,7 +27,6 @@ function natsFacts(s: ServerInfo | null, link: State['link']): [string, string][
  * is drawn in this browser, and nothing else on the page.
  */
 function themeSwitch(current: WorldThemeId, choose: (id: WorldThemeId) => void): HTMLElement {
-  const blurb = WORLD_THEMES.find((t) => t.id === current)?.blurb ?? ''
   return section('World theme', [
     el(
       'div',
@@ -36,7 +35,6 @@ function themeSwitch(current: WorldThemeId, choose: (id: WorldThemeId) => void):
         el('button', { type: 'button', class: 'btn small', 'aria-pressed': t.id === current ? 'true' : 'false', text: t.name, onclick: () => choose(t.id) }),
       ),
     ),
-    hint(`${blurb} Only the world changes, and only in this browser.`),
   ])
 }
 
@@ -49,7 +47,8 @@ function addHost(w: WorldInfo): HTMLElement | null {
   if (!w.ready || !w.owner) return null
   const where = leafAddress(w.leafUrl)
   const command = `skylands daemon install --world ${w.owner} --nats-url ${where.url} --host <name>`
-  return section('Add a host', [
+  return el('div', { class: 'sub-sec', 'aria-label': 'Add a host' }, [
+    el('h4', { text: 'Add a host' }),
     el('div', { class: 'addhost' }, [
       el('p', { class: 'muted', style: 'margin:0;font-size:13px' }, [
         'On the machine to add, with skylands installed, run this. ',
@@ -75,7 +74,9 @@ const anyAddress = ['0.0.0.0', '[::]']
 /**
  * The leaf address another machine dials, as best this page can tell. A
  * listener on every address is reached by whatever name reached the
- * citadel, unless that is this machine's own loopback name.
+ * citadel, unless that is this machine's own loopback name. The only note
+ * is for a citadel that wasn't told the address, which the command can't
+ * show.
  */
 function leafAddress(leafUrl: string | undefined): { url: string; note: string | null } {
   if (!leafUrl) return { url: 'nats-leaf://<the world’s leaf address>', note: 'The citadel wasn’t told where daemons dial; citadel up’s --leaf-url sets it.' }
@@ -85,15 +86,39 @@ function leafAddress(leafUrl: string | undefined): { url: string; note: string |
   } catch {
     return { url: leafUrl, note: null }
   }
-  if (loopback.includes(u.hostname)) {
-    return { url: leafUrl, note: `The world’s leaf listener is at ${leafUrl}, which only this machine can reach. For another machine, listen on an address it can reach, such as devworld’s --leaf-listen, and use that address here.` }
-  }
   if (!anyAddress.includes(u.hostname)) return { url: leafUrl, note: null }
   const here = location.hostname
   if (here && !loopback.includes(here) && here !== '::1') {
-    return { url: `nats-leaf://${here.includes(':') ? `[${here}]` : here}:${u.port}`, note: `The leaf listener accepts every address; this uses ${here}, the name this page reached the citadel by. Use another if the new machine knows this one by another.` }
+    return { url: `nats-leaf://${here.includes(':') ? `[${here}]` : here}:${u.port}`, note: null }
   }
-  return { url: `nats-leaf://<this machine’s address>:${u.port}`, note: 'The leaf listener accepts every address. Use this machine’s address as the new machine sees it.' }
+  return { url: `nats-leaf://<this machine’s address>:${u.port}`, note: null }
+}
+
+/**
+ * The islands as a table: a dot for whether the citadel reaches each one,
+ * its name, its platform, and its daemon's version. A row opens its island.
+ */
+function islandTable(islands: Island[], stale: boolean, select: (id: string) => void): HTMLElement {
+  const head = el('tr', {}, [el('th', { scope: 'col' }, [el('span', { class: 'sr-only', text: 'Link' })]), ...['Name', 'Arch', 'Version'].map((h) => el('th', { scope: 'col', text: h }))])
+  const rows = islands.map((i) => {
+    const link = i.reachable ? 'Connected' : 'Unreachable'
+    const platform = `${i.daemon.os}/${i.daemon.arch}`
+    const version = i.daemon.version.replace(/^v/, '')
+    const row = el('tr', { tabindex: '0', 'aria-label': `${i.host}, ${link}, ${platform}, ${version}`, onclick: () => select(i.host) }, [
+      el('td', {}, [el('span', { class: 'dot', title: link, style: `width:10px;height:10px;background:${islandStatus(i, stale)[1]}` })]),
+      el('td', { class: 'name', title: i.host, text: i.host }),
+      el('td', { text: platform }),
+      el('td', { class: 'version', title: version, text: version }),
+    ])
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        select(i.host)
+      }
+    })
+    return row
+  })
+  return el('table', { class: 'islands-table' }, [el('thead', {}, [head]), el('tbody', {}, rows)])
 }
 
 /** The world-level panel: the citadel itself, the world's theme, its islands, and the NATS server it is on. */
@@ -121,35 +146,20 @@ export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: stri
   panel.appendChild(themeSwitch(s.worldTheme, setTheme))
 
   const islands = islandList(s)
-  if (islands.length) {
-    panel.appendChild(
-      section(
-        'Islands',
-        islands.map((i) => {
-          const st = islandStatus(i, stale)
-          return el('button', { type: 'button', class: 'row', style: 'text-align:left;width:100%', onclick: () => select(i.host) }, [
-            el('span', { class: 'dot', style: `width:10px;height:10px;background:${st[1]}` }),
-            el('span', { class: 'grow' }, [
-              el('span', { style: 'font-weight:600', text: i.host }),
-              el('span', { class: 'sub', text: `${st[0]}, ${i.daemon.os}/${i.daemon.arch}, skylands ${i.daemon.version}` }),
-            ]),
-          ])
-        }),
-      ),
-    )
-  } else {
-    panel.appendChild(note('No islands yet. Start a daemon on a machine and its island rises here.'))
-  }
+  panel.appendChild(
+    foldSection(
+      'islands',
+      'Islands',
+      [islands.length ? islandTable(islands, stale, select) : note('No islands yet. Start a daemon on a machine and its island rises here.'), s.world ? addHost(s.world) : null],
+      islands.length,
+    ),
+  )
 
-  if (s.world) {
-    const add = addHost(s.world)
-    if (add) panel.appendChild(add)
-  }
   const appr = approversSection(s, approvers, keepStorage)
   if (appr) panel.appendChild(appr)
 
   panel.appendChild(
-    section('NATS', [
+    foldSection('nats', 'NATS', [
       hint('The NATS server this citadel is connected to, as the server describes itself. Every tether ends at it.'),
       factsBox(natsFacts(s.server, s.link)),
     ]),
