@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -38,20 +39,30 @@ type Run struct {
 	// seed, when set, goes in front of the next prompt: the conversation
 	// so far, for an agent that could not load its session.
 	seed string
+	// system is the adapter's instructions as ACP's session system prompt,
+	// or nil when there are none or the agent does not take them.
+	system *acp.SystemPrompt
+	// mode and model are what every session the agent opens or loads is
+	// set to through its config options; empty leaves the agent's own.
+	mode, model string
 }
 
 // Start launches the adapter's agent in cwd, initializes it, and opens a
-// session. The process lives until Close, or until ctx is cancelled. A
-// non-empty model is passed through the adapter's ModelEnv.
+// session. The process lives until Close, or until ctx is cancelled. The
+// session is set to the adapter's mode and to model, when either is set.
 func Start(ctx context.Context, ad Adapter, cwd, model string, obs Observer) (*Run, error) {
 	r, init, err := launch(ctx, ad, cwd, model, obs)
 	if err != nil {
 		return nil, err
 	}
-	sess, err := r.client.NewSession(ctx, &acp.NewSessionRequest{Cwd: cwd, McpServers: []acp.McpServer{}})
+	sess, err := r.client.NewSession(ctx, &acp.NewSessionRequest{Cwd: cwd, McpServers: []acp.McpServer{}, SystemPrompt: r.system})
 	if err != nil {
 		_ = r.Close()
 		return nil, r.fail("open session", err)
+	}
+	if err := r.settle(ctx, sess.SessionID, sess.ConfigOptions); err != nil {
+		_ = r.Close()
+		return nil, r.fail("set up the session", err)
 	}
 	r.session = sess.SessionID
 	name, version := identity(ad, init)
@@ -75,10 +86,20 @@ func Resume(ctx context.Context, ad Adapter, cwd, model, agentSessionID, transcr
 	if agentSessionID != "" && init.AgentCapabilities != nil && init.AgentCapabilities.LoadSession {
 		id := acp.SessionId(agentSessionID)
 		r.handler.aside(id)
-		_, err := r.client.LoadSession(ctx, &acp.LoadSessionRequest{SessionID: id, Cwd: cwd, McpServers: []acp.McpServer{}})
+		loaded, err := r.client.LoadSession(ctx, &acp.LoadSessionRequest{SessionID: id, Cwd: cwd, McpServers: []acp.McpServer{}, SystemPrompt: r.system})
 		r.drain()
 		r.handler.collected(id)
 		if err == nil {
+			// A loaded session comes back in the agent's own mode and model,
+			// so they are set again before anything is asked of it.
+			var options *[]acp.SessionConfigOption
+			if loaded != nil {
+				options = loaded.ConfigOptions
+			}
+			if err := r.settle(ctx, id, options); err != nil {
+				_ = r.Close()
+				return nil, "", r.fail("set up the loaded session", err)
+			}
 			r.session = id
 			obs.Spawned(name, version, agentSessionID)
 			return r, ResumedByLoad, nil
@@ -89,10 +110,14 @@ func Resume(ctx context.Context, ad Adapter, cwd, model, agentSessionID, transcr
 		}
 		slog.Info("agents: the agent could not load its session, seeding a new one", "agent", ad.Name, "err", err)
 	}
-	sess, err := r.client.NewSession(ctx, &acp.NewSessionRequest{Cwd: cwd, McpServers: []acp.McpServer{}})
+	sess, err := r.client.NewSession(ctx, &acp.NewSessionRequest{Cwd: cwd, McpServers: []acp.McpServer{}, SystemPrompt: r.system})
 	if err != nil {
 		_ = r.Close()
 		return nil, "", r.fail("open session", err)
+	}
+	if err := r.settle(ctx, sess.SessionID, sess.ConfigOptions); err != nil {
+		_ = r.Close()
+		return nil, "", r.fail("set up the session", err)
 	}
 	r.session = sess.SessionID
 	r.seed = seedText(transcript)
@@ -160,9 +185,6 @@ func launch(ctx context.Context, ad Adapter, cwd, model string, obs Observer) (*
 	cmd.WaitDelay = stopWait
 	cmd.Dir = cwd
 	cmd.Env = append(os.Environ(), ad.Env...)
-	if model != "" && ad.ModelEnv != "" {
-		cmd.Env = append(cmd.Env, ad.ModelEnv+"="+model)
-	}
 	stderr := &tailBuffer{limit: 4096}
 	cmd.Stderr = stderr
 
@@ -179,7 +201,7 @@ func launch(ctx context.Context, ad Adapter, cwd, model string, obs Observer) (*
 		cancel()
 		return nil, nil, fmt.Errorf("start %s agent: %w", ad.Name, err)
 	}
-	r := &Run{name: ad.Name, cwd: cwd, client: client, cancel: cancel, stderr: stderr, transport: transport, seq: h.seq, handler: h}
+	r := &Run{name: ad.Name, cwd: cwd, client: client, cancel: cancel, stderr: stderr, transport: transport, seq: h.seq, handler: h, mode: ad.Mode, model: model}
 
 	init, err := client.Initialize(ctx, &acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersion(1),
@@ -192,7 +214,96 @@ func launch(ctx context.Context, ad Adapter, cwd, model string, obs Observer) (*
 		_ = r.Close()
 		return nil, nil, r.fail("initialize "+ad.Name, err)
 	}
+	r.system = systemPrompt(ad, init)
 	return r, init, nil
+}
+
+// systemPrompt is the adapter's instructions for the agent's sessions, in
+// append mode, which every agent that takes a system prompt supports. ACP
+// lets a client send one only to an agent that advertises it.
+func systemPrompt(ad Adapter, init *acp.InitializeResponse) *acp.SystemPrompt {
+	if ad.Instructions == "" || init == nil || init.AgentCapabilities == nil ||
+		init.AgentCapabilities.SessionCapabilities == nil || init.AgentCapabilities.SessionCapabilities.SystemPrompt == nil {
+		return nil
+	}
+	return &acp.SystemPrompt{Mode: acp.SystemPromptModeAppend, Content: []acp.ContentBlock{acp.TextContentBlock(ad.Instructions)}}
+}
+
+// settle sets a new or loaded session to the adapter's mode and the chosen
+// model, through the config options the agent gave for the session. Each
+// is found by its ACP category, so no agent's own name for it is needed.
+// The mode is what keeps an agent asking before it acts, so a session
+// whose mode cannot be set, or does not read back as set, fails.
+func (r *Run) settle(ctx context.Context, id acp.SessionId, given *[]acp.SessionConfigOption) error {
+	var options []acp.SessionConfigOption
+	if given != nil {
+		options = *given
+	}
+	if r.mode != "" {
+		after, err := r.setOption(ctx, id, options, acp.SessionConfigOptionCategoryMode, r.mode)
+		if err != nil {
+			return fmt.Errorf("set the agent's mode to %s: %w", r.mode, err)
+		}
+		if o, ok := optionFor(after, acp.SessionConfigOptionCategoryMode); !ok || optionValue(o) != r.mode {
+			return fmt.Errorf("the agent did not confirm its mode is %s", r.mode)
+		}
+		options = after
+	}
+	if r.model != "" {
+		if _, err := r.setOption(ctx, id, options, acp.SessionConfigOptionCategoryModel, r.model); err != nil {
+			return fmt.Errorf("set the agent's model to %s: %w", r.model, err)
+		}
+	}
+	return nil
+}
+
+// setOption sets the session's option in category to value, unless it is
+// already that, and returns the options as the agent says they stand.
+func (r *Run) setOption(ctx context.Context, id acp.SessionId, options []acp.SessionConfigOption, category acp.SessionConfigOptionCategory, value string) ([]acp.SessionConfigOption, error) {
+	o, ok := optionFor(options, category)
+	if !ok {
+		return nil, fmt.Errorf("the agent has no %s setting", category)
+	}
+	if optionValue(o) == value {
+		return options, nil
+	}
+	resp, err := r.client.SetSessionConfigOption(ctx, &acp.SetSessionConfigOptionRequest{SessionID: id, ConfigID: o.ID, Value: acp.SessionConfigValueId(value)})
+	if err != nil {
+		// An agent may take a value it does not list, such as a model's
+		// full id for one it lists by alias, so the list is only a hint.
+		if offered := optionChoices(o); len(offered) > 0 && !slices.Contains(offered, value) {
+			return nil, fmt.Errorf("%w (it offers %s)", err, strings.Join(offered, ", "))
+		}
+		return nil, err
+	}
+	return resp.ConfigOptions, nil
+}
+
+// optionFor finds the first option in an ACP category.
+func optionFor(options []acp.SessionConfigOption, category acp.SessionConfigOptionCategory) (acp.SessionConfigOption, bool) {
+	for _, o := range options {
+		if o.Category != nil && *o.Category == category {
+			return o, true
+		}
+	}
+	return acp.SessionConfigOption{}, false
+}
+
+// optionValue is an option's current value as text.
+func optionValue(o acp.SessionConfigOption) string {
+	if o.CurrentValue == nil {
+		return ""
+	}
+	return fmt.Sprint(o.CurrentValue)
+}
+
+// optionChoices are the values a select option lists, in or out of groups.
+func optionChoices(o acp.SessionConfigOption) []string {
+	var out []string
+	for _, m := range optionModels(o) {
+		out = append(out, m.ID)
+	}
+	return out
 }
 
 // identity is what the agent calls itself, or the adapter's name until it
@@ -280,6 +391,11 @@ func (r *Run) Title(ctx context.Context, request string, timeout time.Duration) 
 	}
 	r.handler.aside(sess.SessionID)
 	defer r.handler.collected(sess.SessionID)
+	// The side session asks before acting, and runs on the chosen model,
+	// the same as the conversation.
+	if err := r.settle(ctx, sess.SessionID, sess.ConfigOptions); err != nil {
+		return "", fmt.Errorf("set up a side session: %w", err)
+	}
 	done := make(chan struct{})
 	go func() {
 		select {

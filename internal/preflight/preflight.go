@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -55,6 +56,11 @@ type Check struct {
 	Agent string
 	// Login, on a login check, is the login the agent reported.
 	Login string
+	// On a models check: whether a session opened to read the agent's
+	// models, what it offered, and the one the session started on.
+	ModelsRead   bool
+	Models       []v1.AgentModel
+	DefaultModel string
 }
 
 // Minimum versions. Sessions remove their worktrees with "git worktree
@@ -81,7 +87,10 @@ type Env struct {
 	// Output runs a command and returns what it printed. A command that
 	// exits with an error returns one.
 	Output func(ctx context.Context, name string, args ...string) (string, error)
-	Probe  func(ctx context.Context, ad agents.Adapter, cwd string, wait time.Duration) (agents.Probe, error)
+	Probe  func(ctx context.Context, ad agents.Adapter, cwd string, opts agents.ProbeOptions) (agents.Probe, error)
+	// Models says whether to read an agent's models, which opens a session
+	// in it without prompting. Nil reads every agent's.
+	Models func(agent string) bool
 	Status func(ctx context.Context, socketPath string) (socket.StatusInfo, error)
 	// CheckAgents asks the daemon to check its agents now, in its own
 	// environment, which also updates its island.
@@ -219,6 +228,12 @@ func Availability(checks []Check, r agents.Registry) []v1.AgentAvailability {
 				a.Notes = append(a.Notes, note(c))
 			}
 		}
+		if c, ok := byName["models "+name]; ok {
+			a.ModelsRead, a.Models, a.DefaultModel = c.ModelsRead, c.Models, c.DefaultModel
+			if c.Status != OK {
+				a.Notes = append(a.Notes, note(c))
+			}
+		}
 		out = append(out, a)
 	}
 	return out
@@ -332,15 +347,15 @@ func agentChecks(ctx context.Context, e Env, ad agents.Adapter, nodeUsable bool)
 		c.Status, c.Found, c.Fix = Fail, "cannot start: "+ad.Command[0]+" is not on PATH", "fix the checks above"
 		return []Check{c}
 	}
-	dir, err := os.MkdirTemp("", "skylands-preflight-")
+	dir, err := probeDir()
 	if err != nil {
 		c.Status, c.Found = Fail, err.Error()
 		return []Check{c}
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
 	pctx, cancel := context.WithTimeout(ctx, e.ProbeTimeout)
 	defer cancel()
-	p, err := e.Probe(pctx, ad, dir, e.AuthWait)
+	readModels := e.Models == nil || e.Models(ad.Name)
+	p, err := e.Probe(pctx, ad, dir, agents.ProbeOptions{AuthWait: e.AuthWait, Models: readModels})
 	if err != nil {
 		c.Status, c.Found = Fail, "did not start: "+firstLine(err.Error())
 		if ad.Command[0] == "npx" {
@@ -357,7 +372,48 @@ func agentChecks(ctx context.Context, e Env, ad agents.Adapter, nodeUsable bool)
 	if p.ReportsAuth {
 		checks = append(checks, loginCheck(e, ad, p.Auth))
 	}
+	if readModels && (p.ModelsRead || p.ModelsErr != nil) {
+		checks = append(checks, modelsCheck(ad, p))
+	}
 	return checks
+}
+
+// probeDir is where an agent is started to be checked, the same every
+// time: an agent may keep something for each directory it opens a session
+// in, as Claude Code keeps a project folder, and one directory leaves one.
+// With no cache directory, as without a home, it is a new private one.
+func probeDir() (string, error) {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return os.MkdirTemp("", "skylands-probe-")
+	}
+	dir := filepath.Join(base, "skylands", "probe")
+	return dir, os.MkdirAll(dir, 0o700)
+}
+
+// modelsCheck reports the models an agent offers its login. An agent that
+// would not open a session to say is a warning: its sessions may not
+// start either.
+func modelsCheck(ad agents.Adapter, p agents.Probe) Check {
+	c := Check{Name: "models " + ad.Name, Agent: ad.Name, ModelsRead: p.ModelsRead, Models: p.Models, DefaultModel: p.DefaultModel}
+	switch {
+	case !p.ModelsRead:
+		c.Status, c.Found = Warn, "could not open a session to read them: "+firstLine(p.ModelsErr.Error())
+		c.Fix = "if sessions fail to start, this is likely why"
+	case len(p.Models) == 0:
+		c.Found = "no model setting; sessions run on the agent's own"
+	default:
+		names := make([]string, 0, len(p.Models))
+		for _, m := range p.Models {
+			name := m.ID
+			if m.ID == p.DefaultModel {
+				name += " (default)"
+			}
+			names = append(names, name)
+		}
+		c.Found = strings.Join(names, ", ")
+	}
+	return c
 }
 
 func loginCheck(e Env, ad agents.Adapter, a *agents.AuthStatus) Check {

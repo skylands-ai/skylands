@@ -149,6 +149,23 @@ type AgentAvailability struct {
 	// Notes are the checks that failed or warned for this agent. A failed
 	// one is why the agent is not available.
 	Notes []AvailabilityNote `json:"notes,omitempty"`
+	// ModelsRead says the daemon read which models the agent offers this
+	// host's login, from the agent's ACP model setting in a session it
+	// opened without prompting. With no Models, the agent has no model
+	// setting. False means nobody knows yet.
+	ModelsRead bool `json:"modelsRead,omitempty"`
+	// Models are the models the agent offered, in its order.
+	Models []AgentModel `json:"models,omitempty"`
+	// DefaultModel is the model a new session started on.
+	DefaultModel string `json:"defaultModel,omitempty"`
+}
+
+// AgentModel is one model an agent offers: the value a session's model is
+// set to, and what the agent calls it.
+type AgentModel struct {
+	ID          string `json:"id"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // AvailabilityNote is one check that failed or warned, with what to do

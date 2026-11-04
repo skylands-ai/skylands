@@ -141,6 +141,69 @@ specifies. No events, streams, or aggregates are needed for it.
   every conversation. UsageReported stays what it was, a reading of the
   context window. The fake agent returns fixed counts, so the sums are
   tested end to end.
+- Codex is in progress, the second real agent. It runs through
+  `@agentclientprotocol/codex-acp` from npm, pinned like Claude Code's
+  adapter, and reports its login with the same `_auth/status_update`
+  extension, so preflight and the island list it the same way. Codex
+  has its own sandbox and approval policy, and the adapter's default
+  mode lets Codex edit the worktree without asking, so the daemon sets
+  every session it opens or loads to read-only mode: every edit asks, and
+  a command runs in Codex's read-only sandbox, where one that writes
+  fails unless the model asks to leave the sandbox. The adapter takes no other
+  approval policy for its built-in modes, so the daemon tells the model
+  when to ask: an adapter's Instructions go to every session it opens or
+  loads as ACP's session system prompt in append mode, after the
+  developer instructions in the person's Codex config, and only to an
+  agent that advertises the system prompt. The fake agent can advertise
+  it and say what it got, so that path is tested.
+
+  Only ACP reaches an agent: no environment variable an adapter reads.
+  The mode and the model are ACP session config options, found by
+  category ("mode", "model") among the ones the agent gives for each
+  session it opens or loads, the title's side session included, and set
+  with session/set_config_option. An adapter names the mode value to set
+  (Codex's is read-only); the mode must read back as set or the session
+  does not start, since it is what keeps an agent asking. The model is
+  the one chosen in the command bar; an agent may take a value it does
+  not list, as Claude Code takes a full model id for one it lists by
+  alias, and a refusal names the values it lists. Claude Code's model
+  moved from ANTHROPIC_MODEL to its model option the same way. The fake
+  agent can offer both options, or take changes and ignore them, so
+  every path is tested. A permission request that
+  leaves out what the agent already reported about the call, as Codex's
+  do for a command it has started, takes the call's kind, title, and
+  input from that report. The command bar lists the agents the island
+  can run.
+
+  Run live with a ChatGPT Free login: the edit waited for approval, the
+  title came from a side session, tokens added up, a daemon restart
+  brought the session back by load and back to read-only, a model the
+  account lacks stopped the session with the account's models named, and
+  Claude Code ran on the model chosen for it.
+  Without the instructions, Codex reported `touch` blocked by its sandbox
+  and asked only when told to; with them, it asked to escalate on its own,
+  and the command waited for approval and then ran. Open: Codex does not
+  report a command its sandbox stopped, so it is missing from the
+  conversation.
+- Each account's models are done. An agent lists the models it offers
+  its login only in a session, as the choices of its ACP config option in
+  the "model" category, so the agent check opens one without prompting
+  it, reads the choices and the one the session started on, and closes
+  it when the agent can. AgentAvailability carries them (ModelsRead,
+  Models, DefaultModel) in AdapterAvailabilityChanged, preflight shows
+  them as a "models" check, and an agent that would not open a session
+  is a warning. Opening a session starts what a session needs, such as
+  MCP servers, so the daemon reads models at startup and when preflight
+  asks it to check, and in between only for an agent whose login changed
+  or whose models it has not read. Agents are probed in one directory
+  in the user's cache, since Claude Code keeps a project folder for
+  each directory it opens a session in. The model chip lists the chosen
+  agent's models for the island's login, with the default named and each
+  model's description as its tooltip; it is disabled for an agent with
+  no model setting, and offers the default and a typed id until the
+  island has said. Run live: Claude Max offered 13 models and Codex on
+  ChatGPT Free its 3, a session ran on one picked from each list, and the
+  fake agent's chip was disabled.
 
 ## After the MVP
 

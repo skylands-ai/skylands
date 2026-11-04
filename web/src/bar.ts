@@ -1,6 +1,31 @@
-import { byId } from './dom'
-import { isStale } from './status'
+import { byId, el } from './dom'
+import type { AgentModel, Island } from './protocol'
+import { agentLabel, isStale } from './status'
 import { level, type State } from './store'
+
+/** The agents in the order the chip lists them, offered as they are until the island says which it can run. */
+const AGENTS = ['fake', 'claude', 'codex']
+
+function agentText(name: string): string {
+  return name === 'fake' ? 'Fake agent, built in' : agentLabel(name)
+}
+
+/**
+ * A model as the chip lists it: its id, which is what a session is set to,
+ * followed by the agent's name for it when that name says more.
+ */
+function modelText(m: AgentModel): string {
+  const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+  return m.name && !squash(m.id).includes(squash(m.name)) ? `${m.id} \u00b7 ${m.name}` : m.id
+}
+
+/** Known agents in their usual order, then any others by name. */
+function byOrder(a: string, b: string): number {
+  const ia = AGENTS.indexOf(a)
+  const ib = AGENTS.indexOf(b)
+  if (ia !== ib) return (ia < 0 ? AGENTS.length : ia) - (ib < 0 ? AGENTS.length : ib)
+  return a.localeCompare(b)
+}
 
 /**
  * The command bar at the bottom of the world. It takes a work order for
@@ -11,8 +36,12 @@ export class CommandBar {
   private readonly root = byId<HTMLElement>('cmdbar')
   private readonly input = byId<HTMLInputElement>('cmdInput')
   private readonly go = byId<HTMLButtonElement>('cmdGo')
+  /** The agents the island can run, as its daemon last checked. */
   private readonly agent = byId<HTMLSelectElement>('agentSel')
-  /** Every model stays listed whatever is chosen, and the last choice stays chosen. */
+  /**
+   * The models the chosen agent offers this island's login, as its daemon
+   * last read them from the agent; each agent's last choice stays chosen.
+   */
   private readonly model = byId<HTMLSelectElement>('modelSel')
   /** A model id typed by hand, shown while the model is "Other". */
   private readonly otherModel = byId<HTMLInputElement>('modelOther')
@@ -22,6 +51,16 @@ export class CommandBar {
   private host = ''
   private repoId = ''
   private busy = false
+  /** The agents the agent chip lists, so it is rebuilt only when they change. */
+  private agentsShown: string | null = null
+  /** The island whose agents the chips list. */
+  private island: Island | null = null
+  /** The agent the model chip lists models for. */
+  private modelsFor: string | null = null
+  /** The agent and models the model chip lists, so it is rebuilt only when they change. */
+  private modelsShown: string | null = null
+  /** Each agent's last model choice, kept while another agent is chosen. */
+  private readonly lastModel = new Map<string, { value: string; other: string }>()
   /** What the status line is showing: the default hint, a link problem, a dispatch error, or a dispatch result. */
   private kind: 'hint' | 'blocked' | 'error' | 'info' = 'hint'
 
@@ -29,6 +68,8 @@ export class CommandBar {
   private static readonly OTHER = 'other'
 
   constructor() {
+    this.syncAgents(null)
+    this.agent.addEventListener('change', () => this.syncModels())
     this.model.addEventListener('change', () => {
       const other = this.model.value === CommandBar.OTHER
       this.otherModel.hidden = !other
@@ -58,7 +99,14 @@ export class CommandBar {
     this.host = island.host
     this.repoId = repo.id
     this.scopeTo.textContent = `${repo.name} on ${island.host}`
-    const blocked = isStale(s) ? 'The citadel is unreachable, so nothing can be dispatched.' : !island.reachable ? `${island.host} is unreachable, so the order can\u2019t be delivered yet.` : ''
+    this.syncAgents(island)
+    const blocked = isStale(s)
+      ? 'The citadel is unreachable, so nothing can be dispatched.'
+      : !island.reachable
+        ? `${island.host} is unreachable, so the order can\u2019t be delivered yet.`
+        : !this.agent.options.length
+          ? `${island.host} can\u2019t run any agent yet. On it, skylands preflight says why.`
+          : ''
     this.go.disabled = !!blocked || this.busy
     this.input.disabled = !!blocked
     // A link problem shows while it lasts and clears when the link is back.
@@ -71,6 +119,51 @@ export class CommandBar {
     if (this.why.textContent !== text) this.why.textContent = text
     this.why.style.color = kind === 'blocked' || kind === 'error' ? 'var(--bad)' : ''
     this.kind = kind
+  }
+
+  /**
+   * Lists the agents the island can run, or every known one until its
+   * daemon has said, keeping the chosen agent when it is still listed.
+   */
+  private syncAgents(island: Island | null): void {
+    this.island = island
+    const names = (island?.agents ? island.agents.filter((a) => a.available).map((a) => a.name) : [...AGENTS]).sort(byOrder)
+    const key = names.join(' ')
+    if (key !== this.agentsShown) {
+      this.agentsShown = key
+      const keep = this.agent.value
+      this.agent.replaceChildren(...names.map((n) => el('option', { value: n, text: agentText(n) })))
+      if (names.includes(keep)) this.agent.value = keep
+    }
+    this.syncModels()
+  }
+
+  /**
+   * Lists the models the chosen agent offers, bringing back its last
+   * choice. Until the daemon has read them, there is the agent's default
+   * and a model id typed by hand; an agent with no model setting has only
+   * its default.
+   */
+  private syncModels(): void {
+    const agent = this.agent.value
+    const known = this.island?.agents?.find((a) => a.name === agent)
+    const key = JSON.stringify([agent, known?.modelsRead ?? false, known?.models ?? [], known?.defaultModel ?? ''])
+    if (key === this.modelsShown) return
+    if (this.modelsFor !== null) this.lastModel.set(this.modelsFor, { value: this.model.value, other: this.otherModel.value })
+    this.modelsFor = agent
+    this.modelsShown = key
+    const none = !!known?.modelsRead && !known.models?.length
+    const options = [el('option', { value: '', text: known?.defaultModel ? `Agent\u2019s default (${known.defaultModel})` : 'Agent\u2019s default' })]
+    if (!none) {
+      options.push(...(known?.models ?? []).map((m) => el('option', { value: m.id, text: modelText(m), title: m.description || null })))
+      options.push(el('option', { value: CommandBar.OTHER, text: 'Other model id\u2026' }))
+    }
+    this.model.replaceChildren(...options)
+    this.model.disabled = none
+    const last = this.lastModel.get(agent)
+    this.model.value = last && options.some((o) => o.value === last.value) ? last.value : ''
+    this.otherModel.value = last?.other ?? ''
+    this.otherModel.hidden = this.model.value !== CommandBar.OTHER
   }
 
   /** The model for the next session, or empty for the agent's default. */
