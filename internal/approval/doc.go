@@ -1,5 +1,7 @@
-// Package approval defines the signed approval format and verifies it. An
-// approver's device signs, with a passkey, a digest of the request id and the
-// exact tool input, and a daemon acts on a decision only when that signature
-// verifies against an enrolled approver key.
+// Package approval verifies who may decide for a world. A world belongs to
+// an owner key, an ed25519 nkey created in the owner's browser when the
+// world is set up and kept only in the owner's recovery file. Approvers are
+// devices, each with its own nkey, enrolled by an entry the owner key
+// signs. Everything here is a v1.Signed message, verified against the
+// exact bytes that were signed.
 package approval

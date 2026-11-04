@@ -124,7 +124,8 @@ func (w *world) startDaemonIn(host, socketPath, dataDir string) (stop func()) {
 	fakeCmd, fakeEnv := fakeagent.TestCommand()
 	go func() {
 		done <- daemon.Run(ctx, daemon.Config{
-			Host: host, NATSURL: w.hub.LeafURL(), DataDir: dataDir, SocketPath: socketPath, Version: "v0.1.0",
+			TrustFirstWorld: true,
+			Host:            host, NATSURL: w.hub.LeafURL(), DataDir: dataDir, SocketPath: socketPath, Version: "v0.1.0",
 			Adapters: agents.Registry{"fake": {Name: "fake", Provider: "local", Command: fakeCmd, Env: fakeEnv}},
 		})
 	}()
@@ -737,7 +738,7 @@ func TestSessionSurvivesDaemonRestart(t *testing.T) {
 	first := v.sessions[id].Pending[0].RequestID
 
 	// The daemon goes down mid-turn with the request unanswered. The island
-	// goes grey, and the session keeps the last state heard.
+	// goes grey, and the session keeps the last state seen.
 	stop()
 	v = b.wait(t, "ws unreachable", 15*time.Second, func(v view) bool { return reachable(v, "ws", false) })
 	if s := v.sessions[id]; s.Status != "running" || len(s.Pending) != 1 {

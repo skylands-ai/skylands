@@ -20,7 +20,7 @@ function fitted(b: THREE.Mesh, lot: Lot, geo: THREE.BufferGeometry, mat: THREE.M
   return m
 }
 
-/** A hexagonal tower with a lit band under its roof, another halfway up a tall one, and an antenna on the tallest. */
+/** A hexagonal tower with a lit band under its roof, and another halfway up a tall one. */
 function tower(t: TerraceSpec, lot: Lot): THREE.Mesh {
   const b = new THREE.Mesh(SG.hex, BUILDINGS.rest)
   asBuilding(b, lot, t, BUILDINGS)
@@ -32,8 +32,6 @@ function tower(t: TerraceSpec, lot: Lot): THREE.Mesh {
   const half = lot.height / 2
   fitted(b, lot, SG.hexBand, S.bldBand, 0.73, 0.06, 0, half - 0.14)
   if (lot.height > 1.5) fitted(b, lot, SG.hexBand, S.bldBand, 0.73, 0.05, 0, 0)
-  // Off-center, so an airship landing on the roof clears it.
-  if (lot.height > 2.1) fitted(b, lot, SG.mast, S.pole, 0.04, 0.45, 0.2, half + 0.22)
   return b
 }
 

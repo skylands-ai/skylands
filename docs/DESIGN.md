@@ -26,12 +26,12 @@ Skylands ships as one Go binary with two roles, the citadel and the daemon, plus
 | Component | What it does | Where it runs | What it owns |
 | --- | --- | --- | --- |
 | NATS (nats-server) | Accepts every daemon's leaf connection and every citadel's client connection, stores the world's streams, and carries every message between them | Inside `skylands devworld up` for a one-machine world, otherwise nats-server on one machine or a cluster of three or more | The world's streams, including copies of every host's events and the citadel aggregates' events |
-| Citadel (`skylands citadel up`) | Serves the UI, authenticates people, builds projections, relays signed approvals, sends push notifications, and answers NATS auth callout requests | A laptop, an internal server, or a public endpoint | Users, rules, budget, and work order aggregates, plus its own projections of every session |
+| Citadel (`skylands citadel up`) | Serves the UI, authenticates people, builds projections, relays signed approvals, and sends push notifications | A laptop, an internal server, or a public endpoint | Users, rules, budget, and work order aggregates, plus its own projections of every session |
 | Daemon (`skylands daemon up`) | Runs agents, owns their sessions, enforces rules, verifies approval signatures, and buffers events while offline | Every machine that hosts agents | Session aggregates and session event streams for its host, plus agent worktrees |
 | Agent adapters | Bridge each agent to the Agent Client Protocol (ACP), the JSON-RPC protocol the daemon speaks over stdio | Child processes of the daemon | Nothing; they're stateless bridges |
 | Clients | The 3D world, a mobile approval inbox, and a local CLI | Browsers, phones, and the host's shell | Nothing; they read projections and send commands |
 
-NATS here means `nats-server` with JetStream. `skylands devworld up` runs one in-process, and any other world runs nats-server itself, configured from `skylands world init`, or uses a NATS cluster the team already runs.
+NATS here means `nats-server` with JetStream. `skylands devworld up` runs one in-process, and any other world runs nats-server itself, with the settings in [NATS.md](NATS.md), or uses a NATS cluster the team already runs.
 
 Apart from the NATS server that `skylands devworld up` embeds, only the daemon embeds a NATS server: a leaf node with a local JetStream domain, so it keeps working while it can't reach the world's NATS server. The citadel embeds no server and connects as an ordinary NATS client. Agents (harnesses) communicate with the daemon via ACP.
 
@@ -147,13 +147,13 @@ The phone client is a flat approval inbox rather than the 3D world. It lists wai
 
 A person puts work into the world by starting a session on a terrace, steers it from the panel, and answers its requests from any device. This example follows one afternoon on the storefront repo, with the command each step sends and the events it produces.
 
-1. **Bring a host into the world.** The owner enrolls the workstation's daemon once with the world's owner key (`skylands daemon enroll workstation`) and starts `skylands daemon up`. The workstation island rises into the sky, tethered to the citadel.
+1. **Bring a host into the world.** The owner copies the install command from the citadel's "Add a host" section and runs it on the workstation. The command names the world's owner key with `--world`, which the daemon pins, so it joins this world and no other. The workstation island rises into the sky, tethered to the citadel.
 2. **Register the repo.** From the island's panel or the local CLI (`skylands repo register ...`), the person registers `~/code/storefront`. The daemon handles `RegisterRepo` and records `RepoRegistered` and `TerrainSnapshotted`, and a roped terrace appears with a building for every tracked file.
 3. **Post a work order.** With the storefront terrace open, the person types the task into the command bar: _add multi-currency support to pricing_. The bar shows the scope it's assuming, **storefront on workstation**, and chips for Auto model, one attempt, and a $5 cap. Enter shows the dispatch preview, Claude Opus on storefront at workstation, and a second Enter launches it. The citadel handles `SubmitWorkOrder`: it records `WorkOrderSubmitted`, sends `StartSession` to the workstation's daemon, and records `WorkOrderDispatched`. The daemon creates a worktree, launches the agent over ACP, and records `SessionStarted`, `PromptSent`, and `AgentSpawned`. A spark runs down the tether, a flag in storefront's rope color plants on the terrace, and an orange airship lifts off from the flag and lands on the first file it reads.
 4. **Watch the work spread.** Opus reads the pricing crate (a user repo), so those buildings light blue, then lands on `engine.rs` and lights it amber while it edits. It spawns two subagents to survey the catalog and payments crates, and they fly out on leash lines. Its plan fills in on the agent panel, and sandbags gather under it as its context grows.
 5. **Race two models.** From the same terrace, the person posts a second work order for stock reservations in the cart and sets the attempts chip to two. The preview shows Codex and Claude Sonnet, one session each. The dispatcher starts both sessions in separate worktrees, and both airships work the cart crate side by side under one flag.
 6. **Handle an overlap.** Codex lands on `search.rs` while one of Opus's subagents is already there. The building turns red with a "2 sessions" tag and the terrace feed logs the overlap, so the person pauses the subagent until Codex moves on. The daemon handles PauseAgent and records AgentPaused. The user can ignore this warning if they're ok with the overlap happening in different git worktrees (hoping for resolution/marge later).
-7. **Answer a request from a phone.** Opus asks to run `cargo test -p storefront-pricing`, and no rule covers it. The daemon records `PermissionRequested`, Opus hovers over the tests building with a yellow beam, the citadel's beacon lights, and the person's phone gets a notification naming Opus and storefront. They open the inbox, read the exact command, and approve with a passkey. The citadel relays `ApproveToolCall`, the daemon verifies the signature and records `PermissionGranted`, and the airship lands and runs the tests.
+7. **Answer a request from a phone.** Opus asks to run `cargo test -p storefront-pricing`, and no rule covers it. The daemon records `PermissionRequested`, Opus hovers over the tests building with a yellow beam, the citadel's beacon lights, and the person's phone gets a notification naming Opus and storefront. They open the inbox, read the exact command, and approve, which the phone signs with its approver key. The citadel relays `ApproveToolCall`, the daemon verifies the signature and records `PermissionGranted`, and the airship lands and runs the tests.
 8. **Turn the decision into a rule.** From the same request, the person chooses to always allow `cargo test` in storefront. The citadel handles `AddRule` and records `RuleAdded`, every daemon projects it, and the next test run proceeds without asking.
 9. **Steer an agent.** The person clicks Opus, so the command bar now targets Opus, and sends a follow-up: _keep single-currency pricing behind a feature flag_. The daemon handles `SendPrompt`, records `PromptSent`, and Opus's plan gains a step.
 10. **Let it compact.** Opus passes 92% of its context. On its next takeoff it drops its sandbags with a puff and climbs, and the session records `ContextCompacted`.
@@ -210,8 +210,9 @@ Every kind of data has one home and, where it needs one, a named copy.
 | Daemon projections: rules and approver keys | The daemon's memory | The daemon, from its local mirrors | None |
 | Diffs, file contents, transcripts, and tool call records | The host's disk, in worktrees and agent session files | Agents and the daemon | None; a citadel holds fetched content only while someone views it |
 | Commands and queries | Nowhere; they're NATS request-reply | People, through a citadel, the CLI, or an integration | None |
-| Owner key | Offline, with the world's owner | `skylands world init` | None |
-| Approver keys | Private keys stay on people's devices as passkeys, and public keys travel in user events | People's devices | Wherever user events go |
+| World record: its name and owner key, signed by the owner key | The `skylands-world` bucket in the world's JetStream domain | A citadel, once, when the owner sets the world up | Each daemon pins the owner key it names |
+| Owner key | Only in the recovery file the owner downloads when setting the world up | The owner's browser, during setup | None |
+| Approver keys | Private keys stay in each approver browser's IndexedDB, for the citadel's origin, and public keys travel in approver entries | People's browsers | The `skylands-approvers` bucket in the world's JetStream domain |
 
 
 Each role creates the streams it needs, idempotently. A daemon creates its host stream and its mirrors of the rule and user streams at startup. A citadel creates a host's mirror in the world's domain the first time it sees that host, and creating a mirror that already exists changes nothing.
@@ -243,7 +244,7 @@ While handling SubmitWorkOrder, the citadel records WorkOrderSubmitted. For an o
 - Each citadel builds its own projections in memory: the world view, the timeline, the approval inbox, and spend against budgets. At startup it reads each stream from the beginning with an ordered consumer, which tracks its own position, so the citadel stores no positions of its own. Replay time is bounded by the size caps on host streams. A projection is a pure function of the streams, so every citadel converges on the same state without talking to the others.
 - A citadel that handled a command waits until its consumer delivers the event at the sequence in the append's ack before answering, so people see their own change. A browser stays on one citadel through its WebSocket, so it always sees its own writes, and an integration gets the outcome in the command's reply.
 - Each daemon mirrors the world's rule and user streams into its own JetStream domain, so it can rebuild its projections across a restart even while it can't reach NATS. It projects rule events into its local rule set and enforces it there.
-- Each daemon projects user events into its set of trusted approver keys, accepting only enrollments signed by the world's owner key.
+- Each daemon watches the world's approver entries and trusts only those that trace back to the world's owner key.
 
 ### Ordering
 
@@ -269,7 +270,7 @@ The daemon runs nats-server in-process as a leaf node, which is a NATS server th
 
 ### Unreachable hosts
 
-A citadel learns which daemons it can reach by pinging the skylands-daemon micro service, which uses request-reply and no heartbeat timestamps. When a daemon stops answering, the citadel can't tell a network failure from a stopped or crashed daemon, so the world shows one state for both. The island drifts out on a slack tether, its crystal goes grey, and everything on it holds the last state the citadel heard, along with when it last saw it. The cause shows only after the host returns: a daemon that kept running syncs the events it held, and a daemon that stopped reports its restart and expires anything that was waiting on a person. Decisions and work orders for the host wait until it's reachable again.
+A citadel learns which daemons it can reach by pinging the skylands-daemon micro service, which uses request-reply and no heartbeat timestamps. When a daemon stops answering, the citadel can't tell a network failure from a stopped or crashed daemon, so the world shows one state for both. The island drifts out on a slack tether, its crystal goes grey, and everything on it holds the last state the citadel saw, along with when it last saw it. The cause shows only after the host returns: a daemon that kept running syncs the events it held, and a daemon that stopped reports its restart and expires anything that was waiting on a person. Decisions and work orders for the host wait until it's reachable again.
 
 ### Running agents
 
@@ -305,13 +306,17 @@ Skylands runs on nats-server with JetStream, and NATS holds no Skylands logic. D
 
 ### Setting up a world
 
-`skylands world init` creates the world's owner key and NATS account, and generates the NATS settings the world needs: JetStream with the world's domain, a leaf node listener on WebSocket port 443, the world's account, and auth callout for that account. `skylands devworld up` applies them to its embedded server. Anyone running their own nats-server or cluster adds them to its configuration.
+A world is set up in the browser. When a citadel starts and finds no world record in NATS, it prints a setup link with a one-time token in its fragment, and every page it serves leads to the setup page. Whoever opens the link names the world, and the page makes the world's owner key and this browser's approver key with nkeys.js. The owner key signs the world record and an entry enrolling the approver key, and the page offers a recovery file holding the owner key, encrypted with a passphrase if one is given. Only after the owner confirms saving it does the page send the signed record and entry, with the token. The citadel writes the record create-only, so the first setup wins and a second citadel skips setup, and the browser forgets the owner key. The recovery file later enrolls another browser on the same page, if every approver device is lost.
 
-Moving a world from `skylands devworld up` to its own nats-server is a configuration change. Start nats-server with the generated settings and the JetStream store directory `skylands devworld up` was using, at the same or a newer NATS version, then give daemons and citadels the new URLs.
+Each daemon pins the world's owner key. devworld's daemon takes it from the world record, and every other daemon from `--world` in its install command, which the citadel shows under "Add a host". A daemon with no owner key refuses to start, and one whose pinned key differs from the world record's refuses to run.
+
+The owner is responsible for NATS: its accounts, credentials, and the settings in [NATS.md](NATS.md), which `skylands devworld up` applies to its embedded server. A citadel checks the settings it can see from its connection when it starts, and reports any that are missing in its log and on the setup page.
+
+Moving a world from `skylands devworld up` to its own nats-server is a configuration change. Start nats-server with the settings in [NATS.md](NATS.md) and the JetStream store directory `skylands devworld up` was using, at the same or a newer NATS version, then give daemons and citadels the new URLs.
 
 ### Streams and consumers
 
-Because NATS holds no Skylands logic, citadels and daemons create the streams and consumers they need. They do it idempotently, at startup and when a daemon enrolls, so the same code runs against any NATS deployment.
+Because NATS holds no Skylands logic, citadels and daemons create the streams and consumers they need. They do it idempotently, at startup, so the same code runs against any NATS deployment.
 
 ### More than one server
 
@@ -331,7 +336,6 @@ The citadel is the world's web application and observer. It never writes session
 - Holds each browser's session and permissions; browsers never connect to NATS.
 - Streams projections to browsers over WebSocket and sends push notifications for waiting items.
 - Routes each session command to its owning daemon by request-reply, and returns the daemon's answer.
-- Answers NATS auth callout requests through a queue group, issuing credentials from its users and daemon registry.
 
 ### Deployment
 
@@ -343,7 +347,6 @@ Citadels have no roles. Each one does work as soon as it's available, a second c
 
 - Every citadel connects to NATS the same way, with citadel credentials.
 - Work triggered by events, such as sending push notifications, runs from one durable JetStream consumer that every citadel pulls from, so one citadel at a time handles each event, and the consumer's acks track progress for all of them.
-- Auth callout requests go to a NATS queue group, so exactly one citadel answers each one.
 - Commands and queries are endpoints of the skylands-citadel micro service, so NATS hands each request to one citadel without any of them holding a role.
 - Each citadel builds its own projections from the world's streams. Projections are derived, so every citadel's copy agrees.
 - A command relayed by two citadels still produces its events once, because the receiving aggregate recognizes the repeated command id.
@@ -360,16 +363,18 @@ Rules settle most tool calls on the host, so only what no rule covers reaches a 
 
 ### Signatures
 
-- The approver's device signs, with a passkey, a challenge that is the digest of the request id and the exact tool input.
+- The approver's browser signs, with its approver key, a challenge that is the digest of the world, host, session, request id, decision, and the exact tool input.
 - The daemon verifies that signature against its projection of approver keys before it records PermissionGranted or PermissionDenied.
 - The first valid decision wins, and any later decision for the same request is rejected.
 - Approvals made at the host through the local CLI are accepted from the OS user that owns the daemon.
 
 ### Keys
 
-- Each world has an owner key, held offline by its owner. It signs daemon enrollments and approver key enrollments.
+- Each world has an owner key, made in the owner's browser when the world is set up and kept only in the recovery file the owner downloads. It signs the world record and the entries that enroll approvers.
+- Each daemon pins the owner key and refuses to run in a world whose record names another.
+- NATS decides which daemons and citadels join the world. The owner gives each one credentials for the world's NATS account, however they run NATS, and Skylands adds no enrollment of its own: whatever NATS admits to that account is trusted as a daemon.
 - The citadel holds only a scoped signing key, which can mint credentials for limited roles such as integrations.
-- A compromised citadel therefore can't enroll an approver, enroll a daemon, or forge an approval.
+- A compromised citadel therefore can't enroll an approver, move a daemon into another world, or forge an approval.
 
 ### Waiting and cancelling
 
@@ -432,7 +437,7 @@ The following is an initial, _rough estimate_ of what the scaffolding structure 
 ```
 skylands/
 ├── cmd/
-│   └── skylands/              one binary: devworld up, citadel up, daemon up/enroll/status, world init, repo register, request list/approve/deny
+│   └── skylands/              one binary: devworld up, citadel up, daemon up/install/status, repo register, request list/approve/deny
 ├── api/
 │   └── v1/                    public: subject builders, event and command types
 ├── internal/
@@ -444,7 +449,6 @@ skylands/
 │   │   ├── workorder/         WorkOrder aggregate
 │   │   ├── projections/       in-memory projections, KV snapshots
 │   │   ├── service/           skylands-citadel micro endpoints, commands and queries
-│   │   ├── authcallout/
 │   │   ├── passkeys/          WebAuthn ceremonies
 │   │   ├── push/              phone notifications
 │   │   └── web/               HTTP and WebSocket server for browsers
@@ -461,9 +465,8 @@ skylands/
 │   │   └── socket/            local API for the CLI
 │   ├── es/                    event-sourcing kit over JetStream
 │   ├── rules/                 rule language and evaluation
-│   ├── approval/              signed approval format and verification
-│   ├── natsembed/             embedded server setup for leaf nodes and skylands devworld up
-│   └── world/                 world init: owner key, account, generated NATS settings
+│   ├── approval/              signed records and approvals, and their verification
+│   └── natsembed/             embedded server setup for leaf nodes and skylands devworld up
 ├── web/                       citadel front end, built to web/dist and embedded
 │   └── src/
 │       ├── world/             the 3D scene, starting from the prototype

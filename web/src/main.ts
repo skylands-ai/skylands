@@ -157,7 +157,7 @@ function renderVeil(s: State): void {
     `Citadel unreachable ${since}`.trim(),
     el('span', {
       text: s.lastContact
-        ? `The world shows the last state heard, at ${clockText(s.lastContact)}. This page keeps retrying.`
+        ? `The world shows the last state seen, at ${clockText(s.lastContact)}. This page keeps retrying.`
         : 'This page keeps retrying.',
     }),
   )
@@ -184,7 +184,7 @@ function panelDeps(s: State, stale: boolean): unknown[] {
     case 'island':
       return ['island', island, stale, stale ? s.lastContact : 0, ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
     default:
-      return ['world', s.server, s.link, s.worldTheme, waitingCount(s), ...islandList(s)]
+      return ['world', s.server, s.world, s.link, s.worldTheme, waitingCount(s), ...islandList(s)]
   }
 }
 

@@ -32,6 +32,9 @@ type startSessionRequest struct {
 // request-reply, and the daemon's answer comes back.
 func (c *citadel) api() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/world", c.getWorld)
+	mux.HandleFunc("POST /api/world/setup", c.setupWorld)
+	mux.HandleFunc("POST /api/world/approvers", c.addOwnerApprover)
 	mux.HandleFunc("POST /api/sessions", c.startSession)
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/prompt", c.sendPrompt)
 	mux.HandleFunc("POST /api/sessions/{host}/{id}/cancel", c.cancelTurn)

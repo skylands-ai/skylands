@@ -67,6 +67,18 @@ type Config struct {
 	// it can launch, after its check at startup. Zero means
 	// DefaultAgentCheckInterval.
 	AgentCheckInterval time.Duration
+	// World is the owner key of the world this daemon joins, as the
+	// citadel shows it under "Add a host". The daemon pins it the first
+	// time, refuses to start later with another, and stops if the world's
+	// record names a different owner.
+	World string
+	// TrustFirstWorld lets a daemon with no World pin the owner key from
+	// the first world record it receives. devworld's own daemon does, as it
+	// runs in the same process as the citadel and the NATS server.
+	TrustFirstWorld bool
+	// SetupURL, if set, is the link to set the world up while there is no
+	// world yet, which the daemon reports in its status.
+	SetupURL func() string
 }
 
 // Run joins the world and runs agents until ctx is cancelled. The daemon
@@ -96,6 +108,10 @@ func Run(ctx context.Context, cfg Config) error {
 		return err
 	}
 	defer func() { _ = island.Release() }()
+	pin, err := pinWorld(cfg.DataDir, hostName, cfg.World, cfg.TrustFirstWorld)
+	if err != nil {
+		return err
+	}
 	// The watchdog ends the agents' process groups if this process dies
 	// without ending them. Every agent is launched under ctx, so each
 	// registers with it. It closes after everything else here has stopped,
@@ -215,12 +231,33 @@ func Run(ctx context.Context, cfg Config) error {
 		<-checksDone
 	}()
 
-	api := &localAPI{host: hostName, world: cfg.NATSURL, version: cfg.Version, started: started, agg: agg, sessions: sessions, checker: checker}
+	api := &localAPI{host: hostName, world: cfg.NATSURL, version: cfg.Version, started: started, agg: agg, sessions: sessions, checker: checker, pin: pin, setupURL: cfg.SetupURL}
 	errc := make(chan error, 1)
 	if cfg.SocketPath != "" {
 		go func() { errc <- socket.Serve(ctx, ln, api) }()
 	}
+	// The world's record is checked against the owner key this island
+	// belongs to, once a citadel can answer.
+	worldErr := make(chan error, 1)
+	go func() { worldErr <- checkWorld(ctx, nc, pin) }()
 	select {
+	case err := <-worldErr:
+		if err != nil {
+			slog.Error("daemon: wrong world", "err", err)
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			if cfg.SocketPath != "" {
+				if err := <-errc; err != nil {
+					slog.Warn("daemon: local API stopped", "err", err)
+				}
+			}
+			slog.Info("daemon: stopping", "host", hostName)
+			return nil
+		case err := <-errc:
+			return err
+		}
 	case <-ctx.Done():
 		if cfg.SocketPath != "" {
 			if err := <-errc; err != nil {
@@ -491,6 +528,8 @@ type localAPI struct {
 	agg      *host.Host
 	sessions *session.Manager
 	checker  *agentChecker
+	pin      *worldPin
+	setupURL func() string
 }
 
 func (a *localAPI) CheckAgents(ctx context.Context) ([]v1.AgentAvailability, error) {
@@ -503,7 +542,11 @@ func (a *localAPI) Status(context.Context) socket.StatusInfo {
 	for _, r := range repos {
 		infos = append(infos, repoInfo(r))
 	}
-	return socket.StatusInfo{Host: a.host, World: a.world, Version: a.version, Started: a.started, Repos: infos, Sessions: a.Sessions(context.Background()), Agents: a.agg.Agents()}
+	st := socket.StatusInfo{Host: a.host, World: a.world, WorldOwner: a.pin.get(), Version: a.version, Started: a.started, Repos: infos, Sessions: a.Sessions(context.Background()), Agents: a.agg.Agents()}
+	if a.setupURL != nil {
+		st.SetupURL = a.setupURL()
+	}
+	return st
 }
 
 func (a *localAPI) Sessions(context.Context) []socket.SessionInfo {

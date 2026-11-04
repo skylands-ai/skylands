@@ -110,3 +110,45 @@ export function placeIcon(place: Place): HTMLElement {
 export function backButton(place: Place, name: string, onClick: () => void): HTMLElement {
   return el('button', { type: 'button', class: 'btn ghost', style: 'align-self:flex-start', onclick: onClick }, [placeIcon(place), `Back to ${name}`])
 }
+
+/**
+ * A Copy button for text, which says whether the copy worked. cls styles
+ * it: "copy" for a small inline one, or a button class.
+ */
+export function copyButton(text: string, label: string, cls = 'copy'): HTMLElement {
+  const b = el('button', { type: 'button', class: cls, text: 'Copy', 'aria-label': label })
+  b.addEventListener('click', () => {
+    void copyText(text).then((ok) => {
+      b.textContent = ok ? 'Copied' : 'Copy failed'
+      setTimeout(() => (b.textContent = 'Copy'), 1500)
+    })
+  })
+  return b
+}
+
+/**
+ * Copies text to the clipboard. The Clipboard API exists only in a secure
+ * context, and a citadel reached over plain HTTP at a LAN or Tailscale
+ * address isn't one, so there the text is selected and copied instead.
+ */
+async function copyText(text: string): Promise<boolean> {
+  if (navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    } catch {
+      // Fall back to copying a selection.
+    }
+  }
+  const area = el('textarea', { readonly: '', 'aria-hidden': 'true', style: 'position:fixed;top:0;left:0;opacity:0;pointer-events:none' })
+  area.value = text
+  document.body.appendChild(area)
+  area.select()
+  try {
+    return document.execCommand('copy')
+  } catch {
+    return false
+  } finally {
+    area.remove()
+  }
+}

@@ -16,36 +16,8 @@ func run(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	return code, out.String(), errOut.String()
 }
 
-// unimplemented lists every command that is wired but not yet implemented,
-// with the command path its error is reported under.
-var unimplemented = []struct {
-	args []string
-	path string
-}{
-	{[]string{"daemon", "enroll", "workstation"}, "skylands daemon enroll"},
-	{[]string{"world", "init"}, "skylands world init"},
-}
-
-func TestCommandsReportUnimplemented(t *testing.T) {
-	for _, tc := range unimplemented {
-		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
-			code, stdout, stderr := run(t, tc.args...)
-			if code != 1 {
-				t.Errorf("exit code = %d, want 1", code)
-			}
-			if want := tc.path + ": unimplemented\n"; stderr != want {
-				t.Errorf("stderr = %q, want %q", stderr, want)
-			}
-			if stdout != "" {
-				t.Errorf("stdout = %q, want empty", stdout)
-			}
-		})
-	}
-}
-
 // TestEveryRunnableCommandIsListed fails when a command is added to the tree
-// without being added to the unimplemented table above, or to the exceptions
-// here once it has a real implementation.
+// without being added here, so every command is accounted for.
 func TestEveryRunnableCommandIsListed(t *testing.T) {
 	implemented := map[string]bool{
 		"skylands version":            true,
@@ -73,15 +45,11 @@ func TestEveryRunnableCommandIsListed(t *testing.T) {
 		"skylands rule remove":        true,
 		"skylands preflight":          true,
 	}
-	listed := map[string]bool{}
-	for _, tc := range unimplemented {
-		listed[tc.path] = true
-	}
 	var walk func(*cobra.Command)
 	walk = func(c *cobra.Command) {
 		if c.Runnable() && !c.Hidden {
 			path := c.CommandPath()
-			if !listed[path] && !implemented[path] {
+			if !implemented[path] {
 				t.Errorf("%q is runnable but not covered by a test", path)
 			}
 		}

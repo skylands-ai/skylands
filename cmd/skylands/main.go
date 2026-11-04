@@ -1,7 +1,7 @@
 // Command skylands is the one binary behind every Skylands role: "devworld
 // up" for a one-machine world, "citadel up" and "daemon up" for the two
-// roles, "world init" and "daemon enroll" for setting up a world, and the
-// local CLI that talks to the daemon on this host.
+// roles, and the local CLI that talks to the daemon on this host. A world
+// is set up from the browser, through the link a citadel prints.
 package main
 
 import (

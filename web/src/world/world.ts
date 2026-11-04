@@ -266,7 +266,7 @@ export class World {
     this.beaconOn = on
   }
 
-  /** Marks the whole scene as the last state heard: tethers dim and nothing flows. */
+  /** Marks the whole scene as the last state seen: tethers dim and nothing flows. */
   setStale(on: boolean): void {
     this.stale = on
   }

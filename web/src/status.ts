@@ -2,7 +2,7 @@ import type { Island, Session, TokenUsage } from './protocol'
 import type { State } from './store'
 import type { Status } from './world/world'
 
-/** True when this page can't reach the citadel, so everything shown is the last state heard. */
+/** True when this page can't reach the citadel, so everything shown is the last state seen. */
 export function isStale(s: State): boolean {
   return s.link !== 'connected'
 }
@@ -30,7 +30,7 @@ export function citadelLabelStatus(s: State): Status {
 
 /** An island's link as the citadel sees it, or its last state when this page can't reach the citadel. */
 export function islandStatus(i: Island, stale: boolean): Status {
-  if (stale) return ['Last state heard', 'var(--idle)']
+  if (stale) return ['Last state seen', 'var(--idle)']
   return i.reachable ? ['Connected', 'var(--ok)'] : ['Unreachable', 'var(--idle)']
 }
 

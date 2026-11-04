@@ -23,8 +23,8 @@ func newCitadelUpCmd() *cobra.Command {
 		Short: "Serve the web application for a world",
 		Long: `Citadel up serves the 3D client and the phone inbox, builds projections from
 the world's streams, relays signed approvals to the daemon that owns each
-session, sends push notifications, and answers NATS auth callout requests.
-It connects to the world's NATS server as an ordinary client. Any number of
+session, and sends push notifications. It connects to the world's NATS
+server as an ordinary client. Any number of
 citadels can run against one world, and they are interchangeable.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -35,5 +35,7 @@ citadels can run against one world, and they are interchangeable.`,
 	f.StringVar(&cfg.NATSURL, "nats-url", "nats://127.0.0.1:4222", "URL of the world's NATS server or cluster")
 	f.StringVar(&cfg.CredsFile, "creds", "", "path to the citadel's NATS credentials file")
 	f.StringVar(&cfg.HTTPAddr, "http", "127.0.0.1:8080", "address the web application listens on")
+	f.StringVar(&cfg.PublicURL, "url", "", "URL people open the citadel at, used in the links it prints (default http:// and --http)")
+	f.StringVar(&cfg.LeafURL, "leaf-url", "", `URL daemons on other hosts dial to join the world, shown under "Add a host"`)
 	return cmd
 }

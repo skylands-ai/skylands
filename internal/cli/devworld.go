@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -93,12 +94,27 @@ func runDevworld(ctx context.Context, o devworldOptions) error {
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// The citadel says where to set the world up, and the daemon reports
+	// it in its status, which is how "devworld install" prints it.
+	var setupLink atomic.Value
+	setupLink.Store("")
 	errc := make(chan error, 2)
 	go func() {
-		errc <- citadel.Run(ctx, citadel.Config{NATSURL: srv.ClientURL(), HTTPAddr: o.httpAddr})
+		errc <- citadel.Run(ctx, citadel.Config{
+			NATSURL:     srv.ClientURL(),
+			HTTPAddr:    o.httpAddr,
+			LeafURL:     srv.LeafURL(),
+			OnSetupLink: func(link string) { setupLink.Store(link) },
+		})
 	}()
 	go func() {
-		errc <- daemon.Run(ctx, daemon.Config{Host: o.host, NATSURL: srv.LeafURL(), DataDir: o.dataDir, SocketPath: o.socketPath, Version: versionString()})
+		// devworld's daemon runs in the same process as the citadel and the
+		// NATS server, so it pins the owner key of the first world it finds.
+		errc <- daemon.Run(ctx, daemon.Config{
+			Host: o.host, NATSURL: srv.LeafURL(), DataDir: o.dataDir, SocketPath: o.socketPath, Version: versionString(),
+			TrustFirstWorld: true,
+			SetupURL:        func() string { return setupLink.Load().(string) },
+		})
 	}()
 	err = <-errc
 	cancel()

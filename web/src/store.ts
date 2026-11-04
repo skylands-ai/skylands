@@ -1,4 +1,4 @@
-import type { Island, Repo, ServerInfo, Session, TokenUsage } from './protocol'
+import type { Island, Repo, ServerInfo, Session, TokenUsage, WorldInfo } from './protocol'
 import { isWorldTheme, type WorldThemeId } from './worldthemes'
 
 /** The browser's link to its citadel over the WebSocket. */
@@ -20,6 +20,8 @@ export interface State extends Nav {
   link: LinkState
   /** The NATS server as the citadel last described it, or null before the first message. */
   server: ServerInfo | null
+  /** The world as the citadel last described it, or null before the first message. */
+  world: WorldInfo | null
   /** Every island the citadel knows, by host. */
   islands: Record<string, Island>
   /** Every repository the citadel knows, by repo id. */
@@ -82,7 +84,7 @@ type Listener = (s: State) => void
 
 /** One place for everything the page renders from. Every change notifies every listener. */
 export class Store {
-  state: State = { link: 'connecting', server: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), inbox: null, inboxFilter: loadFilter(), worldTheme: loadWorldTheme() }
+  state: State = { link: 'connecting', server: null, world: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), inbox: null, inboxFilter: loadFilter(), worldTheme: loadWorldTheme() }
   private listeners: Listener[] = []
 
   subscribe(fn: Listener): void {

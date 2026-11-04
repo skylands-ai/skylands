@@ -227,7 +227,11 @@ button.toolchip[aria-expanded="true"]::before{ content:"\25BE"; }
 .note{ margin:0; padding:10px 12px; border-radius:8px; background:var(--surface-2); font-size:13px; }
 .facts{ display:flex; flex-direction:column; }
 .fact{ display:flex; justify-content:space-between; gap:12px; padding:7px 0; border-bottom:1px solid var(--line); font-size:13px; }
-.fact b{ font-weight:600; text-align:right; }
+.fact b{ font-weight:600; text-align:right; min-width:0; }
+.fact .keyval{ display:inline-flex; align-items:center; gap:6px; }
+.fact code.key{ font-family:"JetBrains Mono",monospace; font-size:12px; font-weight:500; }
+.fact .copy{ min-height:24px; padding:0 8px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); font-size:11px; font-weight:600; }
+.fact .copy:hover{ background:var(--surface-2); color:var(--text); }
 .sec{ display:flex; flex-direction:column; gap:8px; }
 .sec h3{ margin:0; font-size:13px; font-weight:600; color:var(--muted); }
 .row{ display:flex; align-items:center; gap:10px; min-height:44px; padding:8px 10px; border-radius:8px; background:var(--surface-2); border:1px solid var(--line); }
@@ -273,3 +277,22 @@ button.row{ color:inherit; font:inherit; }
   .stage{ flex:none; height:440px; }
   .panel{ width:auto; overflow:visible; border-left:none; border-top:1px solid var(--line); }
 }
+
+/* The setup page, at /setup, where a world is set up or a browser recovers its key. */
+.setup{ box-sizing:border-box; min-height:100%; display:flex; align-items:flex-start; justify-content:center; padding:48px 16px; }
+.setup .card{ width:100%; max-width:560px; padding:28px; border-radius:12px; background:var(--surface); border:1px solid var(--line); }
+.setup h1{ margin:0 0 8px; font-family:Sora,Barlow,sans-serif; font-size:22px; }
+.setup h2{ margin:20px 0 6px; font-size:15px; }
+.setup p{ margin:8px 0; }
+.setup label{ display:block; margin:14px 0 4px; font-weight:600; }
+.setup input[type=text], .setup input[type=password]{ box-sizing:border-box; width:100%; min-height:40px; padding:0 10px; border-radius:8px; border:1px solid var(--line); background:var(--surface-2); color:var(--text); font:inherit; font-size:15px; }
+.setup .hint{ color:var(--muted); font-size:13px; }
+.setup .actions{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:20px; }
+.setup .problem{ margin:10px 0; padding:10px 12px; border-radius:8px; border:1px solid var(--warn); color:var(--text); background:var(--surface-2); }
+.setup .error{ margin:10px 0; padding:10px 12px; border-radius:8px; border:1px solid var(--bad); color:var(--bad); }
+.setup .check{ display:flex; gap:8px; align-items:center; font-weight:400; }
+.setup a.btn{ color:var(--text); text-decoration:none; }
+.setup a.btn.primary{ color:var(--flare-ink); }
+.setup .btn:disabled{ opacity:0.45; cursor:not-allowed; }
+.setup code, .addhost code{ font-family:"JetBrains Mono",monospace; font-size:12px; word-break:break-all; }
+.addhost pre{ margin:6px 0; padding:8px 10px; border-radius:8px; background:var(--surface-2); border:1px solid var(--line); white-space:pre-wrap; word-break:break-all; }

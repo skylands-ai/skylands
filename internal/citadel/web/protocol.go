@@ -23,6 +23,7 @@ type Message struct {
 	ID       string                `json:"id,omitempty"`
 	Live     *v1.Live              `json:"live,omitempty"`
 	Server   *ServerInfo           `json:"server,omitempty"`
+	World    *WorldInfo            `json:"world,omitempty"`
 	Islands  []projections.Island  `json:"islands,omitempty"`
 	Island   *projections.Island   `json:"island,omitempty"`
 	Repos    []projections.Repo    `json:"repos,omitempty"`
@@ -38,6 +39,24 @@ type Inbound struct {
 	Type string `json:"type"`
 	Host string `json:"host,omitempty"`
 	ID   string `json:"id,omitempty"`
+}
+
+// WorldInfo is the world as the citadel knows it.
+type WorldInfo struct {
+	// Checked is true once the citadel has looked for the world since it
+	// reached NATS; before that, nobody can tell whether there is one.
+	Checked bool `json:"checked"`
+	// Ready is true once the world has been set up.
+	Ready bool   `json:"ready"`
+	Name  string `json:"name,omitempty"`
+	// Owner is the owner key's public nkey, which a daemon on another host
+	// is given to pin.
+	Owner string `json:"owner,omitempty"`
+	// LeafURL is the address daemons on other hosts dial, when known.
+	LeafURL string `json:"leafUrl,omitempty"`
+	// Problems are the NATS settings the world needs that are missing.
+	Problems        []string `json:"problems,omitempty"`
+	NATSSettingsURL string   `json:"natsSettingsUrl,omitempty"`
 }
 
 // ServerInfo describes the NATS server as it describes itself to the
