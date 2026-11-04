@@ -79,6 +79,9 @@ type Config struct {
 	// SetupURL, if set, is the link to set the world up while there is no
 	// world yet, which the daemon reports in its status.
 	SetupURL func() string
+	// WorldDomain is the JetStream domain of the world's NATS server, where
+	// the world's approver registry is. Empty means DefaultWorldDomain.
+	WorldDomain string
 }
 
 // Run joins the world and runs agents until ctx is cancelled. The daemon
@@ -112,6 +115,16 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
+	worldDomain := cfg.WorldDomain
+	if worldDomain == "" {
+		worldDomain = DefaultWorldDomain
+	}
+	// The island's leaf node holds its stream in a JetStream domain named
+	// after the host, which must not be the world's.
+	if hostName == worldDomain {
+		return fmt.Errorf("an island can't be named %q, the world's JetStream domain; give it another --host", hostName)
+	}
+	appr := &approvers{pin: pin}
 	// The watchdog ends the agents' process groups if this process dies
 	// without ending them. Every agent is launched under ctx, so each
 	// registers with it. It closes after everything else here has stopped,
@@ -231,7 +244,7 @@ func Run(ctx context.Context, cfg Config) error {
 		<-checksDone
 	}()
 
-	api := &localAPI{host: hostName, world: cfg.NATSURL, version: cfg.Version, started: started, agg: agg, sessions: sessions, checker: checker, pin: pin, setupURL: cfg.SetupURL}
+	api := &localAPI{host: hostName, world: cfg.NATSURL, version: cfg.Version, started: started, agg: agg, sessions: sessions, checker: checker, pin: pin, setupURL: cfg.SetupURL, approvers: appr}
 	errc := make(chan error, 1)
 	if cfg.SocketPath != "" {
 		go func() { errc <- socket.Serve(ctx, ln, api) }()
@@ -240,6 +253,7 @@ func Run(ctx context.Context, cfg Config) error {
 	// belongs to, once a citadel can answer.
 	worldErr := make(chan error, 1)
 	go func() { worldErr <- checkWorld(ctx, nc, pin) }()
+	go appr.follow(ctx, nc, worldDomain)
 	select {
 	case err := <-worldErr:
 		if err != nil {
@@ -521,15 +535,16 @@ func (c *commands) reply(msg *nats.Msg, r v1.Reply) {
 
 // localAPI answers the local CLI from the daemon's aggregates.
 type localAPI struct {
-	host     string
-	world    string
-	version  string
-	started  time.Time
-	agg      *host.Host
-	sessions *session.Manager
-	checker  *agentChecker
-	pin      *worldPin
-	setupURL func() string
+	host      string
+	world     string
+	version   string
+	started   time.Time
+	agg       *host.Host
+	sessions  *session.Manager
+	checker   *agentChecker
+	pin       *worldPin
+	setupURL  func() string
+	approvers *approvers
 }
 
 func (a *localAPI) CheckAgents(ctx context.Context) ([]v1.AgentAvailability, error) {
@@ -543,6 +558,9 @@ func (a *localAPI) Status(context.Context) socket.StatusInfo {
 		infos = append(infos, repoInfo(r))
 	}
 	st := socket.StatusInfo{Host: a.host, World: a.world, WorldOwner: a.pin.get(), Version: a.version, Started: a.started, Repos: infos, Sessions: a.Sessions(context.Background()), Agents: a.agg.Agents()}
+	if n, ok := a.approvers.count(); ok {
+		st.Approvers = &n
+	}
 	if a.setupURL != nil {
 		st.SetupURL = a.setupURL()
 	}
@@ -593,6 +611,16 @@ func (a *localAPI) PruneSessions(ctx context.Context) []socket.PruneResult {
 	return out
 }
 
+// requestInput is a waiting request's whole input, for the host's own CLI,
+// or nothing if it can't be read.
+func (a *localAPI) requestInput(sessionID, requestID string) json.RawMessage {
+	in, err := a.sessions.RequestInput(sessionID, requestID)
+	if err != nil || !json.Valid([]byte(in.Input)) {
+		return nil
+	}
+	return json.RawMessage(in.Input)
+}
+
 func (a *localAPI) Requests(context.Context) []socket.RequestInfo {
 	out := []socket.RequestInfo{}
 	for _, r := range a.sessions.Requests() {
@@ -616,7 +644,7 @@ func (a *localAPI) requestInfo(r session.Request) socket.RequestInfo {
 	}
 	return socket.RequestInfo{
 		ID: r.Permission.RequestID, Session: r.Session.ID, Conversation: title, Repo: name, Agent: r.Session.Agent,
-		Tool: r.Permission.Title, Kind: r.Permission.Kind, Locations: r.Permission.Locations, Input: r.Permission.Input, Options: options, Since: r.Permission.At,
+		Tool: r.Permission.Title, Kind: r.Permission.Kind, Locations: r.Permission.Locations, Input: a.requestInput(r.Session.ID, r.Permission.RequestID), Options: options, Since: r.Permission.At,
 	}
 }
 

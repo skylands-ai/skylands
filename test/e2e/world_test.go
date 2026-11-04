@@ -6,7 +6,10 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -530,7 +533,24 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 	if code, out := post2("/api/sessions/ws/"+id+"/requests/nope/approve", `{}`); code != http.StatusBadRequest {
 		t.Errorf("approve an unknown request: %d %v", code, out)
 	}
-	if code, out := post2("/api/sessions/ws/"+id+"/requests/"+req.RequestID+"/approve", `{}`); code != http.StatusOK {
+	// An approval must name the input it approves, by hash. The browser
+	// fetches the whole input from the host through the citadel, checks it
+	// against the event's hash, and approves that hash.
+	if code, out := post2("/api/sessions/ws/"+id+"/requests/"+req.RequestID+"/approve", `{}`); code == http.StatusOK || !strings.Contains(fmt.Sprint(out), "input") {
+		t.Errorf("an approval naming no input: %d %v, want a refusal", code, out)
+	}
+	inResp, err := http.Get(w.webURL + "/api/sessions/ws/" + id + "/requests/" + req.RequestID + "/input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var in v1.RequestInput
+	err = json.NewDecoder(inResp.Body).Decode(&in)
+	_ = inResp.Body.Close()
+	sum := sha256.Sum256([]byte(in.Input))
+	if err != nil || hex.EncodeToString(sum[:]) != req.InputHash || in.Size != req.InputSize || !strings.Contains(in.Input, "main.go") {
+		t.Fatalf("the request's input = %+v, %v; the event names hash %s", in, err, req.InputHash)
+	}
+	if code, out := post2("/api/sessions/ws/"+id+"/requests/"+req.RequestID+"/approve", fmt.Sprintf(`{"inputHash":%q}`, hex.EncodeToString(sum[:]))); code != http.StatusOK {
 		t.Fatalf("approve: %d %v", code, out)
 	}
 	v = b.wait(t, "the first turn to end", 30*time.Second, func(v view) bool {
@@ -759,7 +779,7 @@ func TestSessionSurvivesDaemonRestart(t *testing.T) {
 		s, ok := v.sessions[id]
 		return ok && len(s.Pending) == 1 && s.Pending[0].RequestID != first
 	})
-	if code, out := post("/api/sessions/ws/"+id+"/requests/"+v.sessions[id].Pending[0].RequestID+"/approve", `{}`); code != http.StatusOK {
+	if code, out := post("/api/sessions/ws/"+id+"/requests/"+v.sessions[id].Pending[0].RequestID+"/approve", approval(v.sessions[id].Pending[0])); code != http.StatusOK {
 		t.Fatalf("approve: %d %v", code, out)
 	}
 	v = b.wait(t, "the resumed turn to end", 30*time.Second, func(v view) bool {
@@ -775,7 +795,7 @@ func TestSessionSurvivesDaemonRestart(t *testing.T) {
 		t.Fatalf("prompt: %d %v", code, out)
 	}
 	v = b.wait(t, "the next edit to wait", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && len(s.Pending) == 1 })
-	if code, out := post("/api/sessions/ws/"+id+"/requests/"+v.sessions[id].Pending[0].RequestID+"/approve", `{}`); code != http.StatusOK {
+	if code, out := post("/api/sessions/ws/"+id+"/requests/"+v.sessions[id].Pending[0].RequestID+"/approve", approval(v.sessions[id].Pending[0])); code != http.StatusOK {
 		t.Fatalf("approve: %d %v", code, out)
 	}
 	b.wait(t, "the second turn to end", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "idle" && s.Turns == 2 })
@@ -942,7 +962,7 @@ func TestQuestionsReachTheBrowser(t *testing.T) {
 	if p := v.sessions[id].Pending[0]; p.Title != "Edit util.go" {
 		t.Errorf("the agent edits %q, want util.go", p.Title)
 	}
-	if code, out := post("/api/sessions/ws/"+id+"/requests/"+v.sessions[id].Pending[0].RequestID+"/approve", `{}`); code != http.StatusOK {
+	if code, out := post("/api/sessions/ws/"+id+"/requests/"+v.sessions[id].Pending[0].RequestID+"/approve", approval(v.sessions[id].Pending[0])); code != http.StatusOK {
 		t.Fatalf("approve: %d %v", code, out)
 	}
 	b.wait(t, "the turn to end", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "idle" })
@@ -959,4 +979,11 @@ func TestQuestionsReachTheBrowser(t *testing.T) {
 	if p := v.sessions[id].Pending[0]; p.Title != "Edit main.go" {
 		t.Errorf("after a refusal the agent edits %q, want main.go", p.Title)
 	}
+}
+
+// approval is the body of an approval of p, naming the hash of its input,
+// which for the fake agent's small edits is all in the preview.
+func approval(p projections.Permission) string {
+	sum := sha256.Sum256([]byte(p.InputPreview))
+	return fmt.Sprintf(`{"inputHash":%q}`, hex.EncodeToString(sum[:]))
 }

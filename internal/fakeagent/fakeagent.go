@@ -77,6 +77,10 @@ var (
 	Models = []string{"fake-small", "fake-large"}
 )
 
+// BigEdit, anywhere in a prompt, makes the fake agent's edit carry a long
+// input, about 20 KB, as an agent writing a whole file would.
+const BigEdit = "big edit"
+
 // SettingsQuestion, as a whole prompt, makes the fake agent answer with
 // its session's mode and model, as "mode=<mode> model=<model>".
 const SettingsQuestion = "what are your settings?"
@@ -498,15 +502,21 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		title := "Edit " + edited
 		kind := acp.ToolKindEdit
 		locs := []acp.ToolCallLocation{{Path: filepath.Join(s.cwd, edited)}}
+		input := map[string]any{"path": edited, "change": "rewrite"}
+		// "big edit" in the prompt makes the edit's input long, as a whole
+		// file's new content would be, past what a request's event carries.
+		if strings.Contains(strings.ToLower(promptText(req)), BigEdit) {
+			input["content"] = strings.Repeat("// a long line of the file's new content, éh, ✓\n", 400)
+		}
 		named := acp.ToolCallUpdateSessionUpdate(id)
-		named.Title, named.Kind, named.Locations, named.RawInput = &title, &kind, &locs, map[string]any{"path": edited, "change": "rewrite"}
+		named.Title, named.Kind, named.Locations, named.RawInput = &title, &kind, &locs, input
 		if err := send(named); err != nil {
 			return nil, err
 		}
 		// An edit needs permission, like a real agent's would.
 		perm, err := a.conn.RequestPermission(ctx, &acp.RequestPermissionRequest{
 			SessionID: req.SessionID,
-			ToolCall:  acp.ToolCallUpdate{ToolCallID: id, Title: &title, Kind: &kind, Locations: &locs, RawInput: map[string]any{"path": edited, "change": "rewrite"}},
+			ToolCall:  acp.ToolCallUpdate{ToolCallID: id, Title: &title, Kind: &kind, Locations: &locs, RawInput: input},
 			Options: []acp.PermissionOption{
 				{OptionID: "allow", Name: "Allow", Kind: acp.PermissionOptionKindAllowOnce},
 				{OptionID: "always", Name: "Always allow", Kind: acp.PermissionOptionKindAllowAlways},

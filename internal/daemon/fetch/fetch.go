@@ -32,6 +32,7 @@ type Sessions interface {
 	Get(id string) (session.Session, bool)
 	Changes(ctx context.Context, id string) (v1.ChangesResult, error)
 	ToolCall(sessionID, toolCallID string) (v1.ToolCallDetail, error)
+	RequestInput(sessionID, requestID string) (v1.RequestInput, error)
 }
 
 // Responder answers fetch requests for one host.
@@ -79,6 +80,17 @@ func (r *Responder) Handle(ctx context.Context, msg *nats.Msg) {
 			return
 		}
 		data, _ := json.Marshal(changes)
+		r.reply(msg, v1.Reply{Result: data})
+		return
+	case v1.FetchRequestInput:
+		// The whole input, however long: the browser hashes all of it to
+		// approve it.
+		in, err := r.sessions.RequestInput(s.ID, req.RequestID)
+		if err != nil {
+			r.reply(msg, v1.Reply{Error: "that request isn't waiting any more"})
+			return
+		}
+		data, _ := json.Marshal(in)
 		r.reply(msg, v1.Reply{Result: data})
 		return
 	case v1.FetchToolCall:

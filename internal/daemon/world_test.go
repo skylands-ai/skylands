@@ -4,15 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/nats-io/nkeys"
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
 	"github.com/skylands-ai/skylands/internal/approval"
+	"github.com/skylands-ai/skylands/internal/daemon/socket"
 	"github.com/skylands-ai/skylands/internal/natsembed"
 )
 
@@ -120,5 +124,82 @@ func TestCheckWorld(t *testing.T) {
 	elsewhere, _ := pinWorld(t.TempDir(), "c", other, false)
 	if err := checkWorld(ctx, nc, elsewhere); err == nil || !strings.Contains(err.Error(), "won't run in another world") {
 		t.Errorf("another world: %v, want a refusal", err)
+	}
+}
+
+// TestDaemonReadsTheApprovers reads the world's approver registry from the
+// world's JetStream domain, through the island's leaf node, and counts the
+// approvers in its status: none it can't trace to the pinned owner key.
+func TestDaemonReadsTheApprovers(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	hub, err := natsembed.Start(ctx, natsembed.Config{Name: "hub", ClientAddr: "127.0.0.1:0", LeafAddr: freePort(t), StoreDir: t.TempDir(), Domain: "world"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hub.Shutdown()
+	nc, err := nats.Connect(hub.ClientURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := js.CreateOrUpdateStream(ctx, approval.StreamConfig()); err != nil {
+		t.Fatal(err)
+	}
+	kp, owner := ownerKey(t)
+	approver, _ := nkeys.CreateUser()
+	approverPub, _ := approver.PublicKey()
+	entry, _ := approval.Sign(kp, v1.ApproverEntry{Type: "approver", World: owner, Key: approverPub, Name: "laptop", Created: approval.Now()})
+	if _, err := approval.Append(ctx, js, v1.ApproverSubject("approver", approverPub), entry); err != nil {
+		t.Fatal(err)
+	}
+	// An entry another owner key signed doesn't count here.
+	stranger, _ := ownerKey(t)
+	other, _ := nkeys.CreateUser()
+	otherPub, _ := other.PublicKey()
+	stray, _ := approval.Sign(stranger, v1.ApproverEntry{Type: "approver", World: owner, Key: otherPub, Name: "stray", Created: approval.Now()})
+	if _, err := approval.Append(ctx, js, v1.ApproverSubject("approver", otherPub), stray); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Run(ctx, Config{Host: "world", NATSURL: hub.LeafURL(), DataDir: t.TempDir(), World: owner}); err == nil || !strings.Contains(err.Error(), "world's JetStream domain") {
+		t.Errorf("an island named after the world's domain = %v, want a refusal", err)
+	}
+
+	// A short directory: a socket's path has a length limit.
+	sockDir, err := os.MkdirTemp("", "sk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(sockDir) }()
+	sock := filepath.Join(sockDir, "d.sock")
+	runCtx, stop := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(runCtx, Config{Host: "laptop", NATSURL: hub.LeafURL(), DataDir: t.TempDir(), SocketPath: sock, World: owner, WorldDomain: "world"})
+	}()
+	defer func() {
+		stop()
+		if err := <-done; err != nil {
+			t.Errorf("daemon.Run returned %v", err)
+		}
+	}()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		st, err := socket.Dial(sock).Status(ctx)
+		if err == nil && st.Approvers != nil {
+			if *st.Approvers != 1 {
+				t.Fatalf("the daemon counts %d approvers, want 1", *st.Approvers)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the daemon never read the approvers: %+v, %v", st, err)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }

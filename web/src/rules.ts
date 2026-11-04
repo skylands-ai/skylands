@@ -37,9 +37,9 @@ export function patternHint(kind: string): string {
  * anything after, the worktree for an edit inside it or the file itself
  * outside, the site for a fetch. The person edits it before keeping it.
  */
-export function proposeRule(p: Permission, decision: 'allow' | 'deny'): Rule {
+export function proposeRule(p: Permission, parsedInput: unknown, decision: 'allow' | 'deny'): Rule {
   const kind = p.kind || '*'
-  const input = (p.input && typeof p.input === 'object' ? (p.input as Record<string, unknown>) : {}) as Record<string, unknown>
+  const input = (parsedInput && typeof parsedInput === 'object' ? parsedInput : {}) as Record<string, unknown>
   let pattern = ''
   if (kind === 'execute') {
     const command = (typeof input.command === 'string' && input.command) || p.title

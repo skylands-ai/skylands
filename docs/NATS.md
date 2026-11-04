@@ -12,8 +12,10 @@ needs only the settings below.
 JetStream domain is its host's name, and keeps its island's stream
 there. The citadel mirrors each island's stream into the world's domain.
 Without a domain on the world's server, a leaf node's JetStream and the
-world's would be one and the same. Name the world's domain anything that
-isn't also a host name; devworld calls it `world`.
+world's would be one and the same. devworld calls the world's domain
+`world`, and daemons look for the world's approvers there unless
+`--world-domain` names another. Name it anything that isn't also a host
+name.
 
 **A leaf node listener the daemons can reach.** Each daemon dials it with
 `--nats-url nats-leaf://HOST:PORT`. Tell the citadel the same address
@@ -80,7 +82,7 @@ skylands daemon install --world O... \
 | Stream `island-HOST`, subjects `v1.island.HOST.>` events | The host's domain | The host's daemon, its only writer |
 | Mirror `island-HOST` | The world's domain | The citadel |
 | Key-value bucket `skylands-world` | The world's domain | The citadel, once, when the world is set up |
-| Key-value bucket `skylands-approvers` | The world's domain | The citadel, for each browser enrolled with the owner key |
+| Stream `skylands-approvers`, subjects `v1.world.approvers.>` | The world's domain | The citadel, once per record: approvers, their links, and revocations, each on a subject of its own. The stream takes no second message on a subject and refuses deletes and purges, so nothing written is taken back. Daemons read it through their leaf nodes |
 
 The rest is request and reply on subjects under `v1.`, such as
 `v1.world.record`, which daemons ask to learn the world they're in.

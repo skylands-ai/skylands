@@ -1,7 +1,6 @@
 package projections
 
 import (
-	"encoding/json"
 	"sort"
 	"sync"
 	"time"
@@ -15,14 +14,19 @@ const RecentToolCalls = 20
 // Permission is a tool call waiting on a person, with the options the
 // agent accepts as answers.
 type Permission struct {
-	RequestID  string                `json:"requestId"`
-	ToolCallID string                `json:"toolCallId"`
-	Title      string                `json:"title"`
-	Kind       string                `json:"kind,omitempty"`
-	Locations  []string              `json:"locations,omitempty"`
-	Input      json.RawMessage       `json:"input,omitempty"`
-	Options    []v1.PermissionOption `json:"options"`
-	At         time.Time             `json:"at"`
+	RequestID  string   `json:"requestId"`
+	ToolCallID string   `json:"toolCallId"`
+	Title      string   `json:"title"`
+	Kind       string   `json:"kind,omitempty"`
+	Locations  []string `json:"locations,omitempty"`
+	// InputHash, InputSize, and InputPreview describe the input the agent
+	// proposed. A browser shows the whole input, from the preview or
+	// fetched from the host, and approves it by its hash.
+	InputHash    string                `json:"inputHash"`
+	InputSize    int                   `json:"inputSize"`
+	InputPreview string                `json:"inputPreview,omitempty"`
+	Options      []v1.PermissionOption `json:"options"`
+	At           time.Time             `json:"at"`
 }
 
 // Resumed says how a session's agent came back after a daemon restart.
@@ -220,7 +224,7 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 		var d v1.PermissionRequested
 		if ev.Decode(&d) == nil {
 			if s, ok := p.byID[d.SessionID]; ok {
-				s.Pending = append(s.Pending, Permission{RequestID: d.RequestID, ToolCallID: d.ToolCallID, Title: d.Title, Kind: d.Kind, Locations: d.Locations, Input: d.Input, Options: d.Options, At: ev.Time})
+				s.Pending = append(s.Pending, Permission{RequestID: d.RequestID, ToolCallID: d.ToolCallID, Title: d.Title, Kind: d.Kind, Locations: d.Locations, InputHash: d.InputHash, InputSize: d.InputSize, InputPreview: d.InputPreview, Options: d.Options, At: ev.Time})
 				changed = s
 			}
 		}

@@ -71,3 +71,12 @@ type Revocation struct {
 	Key     string `json:"key"`
 	Created string `json:"created"`
 }
+
+// ApproversSubjectPrefix is where a world's approver registry is stored,
+// each record on a subject of its own: ".approver.KEY" for an entry the
+// owner key signs, ".voucher.CLAIM" for a voucher, ".vouched.CLAIM" for
+// the entry that used it, so each voucher works once, and ".revoked.KEY".
+const ApproversSubjectPrefix = "v1.world.approvers"
+
+// ApproverSubject is the subject of one approver registry record.
+func ApproverSubject(kind, key string) string { return ApproversSubjectPrefix + "." + kind + "." + key }

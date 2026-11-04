@@ -141,9 +141,14 @@ type Permission struct {
 	Title      string
 	Kind       string
 	Locations  []string
-	Input      json.RawMessage
-	Options    []v1.PermissionOption
-	At         time.Time
+	// InputHash, InputSize, and InputPreview describe the input the agent
+	// proposed, as PermissionRequested records it. The whole input is
+	// kept while the request waits; RequestInput returns it.
+	InputHash    string
+	InputSize    int
+	InputPreview string
+	Options      []v1.PermissionOption
+	At           time.Time
 }
 
 // Repos finds registered repositories, which the Host aggregate provides.
@@ -238,6 +243,9 @@ type live struct {
 	// hears its decision, and answers the same for questions.
 	asks    map[string]chan agents.Decision
 	answers map[string]chan agents.Answer
+	// inputs holds, by request id, the whole input of each waiting
+	// permission request, which its event names only by hash.
+	inputs map[string][]byte
 }
 
 // Load rebuilds the aggregate from the host's stream. A session that was
@@ -335,7 +343,7 @@ func (m *Manager) resume(id string) {
 		return
 	}
 	midTurn := cur.Status == StatusRunning
-	l := &live{run: run, asks: map[string]chan agents.Decision{}, answers: map[string]chan agents.Answer{}}
+	l := &live{run: run, asks: map[string]chan agents.Decision{}, answers: map[string]chan agents.Answer{}, inputs: map[string][]byte{}}
 	if midTurn {
 		l.turnDone = make(chan struct{})
 	}
@@ -371,17 +379,50 @@ func (m *Manager) resume(id string) {
 // Approve handles ApproveToolCall: it answers a waiting request with an
 // allow option and records who did. By names the path the answer came
 // over, "local" or "citadel".
+//
+// An approval through the citadel must name the hash of the input the
+// person approved, and it is refused unless that is the hash of the input
+// the agent proposed, so an input changed on the way to the person isn't
+// approved. Approvals on the host, and through a session's trust, need
+// none.
 func (m *Manager) Approve(ctx context.Context, cmd v1.ApproveToolCall, by string) (Session, error) {
-	return m.decide(ctx, cmd.ID, cmd.SessionID, cmd.RequestID, by, cmd.OptionID, true)
+	return m.decide(ctx, cmd.ID, cmd.SessionID, cmd.RequestID, by, cmd.OptionID, cmd.InputHash, true)
+}
+
+// RequestInput is the whole input of a request that is waiting.
+func (m *Manager) RequestInput(sessionID, requestID string) (v1.RequestInput, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l := m.live[sessionID]
+	if l == nil {
+		return v1.RequestInput{}, fmt.Errorf("%w: %s", ErrUnknownRequest, requestID)
+	}
+	input, ok := l.inputs[requestID]
+	if !ok {
+		return v1.RequestInput{}, fmt.Errorf("%w: %s", ErrUnknownRequest, requestID)
+	}
+	hash, size, _ := v1.DescribeInput(input)
+	return v1.RequestInput{RequestID: requestID, Input: string(input), Hash: hash, Size: size}, nil
+}
+
+// permissionRequested is the event for a tool call that waits on a person,
+// or that a rule refused, naming its input by hash, size, and preview.
+func permissionRequested(sessionID, requestID string, tc agents.ToolCall, req agents.PermissionRequest) v1.PermissionRequested {
+	hash, size, preview := v1.DescribeInput(req.Input)
+	return v1.PermissionRequested{SessionID: sessionID, RequestID: requestID, ToolCallID: tc.ID, Title: tc.Title, Kind: tc.Kind, Locations: tc.Locations, InputHash: hash, InputSize: size, InputPreview: preview, Options: req.Options}
 }
 
 // Deny handles DenyToolCall: it answers a waiting request with a reject
 // option and records who did.
 func (m *Manager) Deny(ctx context.Context, cmd v1.DenyToolCall, by string) (Session, error) {
-	return m.decide(ctx, cmd.ID, cmd.SessionID, cmd.RequestID, by, "", false)
+	return m.decide(ctx, cmd.ID, cmd.SessionID, cmd.RequestID, by, "", "", false)
 }
 
-func (m *Manager) decide(ctx context.Context, commandID, sessionID, requestID, by, optionID string, allow bool) (Session, error) {
+// ErrInputMismatch is an approval through the citadel that names no input,
+// or another input than the one the agent proposed.
+var ErrInputMismatch = errors.New("the input this approval names isn't the input the agent asked about")
+
+func (m *Manager) decide(ctx context.Context, commandID, sessionID, requestID, by, optionID, inputHash string, allow bool) (Session, error) {
 	m.cmdMu.Lock()
 	defer m.cmdMu.Unlock()
 	m.mu.Lock()
@@ -409,6 +450,15 @@ func (m *Manager) decide(ctx context.Context, commandID, sessionID, requestID, b
 	m.mu.Unlock()
 	if pending == nil || ask == nil {
 		return *s, fmt.Errorf("%w: %s", ErrUnknownRequest, requestID)
+	}
+	if allow && by == "citadel" {
+		switch {
+		case inputHash == "":
+			return *s, fmt.Errorf("%w: an approval through the citadel must name the input it approves", ErrInputMismatch)
+		case inputHash != pending.InputHash:
+			slog.Warn("session: an approval named another input", "session", sessionID, "request", requestID)
+			return *s, ErrInputMismatch
+		}
 	}
 	option := pickOption(pending.Options, allow, optionID)
 	if option == "" {
@@ -986,7 +1036,7 @@ func (m *Manager) begin(id string, adapter agents.Adapter, worktree, prompt, mod
 		}
 		return
 	}
-	l := &live{run: run, turnDone: make(chan struct{}), asks: map[string]chan agents.Decision{}, answers: map[string]chan agents.Answer{}}
+	l := &live{run: run, turnDone: make(chan struct{}), asks: map[string]chan agents.Decision{}, answers: map[string]chan agents.Answer{}, inputs: map[string][]byte{}}
 	m.mu.Lock()
 	m.live[id] = l
 	m.mu.Unlock()
@@ -1235,7 +1285,7 @@ func (m *Manager) apply(ev v1.Event) {
 		var d v1.PermissionRequested
 		if ev.Decode(&d) == nil {
 			if s := touch(d.SessionID); s != nil {
-				s.Pending = append(s.Pending, Permission{RequestID: d.RequestID, ToolCallID: d.ToolCallID, Title: d.Title, Kind: d.Kind, Locations: d.Locations, Input: d.Input, Options: d.Options, At: ev.Time})
+				s.Pending = append(s.Pending, Permission{RequestID: d.RequestID, ToolCallID: d.ToolCallID, Title: d.Title, Kind: d.Kind, Locations: d.Locations, InputHash: d.InputHash, InputSize: d.InputSize, InputPreview: d.InputPreview, Options: d.Options, At: ev.Time})
 			}
 		}
 	case v1.EventPermissionGranted, v1.EventPermissionDenied, v1.EventPermissionExpired:
@@ -1557,7 +1607,7 @@ func (o *observer) Permission(ctx context.Context, req agents.PermissionRequest)
 	case v1.RuleDeny:
 		requestID := nuid.Next()
 		option := pickOption(req.Options, false, "")
-		_ = m.record(m.ctx, o.id, "", v1.EventPermissionRequested, v1.PermissionRequested{SessionID: o.id, RequestID: requestID, ToolCallID: tc.ID, Title: tc.Title, Kind: tc.Kind, Locations: tc.Locations, Input: req.Input, Options: req.Options})
+		_ = m.record(m.ctx, o.id, "", v1.EventPermissionRequested, permissionRequested(o.id, requestID, tc, req))
 		_ = m.record(m.ctx, o.id, "", v1.EventPermissionDenied, v1.PermissionDenied{SessionID: o.id, RequestID: requestID, OptionID: option, By: "rule"})
 		o.t.Line(ToolLine(tc.Title+" (denied by a rule)", tc.ID))
 		slog.Info("session: denied by a rule", "session", o.id, "tool", tc.Title)
@@ -1572,6 +1622,7 @@ func (o *observer) Permission(ctx context.Context, req agents.PermissionRequest)
 	l := m.live[o.id]
 	if l != nil {
 		l.asks[requestID] = ask
+		l.inputs[requestID] = append([]byte(nil), req.Input...)
 	}
 	m.mu.Unlock()
 	if l == nil {
@@ -1580,9 +1631,10 @@ func (o *observer) Permission(ctx context.Context, req agents.PermissionRequest)
 	defer func() {
 		m.mu.Lock()
 		delete(l.asks, requestID)
+		delete(l.inputs, requestID)
 		m.mu.Unlock()
 	}()
-	if err := m.record(m.ctx, o.id, "", v1.EventPermissionRequested, v1.PermissionRequested{SessionID: o.id, RequestID: requestID, ToolCallID: tc.ID, Title: tc.Title, Kind: tc.Kind, Locations: tc.Locations, Input: req.Input, Options: req.Options}); err != nil {
+	if err := m.record(m.ctx, o.id, "", v1.EventPermissionRequested, permissionRequested(o.id, requestID, tc, req)); err != nil {
 		return agents.Decision{Cancelled: true}
 	}
 	slog.Info("session: waiting for a person", "session", o.id, "request", requestID, "tool", tc.Title)

@@ -158,11 +158,14 @@ type StatusInfo struct {
 	WorldOwner string `json:"worldOwner,omitempty"`
 	// SetupURL is the link to set the world up, while there is no world
 	// and the daemon knows it, as devworld's daemon does.
-	SetupURL string        `json:"setupUrl,omitempty"`
-	Version  string        `json:"version"`
-	Started  time.Time     `json:"started"`
-	Repos    []RepoInfo    `json:"repos"`
-	Sessions []SessionInfo `json:"sessions,omitempty"`
+	SetupURL string `json:"setupUrl,omitempty"`
+	// Approvers is how many approvers approve for the world, as the daemon
+	// reads them from the world's registry, once it has.
+	Approvers *int          `json:"approvers,omitempty"`
+	Version   string        `json:"version"`
+	Started   time.Time     `json:"started"`
+	Repos     []RepoInfo    `json:"repos"`
+	Sessions  []SessionInfo `json:"sessions,omitempty"`
 	// Agents is what the daemon last found about the agents it can
 	// launch, or empty before its first check.
 	Agents []v1.AgentAvailability `json:"agents,omitempty"`

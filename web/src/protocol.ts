@@ -182,14 +182,20 @@ export interface PermissionOption {
   kind: string
 }
 
-/** A tool call waiting on a person, with the exact input the agent proposed. */
+/**
+ * A tool call waiting on a person. The input the agent proposed is named by
+ * its SHA-256 and size, with a preview that is all of it when it is short;
+ * otherwise the host serves the whole input.
+ */
 export interface Permission {
   requestId: string
   toolCallId: string
   title: string
   kind?: string
   locations?: string[]
-  input?: unknown
+  inputHash: string
+  inputSize: number
+  inputPreview?: string
   options: PermissionOption[]
   at: string
 }

@@ -85,7 +85,7 @@ func runDevworld(ctx context.Context, o devworldOptions) error {
 		ClientAddr: o.natsListen,
 		LeafAddr:   o.leafListen,
 		StoreDir:   filepath.Join(o.dataDir, "nats"),
-		Domain:     "world",
+		Domain:     daemon.DefaultWorldDomain,
 	})
 	if err != nil {
 		return err
@@ -113,6 +113,7 @@ func runDevworld(ctx context.Context, o devworldOptions) error {
 		errc <- daemon.Run(ctx, daemon.Config{
 			Host: o.host, NATSURL: srv.LeafURL(), DataDir: o.dataDir, SocketPath: o.socketPath, Version: versionString(),
 			TrustFirstWorld: true,
+			WorldDomain:     daemon.DefaultWorldDomain,
 			SetupURL:        func() string { return setupLink.Load().(string) },
 		})
 	}()

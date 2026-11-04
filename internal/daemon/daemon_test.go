@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -271,7 +273,25 @@ func TestStartSessionOverNATS(t *testing.T) {
 		st, err := cli.Status(ctx)
 		if err == nil && len(st.Sessions) == 1 && st.Sessions[0].Pending == 1 {
 			reqs, _ := cli.Requests(ctx)
-			if r := command(v1.CommandApproveToolCall, v1.ApproveToolCall{ID: "cmd-ok", RequestID: reqs[0].ID}); r.Error != "" {
+			// As a browser does: fetch the whole input from the host, hash
+			// it, and approve that hash.
+			data, _ := json.Marshal(v1.FetchSessionRequest{SessionID: "sess-1", RequestID: reqs[0].ID})
+			msg, err := nc.Request(v1.IslandFetchSubject("ws", v1.FetchRequestInput), data, 10*time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var reply v1.Reply
+			var in v1.RequestInput
+			_ = json.Unmarshal(msg.Data, &reply)
+			if err := json.Unmarshal(reply.Result, &in); err != nil || in.Input == "" || in.Input != string(reqs[0].Input) {
+				t.Fatalf("the request's input = %+v (%s), %v; the CLI sees %s", in, reply.Error, err, reqs[0].Input)
+			}
+			sum := sha256.Sum256([]byte(in.Input))
+			wrong := sha256.Sum256([]byte(in.Input + " "))
+			if r := command(v1.CommandApproveToolCall, v1.ApproveToolCall{ID: "cmd-bad", RequestID: reqs[0].ID, InputHash: hex.EncodeToString(wrong[:])}); !strings.Contains(r.Error, "isn't the input") {
+				t.Fatalf("an approval naming another input = %+v, want a refusal", r)
+			}
+			if r := command(v1.CommandApproveToolCall, v1.ApproveToolCall{ID: "cmd-ok", RequestID: reqs[0].ID, InputHash: hex.EncodeToString(sum[:])}); r.Error != "" {
 				t.Fatalf("ApproveToolCall failed: %s", r.Error)
 			}
 			break
