@@ -5,6 +5,7 @@ import { renderMarkdown } from './markdown'
 import { agentGlyph, timeNode } from './panels/parts'
 import type { Permission, Question, QuestionField, Session } from './protocol'
 import { replyBox } from './reply'
+import { inputsVersion, requestInput } from './requestinput'
 import { HOST_DEFAULTS, proposeRule, ruleText, rulesSheet } from './rules'
 import { agentLabel, isOpen, sessionLabel, sessionStatus, tokensBreakdown, tokensLabel, tokensText } from './status'
 import { conversationList, isUnread, isWaiting, sumTokens, type State } from './store'
@@ -24,8 +25,10 @@ export interface InboxActions {
   /** Interrupts the turn in progress and keeps the session. */
   cancel(s: Session): Promise<string>
   stop(s: Session): Promise<string>
-  /** Answers a waiting tool call. Resolves with an error message, or empty. */
-  approve(s: Session, p: Permission, optionId: string): Promise<string>
+  /** Draws the inbox again, as when a request's whole input arrives. */
+  redraw(): void
+  /** Answers a waiting tool call, naming the hash of the input the person saw. Resolves with an error message, or empty. */
+  approve(s: Session, p: Permission, optionId: string, inputHash: string): Promise<string>
   deny(s: Session, p: Permission): Promise<string>
   /** Answers a question the agent asked, with values by field key, or declines it. */
   answer(s: Session, q: Question, answers: Record<string, unknown>): Promise<string>
@@ -70,7 +73,7 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live
   // Once the agent is not mid-turn, where its changes stand is read from the
   // host, and read again after each event, such as a commit.
   const changes = open && open.status !== 'running' && !open.worktreeRemoved ? cache.get('changes', open.host, open.id, 0, Date.parse(open.updatedAt)) : undefined
-  const deps = [s.sessions, s.repos, s.viewed, s.inbox, s.inboxFilter, open, fetched?.at, fetched?.loading, fetched?.error, fetched?.text, changes?.at, changes?.loading, changes?.error, changes?.changes, rulesToggles, ...(open ? chipDeps(open, cache) : [])]
+  const deps = [s.sessions, s.repos, s.viewed, s.inbox, s.inboxFilter, open, inputsVersion(), fetched?.at, fetched?.loading, fetched?.error, fetched?.text, changes?.at, changes?.loading, changes?.error, changes?.changes, rulesToggles, ...(open ? chipDeps(open, cache) : [])]
   if (lastDeps && lastDeps.length === deps.length && lastDeps.every((d, i) => d === deps[i])) return
   lastDeps = deps
 
@@ -103,8 +106,14 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live
  * repository, with the pattern the request suggests, edited as you like.
  */
 function approvalCard(s: State, x: Session, p: Permission, actions: InboxActions): HTMLElement {
+  // The whole input, which the person sees and approves by its hash. Until
+  // it is here and its hash checks out, nothing can be allowed.
+  const view = requestInput(x.host, x.id, p, actions.redraw)
   const note = el('span', { class: 'sub' })
   const buttons: HTMLButtonElement[] = []
+  const enable = (): void => {
+    for (const b of buttons) b.disabled = b.dataset.allows === 'true' && !view.hash
+  }
   const decide = async (run: () => Promise<string>, saying: string): Promise<void> => {
     for (const b of buttons) b.disabled = true
     note.textContent = saying
@@ -113,26 +122,31 @@ function approvalCard(s: State, x: Session, p: Permission, actions: InboxActions
     if (err) {
       note.textContent = err
       note.style.color = 'var(--bad)'
-      for (const b of buttons) b.disabled = false
+      enable()
     }
+  }
+  if (view.loading) note.textContent = `Getting the whole input from ${x.host} (${sizeText(p.inputSize)})\u2026`
+  if (view.error) {
+    note.textContent = view.error
+    note.style.color = 'var(--bad)'
   }
   const allows = p.options.filter((o) => o.kind.startsWith('allow'))
   const rejects = p.options.filter((o) => o.kind.startsWith('reject'))
   const once = allows.find((o) => o.kind === 'allow_once') ?? allows[0]
   if (once) {
-    buttons.push(el('button', { type: 'button', class: 'btn small primary', text: once.kind === 'allow_once' ? 'Allow once' : once.name, onclick: () => void decide(() => actions.approve(x, p, once.id), 'Allowing\u2026') }) as HTMLButtonElement)
+    buttons.push(el('button', { type: 'button', class: 'btn small primary', 'data-allows': 'true', text: once.kind === 'allow_once' ? 'Allow once' : once.name, onclick: () => void decide(() => actions.approve(x, p, once.id, view.hash ?? ''), 'Allowing\u2026') }) as HTMLButtonElement)
   }
   buttons.push(el('button', { type: 'button', class: 'btn small ghost', text: rejects[0]?.name ?? 'Deny', onclick: () => void decide(() => actions.deny(x, p), 'Denying\u2026') }) as HTMLButtonElement)
 
   // Remember the answer as a rule. The request's answer follows once the
   // rule is saved, so a refused rule leaves the request waiting.
   const repo = s.repos[x.repoId]
-  const proposed = proposeRule(p, 'allow')
+  const proposed = proposeRule(p, view.parsed, 'allow')
   const decision = el('select', { 'aria-label': 'Decision to remember' }, [el('option', { value: 'allow', text: 'allow' }), el('option', { value: 'deny', text: 'deny' })]) as HTMLSelectElement
   const pattern = el('input', { type: 'text', 'aria-label': 'Pattern', placeholder: 'any' }) as HTMLInputElement
   pattern.value = proposed.pattern ?? ''
   const rule = (): Rule => ({ decision: decision.value as Rule['decision'], kind: proposed.kind, pattern: pattern.value.trim() || undefined })
-  const answer = (): Promise<string> => (decision.value === 'allow' && once ? actions.approve(x, p, once.id) : actions.deny(x, p))
+  const answer = (): Promise<string> => (decision.value === 'allow' && once ? actions.approve(x, p, once.id, view.hash ?? '') : actions.deny(x, p))
   const forSession = el('button', { type: 'button', class: 'btn small', text: 'For this session', onclick: () => void decide(async () => (await actions.setSessionRules(x, [...x.rules, rule()])) || answer(), 'Saving the rule\u2026') }) as HTMLButtonElement
   const forRepo = el('button', {
     type: 'button',
@@ -160,10 +174,16 @@ function approvalCard(s: State, x: Session, p: Permission, actions: InboxActions
 
   const where = p.locations?.length ? el('div', { class: 'where' }, [el('code', { text: p.locations.join(', ') })]) : null
   let input: HTMLElement | null = null
-  if (p.input !== undefined && p.input !== null) {
-    const text = typeof p.input === 'string' ? p.input : JSON.stringify(p.input, null, 2)
-    input = el('details', {}, [el('summary', { text: 'Exact input' }), el('pre', { text })])
+  if (p.inputSize > 0) {
+    const text =
+      view.text === null
+        ? `${view.preview}\u2026`
+        : view.parsed !== null && typeof view.parsed === 'object'
+          ? JSON.stringify(view.parsed, null, 2)
+          : view.text
+    input = el('details', {}, [el('summary', { text: view.text === null ? `Exact input (${sizeText(p.inputSize)}, the start)` : 'Exact input' }), el('pre', { text })])
   }
+  enable()
   return el('div', { class: 'approval', role: 'group', 'aria-label': `Approval needed: ${p.title}` }, [
     el('div', { class: 'ask' }, [el('span', { class: 'mark', style: 'background:#E0B000' }), el('strong', { text: p.title }), p.kind ? el('span', { class: 'kindchip', text: p.kind }) : null, el('span', { class: 'muted', style: 'margin-left:auto;font-size:12px' }, ['asked ', timeNode(p.at, 'ago')])]),
     where,
@@ -588,4 +608,11 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
     : null
   const convo = el('section', { class: 'convo', 'aria-label': `${sessionLabel(x)}, with ${name}`, 'data-session': x.id }, [head, hint, rules, body, foot])
   return convo
+}
+
+/** "512 bytes", "12 KB", "3.4 MB". */
+function sizeText(n: number): string {
+  if (n < 1024) return `${n} bytes`
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
 }

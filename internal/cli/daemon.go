@@ -51,6 +51,7 @@ func daemonUpFlags(f *pflag.FlagSet, cfg *daemon.Config) {
 	f.StringVar(&cfg.DataDir, "data-dir", defaultDataDir(), "directory for the leaf node's JetStream store and agent worktrees")
 	f.StringVar(&cfg.SocketPath, "socket", defaultSocketPath(), "Unix socket to listen on for the local CLI")
 	f.StringVar(&cfg.World, "world", "", `owner key of the world to join, from "Add a host" on the citadel`)
+	f.StringVar(&cfg.WorldDomain, "world-domain", daemon.DefaultWorldDomain, "JetStream domain of the world's NATS server, where its approvers are")
 }
 
 func newDaemonInstallCmd() *cobra.Command {
@@ -80,6 +81,9 @@ func newDaemonStatusCmd() *cobra.Command {
 			fmt.Fprintf(w, "World:    %s\n", st.World)
 			if st.WorldOwner != "" {
 				fmt.Fprintf(w, "Owner:    %s\n", st.WorldOwner)
+			}
+			if st.Approvers != nil {
+				fmt.Fprintf(w, "Approvers: %d\n", *st.Approvers)
 			}
 			if st.SetupURL != "" {
 				fmt.Fprintf(w, "Set up:   %s\n", st.SetupURL)

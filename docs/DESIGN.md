@@ -212,7 +212,7 @@ Every kind of data has one home and, where it needs one, a named copy.
 | Commands and queries | Nowhere; they're NATS request-reply | People, through a citadel, the CLI, or an integration | None |
 | World record: its name and owner key, signed by the owner key | The `skylands-world` bucket in the world's JetStream domain | A citadel, once, when the owner sets the world up | Each daemon pins the owner key it names |
 | Owner key | Only in the recovery file the owner downloads when setting the world up | The owner's browser, during setup | None |
-| Approver keys | Private keys stay in each approver browser's IndexedDB, for the citadel's origin, and public keys travel in approver entries | People's browsers | The `skylands-approvers` bucket in the world's JetStream domain |
+| Approver keys | Private keys stay in each approver browser's IndexedDB, for the citadel's origin, and public keys travel in approver entries | People's browsers | The `skylands-approvers` stream in the world's JetStream domain |
 
 
 Each role creates the streams it needs, idempotently. A daemon creates its host stream and its mirrors of the rule and user streams at startup. A citadel creates a host's mirror in the world's domain the first time it sees that host, and creating a mirror that already exists changes nothing.
@@ -365,6 +365,7 @@ Rules settle most tool calls on the host, so only what no rule covers reaches a 
 
 - The approver's browser signs, with its approver key, a challenge that is the digest of the world, host, session, request id, decision, and the exact tool input.
 - The daemon verifies that signature against its projection of approver keys before it records PermissionGranted or PermissionDenied.
+- `PermissionRequested` names the tool input by the SHA-256 of its exact bytes and its size, with a preview that is the whole input when it is at most 8 KB, so events stay small. The daemon keeps the whole input while the request waits and serves it on request. The browser shows the whole input, from the preview or fetched, hashes it itself, and its approval names that hash; the daemon refuses an approval through the citadel whose hash isn't that of the input the agent proposed, so an input changed on its way to the person can't be approved.
 - The first valid decision wins, and any later decision for the same request is rejected.
 - Approvals made at the host through the local CLI are accepted from the OS user that owns the daemon.
 
@@ -373,7 +374,7 @@ Rules settle most tool calls on the host, so only what no rule covers reaches a 
 - Each world has an owner key, made in the owner's browser when the world is set up and kept only in the recovery file the owner downloads. It signs the world record and the entries that enroll approvers through setup or the recovery file.
 - An approver adds another with a voucher: a one-time grant it signs, naming a claim key whose seed travels only in the link's fragment. The browser that opens the link signs its approver entry with that seed. A voucher works once, within 15 minutes of when it was stored, by the NATS server's clock.
 - The owner key or any approver can revoke any approver, and a revocation is never undone. An approver approves only while it, and every approver back to the owner key that added it, isn't revoked, so revoking one removes everything added through it.
-- The approver registry is the `skylands-approvers` bucket. Each record is written once, to a key of its own, and the registry is decided from the records in revision order, so every citadel and daemon reading the same bucket agrees on it.
+- The approver registry is the `skylands-approvers` stream in the world's JetStream domain. Each record is written once, to a subject of its own, and the stream takes no second message on a subject and refuses deletes and purges, so a revocation, once stored, can't be taken back. The registry is decided from the records in stream order, so every citadel and daemon reading the stream agrees on it. Each daemon reads it through its leaf node from the world's domain, `world` unless `--world-domain` names another.
 - Each daemon pins the owner key and refuses to run in a world whose record names another.
 - NATS decides which daemons and citadels join the world. The owner gives each one credentials for the world's NATS account, however they run NATS, and Skylands adds no enrollment of its own: whatever NATS admits to that account is trusted as a daemon.
 - The citadel holds only a scoped signing key, which can mint credentials for limited roles such as integrations.

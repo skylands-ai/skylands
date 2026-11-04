@@ -21,15 +21,12 @@ import (
 	"github.com/skylands-ai/skylands/internal/citadel/web"
 )
 
-// The KV buckets that hold the world: its record, which is written once
-// when the world is set up, and its approver registry. Every registry
-// record is written once, to a key of its own: "approver.KEY" for an entry
-// the owner key signs, "voucher.CLAIM" for a voucher, "vouched.CLAIM" for
-// the entry that used it, so each voucher works once, and "revoked.KEY".
+// The KV bucket that holds the world's record, which is written once when
+// the world is set up. The approver registry is a stream of its own:
+// approval.StreamName.
 const (
-	worldBucket     = "skylands-world"
-	worldKey        = "record"
-	approversBucket = "skylands-approvers"
+	worldBucket = "skylands-world"
+	worldKey    = "record"
 )
 
 // NATSSettingsURL is the page that lists the NATS settings a world needs.
@@ -49,10 +46,13 @@ type worldView struct {
 	// problems are the NATS settings the world needs that are missing.
 	problems []string
 	worldKV  jetstream.KeyValue
-	approKV  jetstream.KeyValue
-	// records is the approver registry as stored, by KV key, and registry
-	// what it says, once the world's owner is known.
-	records  map[string]approval.Record
+	// js reaches the world's JetStream domain, where the approver registry
+	// stream is.
+	js jetstream.JetStream
+	// records is the approver registry as stored, by stream sequence, and
+	// registry what it says, once the world's owner is known. Nothing is
+	// ever taken out of the stream, so nothing is taken out of records.
+	records  map[uint64]approval.Record
 	registry *approval.Registry
 	// watching is true once the citadel watches the approver registry.
 	watching bool
@@ -99,9 +99,9 @@ func (c *citadel) checkWorld(nc *nats.Conn) {
 		slog.Warn("citadel: NATS setting missing", "problem", p, "settings", NATSSettingsURL)
 	}
 	worldKV, werr := js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: worldBucket, History: 1, Description: "The Skylands world's record"})
-	approKV, aerr := js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: approversBucket, History: 5, Description: "The Skylands world's approvers"})
+	_, aerr := js.CreateOrUpdateStream(ctx, approval.StreamConfig())
 	if werr != nil || aerr != nil {
-		slog.Warn("citadel: create the world's buckets", "err", errors.Join(werr, aerr))
+		slog.Warn("citadel: create the world's record bucket and approvers stream", "err", errors.Join(werr, aerr))
 		c.setWorld(func(w *worldView) { w.problems = problems })
 		return
 	}
@@ -115,9 +115,9 @@ func (c *citadel) checkWorld(nc *nats.Conn) {
 		return
 	}
 	c.setWorld(func(w *worldView) {
-		w.checked, w.problems, w.worldKV, w.approKV = true, problems, worldKV, approKV
+		w.checked, w.problems, w.worldKV, w.js = true, problems, worldKV, js
 	})
-	c.watchApprovers(approKV)
+	c.followApprovers(js)
 	if signed != nil {
 		c.worldReady(*signed)
 		return
@@ -300,14 +300,14 @@ func (c *citadel) setupWorld(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "store the world's record: "+err.Error())
 		return
 	}
-	data, _ := json.Marshal(req.Approver)
-	if _, err := view.approKV.Create(r.Context(), "approver."+entry.Key, data); err != nil {
+	first, err := approval.Append(r.Context(), view.js, v1.ApproverSubject("approver", entry.Key), req.Approver)
+	if err != nil {
 		writeError(w, http.StatusBadGateway, "store the approver: "+err.Error())
 		return
 	}
 	slog.Info("citadel: world set up", "name", rec.Name, "owner", rec.Owner, "approver", entry.Name)
 	c.worldReady(req.World)
-	c.reread(r.Context(), view.approKV, "approver."+entry.Key)
+	c.addRecords([]approval.Record{first})
 	writeJSON(w, http.StatusOK, c.worldInfo())
 }
 
@@ -334,7 +334,7 @@ func (c *citadel) addApprover(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "the approver: "+err.Error())
 			return
 		}
-		if !c.storeRecord(w, r.Context(), "approver."+entry.Key, req.Approver, "this browser's key is already an approver") {
+		if !c.storeRecord(w, r.Context(), v1.ApproverSubject("approver", entry.Key), req.Approver, "this browser's key is already an approver") {
 			return
 		}
 		slog.Info("citadel: approver enrolled with the owner key", "approver", entry.Name, "key", entry.Key)
@@ -366,7 +366,7 @@ func (c *citadel) addApprover(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "this browser's key is already an approver")
 		return
 	}
-	if !c.storeRecord(w, r.Context(), "vouched."+entry.Voucher, req.Approver, "that link was already used; ask an approver for a new one") {
+	if !c.storeRecord(w, r.Context(), v1.ApproverSubject("vouched", entry.Voucher), req.Approver, "that link was already used; ask an approver for a new one") {
 		return
 	}
 	by, _ := reg.Approver(v.By)
@@ -397,7 +397,7 @@ func (c *citadel) addVoucher(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "this browser doesn't approve for this world, so it can't add an approver")
 		return
 	}
-	if !c.storeRecord(w, r.Context(), "voucher."+v.Claim, req.Voucher, "that voucher is already stored") {
+	if !c.storeRecord(w, r.Context(), v1.ApproverSubject("voucher", v.Claim), req.Voucher, "that voucher is already stored") {
 		return
 	}
 	c.voucherInfo(w, v.Claim)
@@ -468,12 +468,14 @@ func (c *citadel) revokeApprover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if target.Revoked.IsZero() {
-		data, _ := json.Marshal(req.Revocation)
-		if _, err := view.approKV.Create(r.Context(), "revoked."+rv.Key, data); err != nil && !errors.Is(err, jetstream.ErrKeyExists) {
+		rec, err := approval.Append(r.Context(), view.js, v1.ApproverSubject("revoked", rv.Key), req.Revocation)
+		switch {
+		case err == nil:
+			c.addRecords([]approval.Record{rec})
+		case !errors.Is(err, approval.ErrTaken):
 			writeError(w, http.StatusBadGateway, "store the revocation: "+err.Error())
 			return
 		}
-		c.reread(r.Context(), view.approKV, "revoked."+rv.Key)
 		slog.Info("citadel: approver revoked", "approver", target.Name, "key", rv.Key, "through", len(reg.Through(rv.Key)))
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"key": rv.Key})
@@ -494,7 +496,7 @@ func (c *citadel) readyWorld(w http.ResponseWriter) (worldView, bool) {
 	view := c.world
 	c.mu.Unlock()
 	switch {
-	case view.signed == nil || view.approKV == nil:
+	case view.signed == nil || view.js == nil:
 		writeError(w, http.StatusConflict, "this world isn't set up yet")
 		return view, false
 	case view.registry == nil:
@@ -504,38 +506,31 @@ func (c *citadel) readyWorld(w http.ResponseWriter) (worldView, bool) {
 	return view, true
 }
 
-// storeRecord writes a registry record to its own key, once, and takes it
-// into the registry at once rather than waiting for the watch to deliver
-// it. If the key is already written, it answers 409 with taken.
-func (c *citadel) storeRecord(w http.ResponseWriter, ctx context.Context, key string, s v1.Signed, taken string) bool {
+// storeRecord writes a registry record to its own subject, once, and
+// takes it into the registry at once rather than waiting for the stream to
+// deliver it. If the subject already holds a record, it answers 409 with
+// taken.
+func (c *citadel) storeRecord(w http.ResponseWriter, ctx context.Context, subject string, s v1.Signed, taken string) bool {
 	c.mu.Lock()
-	kv := c.world.approKV
+	js := c.world.js
 	c.mu.Unlock()
-	data, _ := json.Marshal(s)
-	if _, err := kv.Create(ctx, key, data); err != nil {
-		if errors.Is(err, jetstream.ErrKeyExists) {
+	rec, err := approval.Append(ctx, js, subject, s)
+	if err != nil {
+		if errors.Is(err, approval.ErrTaken) {
 			writeError(w, http.StatusConflict, taken)
 			return false
 		}
 		writeError(w, http.StatusBadGateway, "store it: "+err.Error())
 		return false
 	}
-	c.reread(ctx, kv, key)
+	c.addRecords([]approval.Record{rec})
 	return true
 }
 
-// reread takes one registry record into the registry.
-func (c *citadel) reread(ctx context.Context, kv jetstream.KeyValue, key string) {
-	if e, err := kv.Get(ctx, key); err == nil {
-		c.noteRecord(e)
-		c.approversChanged()
-	}
-}
-
-// watchApprovers follows the approver registry, which approvers change
-// through any citadel, and keeps this citadel's view of it current. It
-// starts once, and watches again if the watch ends.
-func (c *citadel) watchApprovers(kv jetstream.KeyValue) {
+// followApprovers reads the approver registry stream, which approvers
+// change through any citadel, and keeps this citadel's view of it current.
+// It starts once, and reads again if reading stops.
+func (c *citadel) followApprovers(js jetstream.JetStream) {
 	start := false
 	c.setWorld(func(w *worldView) {
 		if !w.watching {
@@ -547,46 +542,27 @@ func (c *citadel) watchApprovers(kv jetstream.KeyValue) {
 	}
 	go func() {
 		for c.ctx.Err() == nil {
-			watcher, err := kv.WatchAll(c.ctx)
-			if err != nil {
-				slog.Warn("citadel: watch the approvers", "err", err)
-				select {
-				case <-c.ctx.Done():
-				case <-time.After(2 * time.Second):
-				}
-				continue
+			approval.Follow(c.ctx, js, c.addRecords)
+			select {
+			case <-c.ctx.Done():
+			case <-time.After(2 * time.Second):
 			}
-			loaded := false
-			for e := range watcher.Updates() {
-				if e == nil {
-					loaded = true
-				} else {
-					c.noteRecord(e)
-				}
-				if loaded {
-					c.approversChanged()
-				}
-			}
-			_ = watcher.Stop()
 		}
 	}()
 }
 
-// noteRecord takes one change to the approver registry into the citadel's
-// copy of it.
-func (c *citadel) noteRecord(e jetstream.KeyValueEntry) {
-	var s v1.Signed
-	put := e.Operation() == jetstream.KeyValuePut && json.Unmarshal(e.Value(), &s) == nil
+// addRecords takes registry records into the citadel's copy of the
+// registry, and rebuilds it.
+func (c *citadel) addRecords(records []approval.Record) {
 	c.setWorld(func(w *worldView) {
 		if w.records == nil {
-			w.records = map[string]approval.Record{}
+			w.records = map[uint64]approval.Record{}
 		}
-		if put {
-			w.records[e.Key()] = approval.Record{Signed: s, Revision: e.Revision(), Stored: e.Created()}
-		} else {
-			delete(w.records, e.Key())
+		for _, r := range records {
+			w.records[r.Revision] = r
 		}
 	})
+	c.approversChanged()
 }
 
 // approversChanged rebuilds the registry, once the world's owner is known,

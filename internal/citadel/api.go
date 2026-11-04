@@ -56,6 +56,7 @@ func (c *citadel) api() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{host}/{id}/diff", c.fetchFromHost(v1.FetchDiff))
 	mux.HandleFunc("GET /api/sessions/{host}/{id}/changes", c.fetchFromHost(v1.FetchChanges))
 	mux.HandleFunc("GET /api/sessions/{host}/{id}/tools/{tid}", c.fetchFromHost(v1.FetchToolCall))
+	mux.HandleFunc("GET /api/sessions/{host}/{id}/requests/{rid}/input", c.fetchFromHost(v1.FetchRequestInput))
 	return mux
 }
 
@@ -153,10 +154,11 @@ func (c *citadel) stopAgent(w http.ResponseWriter, r *http.Request) {
 func (c *citadel) approve(w http.ResponseWriter, r *http.Request) {
 	host, id, rid := r.PathValue("host"), r.PathValue("id"), r.PathValue("rid")
 	var body struct {
-		OptionID string `json:"optionId"`
+		OptionID  string `json:"optionId"`
+		InputHash string `json:"inputHash"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	cmd := v1.ApproveToolCall{ID: nuid.Next(), SessionID: id, RequestID: rid, OptionID: body.OptionID}
+	cmd := v1.ApproveToolCall{ID: nuid.Next(), SessionID: id, RequestID: rid, OptionID: body.OptionID, InputHash: body.InputHash}
 	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandApproveToolCall), cmd, http.StatusOK)
 }
 
@@ -220,7 +222,7 @@ func (c *citadel) relay(w http.ResponseWriter, host, subject string, cmd any, ok
 func (c *citadel) fetchFromHost(kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		host, id := r.PathValue("host"), r.PathValue("id")
-		result, err := c.sendCommand(r.Context(), v1.IslandFetchSubject(host, kind), v1.FetchSessionRequest{SessionID: id, ToolCallID: r.PathValue("tid")})
+		result, err := c.sendCommand(r.Context(), v1.IslandFetchSubject(host, kind), v1.FetchSessionRequest{SessionID: id, ToolCallID: r.PathValue("tid"), RequestID: r.PathValue("rid")})
 		switch {
 		case errors.Is(err, nats.ErrNoResponders), errors.Is(err, nats.ErrTimeout):
 			writeError(w, http.StatusBadGateway, host+" did not answer; it may be unreachable")

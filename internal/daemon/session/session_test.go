@@ -2,6 +2,8 @@ package session
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -227,11 +229,32 @@ func TestStartRunsAnAgentAndRecordsItsEvents(t *testing.T) {
 	// the turn goes on once it is approved.
 	asked := waitPending(t, m, "s1", 1)
 	req := asked.Pending[0]
-	if req.Title != "Edit a.go" || req.Kind != "edit" || len(req.Options) != 3 || !strings.Contains(string(req.Input), "rewrite") || req.Locations[0] != "a.go" {
+	if req.Title != "Edit a.go" || req.Kind != "edit" || len(req.Options) != 3 || !strings.Contains(req.InputPreview, "rewrite") || req.Locations[0] != "a.go" {
 		t.Errorf("pending request = %+v", req)
+	}
+	// The host keeps the whole input while the request waits, and the
+	// event names it by its hash.
+	in, err := m.RequestInput("s1", req.RequestID)
+	if sum := sha256.Sum256([]byte(in.Input)); err != nil || in.Input != req.InputPreview || in.Size != req.InputSize || hex.EncodeToString(sum[:]) != req.InputHash || in.Hash != req.InputHash {
+		t.Errorf("RequestInput = %+v, %v; pending %+v", in, err, req)
+	}
+	if _, err := m.RequestInput("s1", "nope"); !errors.Is(err, ErrUnknownRequest) {
+		t.Errorf("RequestInput of an unknown request: %v", err)
 	}
 	if _, err := m.Approve(f.ctx, v1.ApproveToolCall{ID: "cmd-a1", SessionID: "s1", RequestID: "nope"}, "local"); !errors.Is(err, ErrUnknownRequest) {
 		t.Errorf("approve an unknown request: err = %v", err)
+	}
+	// Through the citadel, an approval must name the hash of the input the
+	// agent proposed.
+	if _, err := m.Approve(f.ctx, v1.ApproveToolCall{ID: "cmd-c1", SessionID: "s1", RequestID: req.RequestID}, "citadel"); !errors.Is(err, ErrInputMismatch) {
+		t.Errorf("a citadel approval naming no input: %v", err)
+	}
+	other := sha256.Sum256([]byte(`{"path":"a.go","content":"something else"}`))
+	if _, err := m.Approve(f.ctx, v1.ApproveToolCall{ID: "cmd-c2", SessionID: "s1", RequestID: req.RequestID, InputHash: hex.EncodeToString(other[:])}, "citadel"); !errors.Is(err, ErrInputMismatch) {
+		t.Errorf("a citadel approval naming another input: %v", err)
+	}
+	if s, _ := m.Get("s1"); len(s.Pending) != 1 {
+		t.Fatalf("a refused approval settled the request: %+v", s.Pending)
 	}
 	if s, err := m.Approve(f.ctx, v1.ApproveToolCall{ID: "cmd-a2", SessionID: "s1", RequestID: req.RequestID}, "local"); err != nil || len(s.Pending) != 0 {
 		t.Fatalf("Approve = %+v, %v", s, err)

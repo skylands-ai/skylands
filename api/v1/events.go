@@ -1,9 +1,12 @@
 package v1
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/nats-io/nuid"
 )
@@ -398,6 +401,9 @@ const (
 	// FetchToolCall returns one tool call's record: its exact input, what
 	// it produced, and when. The request names the call by ToolCallID.
 	FetchToolCall = "toolcall"
+	// FetchRequestInput returns the whole input of a waiting request, as a
+	// RequestInput. The request names it by RequestID.
+	FetchRequestInput = "requestinput"
 )
 
 // ToolCallDetail is everything the host kept about one tool call: what the
@@ -456,10 +462,12 @@ type ChangesResult struct {
 }
 
 // FetchSessionRequest asks for one session's transcript, diff, or changes,
-// or with ToolCallID for one of its tool calls.
+// with ToolCallID for one of its tool calls, or with RequestID for the
+// input of one of its waiting requests.
 type FetchSessionRequest struct {
 	SessionID  string `json:"sessionId"`
 	ToolCallID string `json:"toolCallId,omitempty"`
+	RequestID  string `json:"requestId,omitempty"`
 }
 
 // TextResult is a fetched text, cut off at the daemon's size limit when
@@ -519,17 +527,57 @@ type PermissionOption struct {
 	Kind string `json:"kind"`
 }
 
-// PermissionRequested records a tool call waiting on a person, with the
-// exact input the agent proposed.
+// PermissionRequested records a tool call waiting on a person. It names
+// the exact input the agent proposed by its hash and size, with a preview,
+// so the event stays small however big the input is; the host keeps the
+// whole input while the request waits, and serves it as FetchRequestInput.
 type PermissionRequested struct {
-	SessionID  string             `json:"sessionId"`
-	RequestID  string             `json:"requestId"`
-	ToolCallID string             `json:"toolCallId"`
-	Title      string             `json:"title"`
-	Kind       string             `json:"kind,omitempty"`
-	Locations  []string           `json:"locations,omitempty"`
-	Input      json.RawMessage    `json:"input,omitempty"`
-	Options    []PermissionOption `json:"options"`
+	SessionID  string   `json:"sessionId"`
+	RequestID  string   `json:"requestId"`
+	ToolCallID string   `json:"toolCallId"`
+	Title      string   `json:"title"`
+	Kind       string   `json:"kind,omitempty"`
+	Locations  []string `json:"locations,omitempty"`
+	// InputHash is the SHA-256 of the input's exact bytes, in lowercase
+	// hex. An approval through the citadel names the hash of the input the
+	// person saw, and the daemon refuses one that names another.
+	InputHash string `json:"inputHash"`
+	// InputSize is the input's length in bytes.
+	InputSize int `json:"inputSize"`
+	// InputPreview is the input as text: all of it when InputSize is at
+	// most InputPreviewMax, and otherwise its first InputPreviewMax bytes,
+	// cut back to a whole character.
+	InputPreview string             `json:"inputPreview,omitempty"`
+	Options      []PermissionOption `json:"options"`
+}
+
+// InputPreviewMax is the longest input a PermissionRequested carries
+// whole.
+const InputPreviewMax = 8 * 1024
+
+// DescribeInput is what a PermissionRequested says about an input: its
+// hash, its size, and its preview.
+func DescribeInput(input []byte) (hash string, size int, preview string) {
+	sum := sha256.Sum256(input)
+	preview = string(input)
+	if len(input) > InputPreviewMax {
+		cut := InputPreviewMax
+		for cut > 0 && !utf8.RuneStart(input[cut]) {
+			cut--
+		}
+		preview = string(input[:cut])
+	}
+	return hex.EncodeToString(sum[:]), len(input), preview
+}
+
+// RequestInput is the whole input of a request that is waiting, as text,
+// with its hash and size. A JSON string carries the text unchanged, so the
+// browser hashes the same bytes the daemon did.
+type RequestInput struct {
+	RequestID string `json:"requestId"`
+	Input     string `json:"input"`
+	Hash      string `json:"hash"`
+	Size      int    `json:"size"`
 }
 
 // PermissionGranted records who allowed a request and which option they chose.
@@ -612,6 +660,11 @@ type ApproveToolCall struct {
 	SessionID string `json:"sessionId"`
 	RequestID string `json:"requestId"`
 	OptionID  string `json:"optionId,omitempty"`
+	// InputHash is the SHA-256, in lowercase hex, of the input the person
+	// approved, as their browser hashed it. An approval through the citadel
+	// must name it, and the daemon refuses one whose hash isn't that of the
+	// input the agent proposed.
+	InputHash string `json:"inputHash,omitempty"`
 }
 
 // DenyToolCall answers a waiting request with a reject option.
