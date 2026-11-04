@@ -204,6 +204,31 @@ specifies. No events, streams, or aggregates are needed for it.
   island has said. Run live: Claude Max offered 13 models and Codex on
   ChatGPT Free its 3, a session ran on one picked from each list, and the
   fake agent's chip was disabled.
+- World themes are done. A theme (`web/src/world/theme.ts`) builds the
+  citadel, an island, a terrace, and an airship, and gives the sky's
+  look; everything else in the world is shared, so a theme changes only
+  how the world is drawn. Shared code lays out terraces and their
+  building lots and heights (`terraceLots`), so an airship lands on the
+  same roof in either theme, and each building carries its theme's state
+  materials, which the world tells states apart by. The old look moved
+  unchanged into `themes/default`. `themes/scifi` draws a space station
+  with a spinning habitat ring and blinking navigation lights for the
+  citadel; asteroids sliced flat on top for islands, with outposts and
+  blinking masts but nothing painted on the surface, where a ring would
+  read as a selection; hexagonal towers with lit bands
+  on a glowing deck for terraces, ringed by landing-strip lights on poles
+  in the repo's color that blink slowly in a wave, faster while
+  selected; a shuttle, hauler, saucer, or drone per provider for
+  airships; and, where the default theme hangs a crystal under the
+  citadel and each island, a communications array, its mast reaching
+  into the rock or the keel and its head of dishes panning while the
+  link is up, its feeds glowing with the link's state. Its sky is always a starfield, whatever the page's light or
+  dark colors. Switching rebuilds the citadel, islands, terraces, and
+  airships in place, keeping navigation and what agents are doing. The
+  choice is a switch in the citadel's panel, kept in the browser
+  (`skylands.worldTheme`). Checked in headless Chrome at every level in
+  both themes, in light and dark, switching both ways with agents
+  waiting on approval, and opening a page with the theme saved.
 
 ## After the MVP
 

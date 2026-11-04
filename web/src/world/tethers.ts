@@ -65,7 +65,7 @@ export class Tethers {
     pts.frustumCulled = false
     this.scene.add(pts)
     this.byId.set(id, { tube, pts, mat, key: '' })
-    this.applyTheme()
+    this.applyColorScheme()
   }
 
   /** Redraws one tether from its island to end, the citadel's crystal. */
@@ -96,7 +96,8 @@ export class Tethers {
     arr.needsUpdate = true
   }
 
-  applyTheme(): void {
+  /** Re-reads the page's color tokens. */
+  applyColorScheme(): void {
     this.tetherMat.color.set(css('--tether', '#5C86B8'))
     this.unknownMat.color.set(css('--idle', '#6B7F92'))
     const additive = css('--spark-add', '0') === '1'

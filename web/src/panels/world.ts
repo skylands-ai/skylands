@@ -2,6 +2,7 @@ import { el } from '../dom'
 import type { ServerInfo } from '../protocol'
 import { citadelStatus, islandCounts, islandStatus, isStale, shortId } from '../status'
 import { islandList, type State } from '../store'
+import { WORLD_THEMES, type WorldThemeId } from '../worldthemes'
 import { factsBox, header, hint, note, section } from './parts'
 
 function natsFacts(s: ServerInfo | null, link: State['link'], daemons: string): [string, string][] {
@@ -20,8 +21,26 @@ function natsFacts(s: ServerInfo | null, link: State['link'], daemons: string): 
   ]
 }
 
-/** The world-level panel: the citadel itself, its islands, and the NATS server it is on. */
-export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: string) => void): void {
+/**
+ * The switch between the world's themes. A theme changes how the 3D world
+ * is drawn in this browser, and nothing else on the page.
+ */
+function themeSwitch(current: WorldThemeId, choose: (id: WorldThemeId) => void): HTMLElement {
+  const blurb = WORLD_THEMES.find((t) => t.id === current)?.blurb ?? ''
+  return section('World theme', [
+    el(
+      'div',
+      { class: 'modes', role: 'group', 'aria-label': 'World theme' },
+      WORLD_THEMES.map((t) =>
+        el('button', { type: 'button', class: 'btn small', 'aria-pressed': t.id === current ? 'true' : 'false', text: t.name, onclick: () => choose(t.id) }),
+      ),
+    ),
+    hint(`${blurb} Only the world changes, and only in this browser.`),
+  ])
+}
+
+/** The world-level panel: the citadel itself, the world's theme, its islands, and the NATS server it is on. */
+export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: string) => void, setTheme: (id: WorldThemeId) => void): void {
   panel.textContent = ''
   const stale = isStale(s)
   const { reachable, total } = islandCounts(s)
@@ -29,10 +48,11 @@ export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: stri
   panel.appendChild(header('Citadel', 'Web app and observer for this world', citadelStatus(s)))
   panel.appendChild(
     note(
-      'Every island’s daemon keeps its own event log and syncs it to the world’s NATS server, the crystal under the castle. Decisions you make here travel back down the tethers.',
+      'Every island’s daemon keeps its own event log and syncs it to the world’s NATS server, where every tether ends at the citadel. Decisions you make here travel back down the tethers.',
     ),
   )
   panel.appendChild(factsBox([['Islands connected', counts], ['Waiting on you', '0']]))
+  panel.appendChild(themeSwitch(s.worldTheme, setTheme))
 
   const islands = islandList(s)
   if (islands.length) {
@@ -57,7 +77,7 @@ export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: stri
 
   panel.appendChild(
     section('NATS', [
-      hint('The NATS server this citadel is connected to, as the server describes itself. Every tether ends at its crystal.'),
+      hint('The NATS server this citadel is connected to, as the server describes itself. Every tether ends at it.'),
       factsBox(natsFacts(s.server, s.link, counts)),
     ]),
   )

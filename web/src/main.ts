@@ -61,7 +61,7 @@ const link = connectToCitadel(store, (_host, id, piece) => {
 
 let world: World | null = null
 try {
-  world = new World(stage, canvas, labelsEl)
+  world = new World(stage, canvas, labelsEl, store.state.worldTheme)
 } catch (err) {
   console.error('world: WebGL unavailable', err)
   stage.appendChild(el('div', { class: 'nogl', text: 'This view needs WebGL, and it isn’t available in this browser right now.' }))
@@ -184,7 +184,7 @@ function panelDeps(s: State, stale: boolean): unknown[] {
     case 'island':
       return ['island', island, stale, stale ? s.lastContact : 0, ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
     default:
-      return ['world', s.server, s.link, ...islandList(s)]
+      return ['world', s.server, s.link, s.worldTheme, ...islandList(s)]
   }
 }
 
@@ -258,7 +258,7 @@ function renderPanelContent(s: State, stale: boolean): void {
       }
       break
   }
-  renderWorldPanel(panelEl, s, nav.select)
+  renderWorldPanel(panelEl, s, nav.select, (id) => store.setWorldTheme(id))
 }
 
 store.subscribe((s0) => {
@@ -306,6 +306,7 @@ store.subscribe((s0) => {
     world.setBeacon(pendingCount(s) > 0)
     world.setStale(stale)
     world.setCitadelCrystal(!!s.server?.connected)
+    world.setTheme(s.worldTheme)
   }
   renderPanel(s, stale)
 })
