@@ -76,6 +76,21 @@ export interface SkyLook {
 }
 
 /**
+ * Scenery that crosses the view now and then and carries no data: a bird
+ * in the default theme, a shooting star in sci-fi. The world decides when;
+ * the visitor decides how it looks and where across the view it goes.
+ */
+export interface Visitor {
+  object: THREE.Object3D
+  /** How long one pass takes, in seconds. */
+  duration: number
+  /** Starts a pass across what camera sees. */
+  begin(camera: THREE.PerspectiveCamera): void
+  /** Moves it to t, from 0 to 1, along the pass. time is the world's clock, in seconds. */
+  step(t: number, time: number, camera: THREE.PerspectiveCamera): void
+}
+
+/**
  * One look for the world. Every object it builds sits where the shared
  * layout puts it and carries the same pick data, so changing themes changes
  * only how the world is drawn.
@@ -90,6 +105,8 @@ export interface WorldTheme {
   airship(prov: Provider): Airship
   /** Null: the sky follows the page's light or dark colors. */
   sky: SkyLook | null
+  /** What passes through the sky now and then, if anything. */
+  visitor?(): Visitor
 }
 
 /** Marks geometries and materials shared by many objects, which disposeTree leaves alone. */

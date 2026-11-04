@@ -1,5 +1,6 @@
 import type { WorldTheme } from '../../theme'
 import { buildAsteroid } from './asteroid'
+import { shootingStar } from './meteor'
 import { starship } from './ships'
 import { buildStation } from './station'
 import { buildTerrace } from './terrace'
@@ -7,7 +8,8 @@ import { buildTerrace } from './terrace'
 /**
  * A space station in place of the castle, asteroids with flattened landing
  * surfaces for islands, towers lit by landing-strip lights for terraces,
- * and starships for airships, among the stars.
+ * and starships for airships, among the stars, where a shooting star goes
+ * by now and then.
  */
 export const scifiTheme: WorldTheme = {
   id: 'scifi',
@@ -30,4 +32,5 @@ export const scifiTheme: WorldTheme = {
     sun: 0xffffff,
     sunIntensity: 1.15,
   },
+  visitor: shootingStar,
 }

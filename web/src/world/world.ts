@@ -15,6 +15,7 @@ import { layoutTerraces, type TerraceSpec } from './terrace'
 import { Tethers } from './tethers'
 import { disposeTree, type BuildingMats, type Citadel, type IslandMeshes, type TerraceMeshes, type WorldTheme } from './theme'
 import { themeFor } from './themes'
+import { Visitors } from './visitors'
 
 /** Text and a CSS color for a status dot. */
 export type Status = [text: string, color: string]
@@ -81,6 +82,7 @@ export class World {
   /** The camera rig. Exposed for debugging and screenshots. */
   readonly rig = new CameraRig()
   private readonly sky: Sky
+  private readonly visitors: Visitors
   private readonly tethers: Tethers
   private readonly labels: Labels
   private readonly citLabel: HTMLButtonElement
@@ -112,6 +114,8 @@ export class World {
     this.theme = themeFor(theme)
     this.sky = new Sky(this.scene)
     this.sky.setLook(this.theme.sky)
+    this.visitors = new Visitors(this.scene)
+    this.visitors.set(this.theme.visitor?.() ?? null)
     this.tethers = new Tethers(this.scene)
     this.citadel = this.theme.buildCitadel()
     this.scene.add(this.citadel.group)
@@ -201,6 +205,11 @@ export class World {
     }
   }
 
+  /** Sends the theme's bird or shooting star across the view now, for debugging and screenshots. */
+  sendVisitor(): void {
+    this.visitors.sendNow()
+  }
+
   /**
    * Draws the world in another theme. The citadel, the islands, their
    * terraces, and the airships are built again where they were; what is
@@ -211,6 +220,7 @@ export class World {
     if (theme === this.theme) return
     this.theme = theme
     this.sky.setLook(theme.sky)
+    this.visitors.set(theme.visitor?.() ?? null)
     // Airships ride on islands, so they come off before the islands go.
     this.agents.detachShips()
     const old = this.citadel.group
@@ -572,6 +582,7 @@ export class World {
     cit.light.intensity = this.beaconOn ? 1.1 : 0.4
     cit.animate?.(this.time, dt)
     if (!reduceMotion) this.sky.puffs.rotation.y += dt * 0.01
+    this.visitors.update(dt, this.time, this.rig.camera)
 
     this.rig.update(reduceMotion ? 1 : Math.min(1, dt * 3))
     this.placeLabels()
