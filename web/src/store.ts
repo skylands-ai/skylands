@@ -1,4 +1,5 @@
-import type { Island, Repo, ServerInfo, Session, TokenUsage, WorldInfo } from './protocol'
+import type { StoredApprover } from './approver'
+import type { ApproverInfo, Island, Repo, ServerInfo, Session, TokenUsage, WorldInfo } from './protocol'
 import { isWorldTheme, type WorldThemeId } from './worldthemes'
 
 /** The browser's link to its citadel over the WebSocket. */
@@ -16,12 +17,31 @@ export interface Nav {
   agent: string | null
 }
 
+/** An "Add an approver" link this browser made: the link, with the claim seed in its fragment, the claim key it names, and when it stops working. */
+export interface Invite {
+  link: string
+  claim: string
+  expires: string
+}
+
 export interface State extends Nav {
   link: LinkState
   /** The NATS server as the citadel last described it, or null before the first message. */
   server: ServerInfo | null
   /** The world as the citadel last described it, or null before the first message. */
   world: WorldInfo | null
+  /** Every approver key ever enrolled in the world, or null before the first message. */
+  approvers: ApproverInfo[] | null
+  /** This browser's approver key, if it has one, or null; undefined until it has been read. */
+  me: StoredApprover | null | undefined
+  /** Whether the browser promised to keep this origin's storage, or null until asked. */
+  persisted: boolean | null
+  /** The "Add an approver" link this browser is showing, if any. */
+  invite: Invite | null
+  /** The approver whose revocation is waiting for a confirmation, if any. */
+  revoking: string | null
+  /** The last thing that went wrong adding or revoking an approver. */
+  approverError: string | null
   /** Every island the citadel knows, by host. */
   islands: Record<string, Island>
   /** Every repository the citadel knows, by repo id. */
@@ -84,7 +104,7 @@ type Listener = (s: State) => void
 
 /** One place for everything the page renders from. Every change notifies every listener. */
 export class Store {
-  state: State = { link: 'connecting', server: null, world: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), inbox: null, inboxFilter: loadFilter(), worldTheme: loadWorldTheme() }
+  state: State = { link: 'connecting', server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), inbox: null, inboxFilter: loadFilter(), worldTheme: loadWorldTheme() }
   private listeners: Listener[] = []
 
   subscribe(fn: Listener): void {

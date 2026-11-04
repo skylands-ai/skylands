@@ -47,10 +47,13 @@ export function connectToCitadel(store: Store, onLive: (host: string, id: string
           for (const r of m.repos ?? []) repos[r.id] = r
           const sessions: Record<string, Session> = {}
           for (const x of m.sessions ?? []) sessions[x.id] = normalizeSession(x)
-          store.update({ server: m.server ?? null, world: m.world ?? null, islands, repos, sessions })
+          store.update({ server: m.server ?? null, world: m.world ?? null, approvers: m.approvers ?? [], islands, repos, sessions })
           if (needsSetup(m.world)) location.assign('/setup')
           break
         }
+        case 'approvers':
+          store.update({ approvers: m.approvers ?? [] })
+          break
         case 'world':
           if (m.world) store.update({ world: m.world })
           if (needsSetup(m.world)) location.assign('/setup')

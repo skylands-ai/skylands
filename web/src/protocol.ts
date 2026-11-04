@@ -27,6 +27,36 @@ export interface WorldInfo {
   natsSettingsUrl?: string
 }
 
+/** One approver key, as the world's registry decides it. */
+export interface ApproverInfo {
+  key: string
+  name: string
+  enrolled: string
+  /** "owner" for an approver the owner key enrolled, or the key of the approver whose link it used. */
+  by: string
+  /** The claim key of the link it used, if it used one. */
+  voucher?: string
+  /** True while it approves: not revoked, and added through approvers that aren't, back to the owner key. */
+  valid: boolean
+  revoked?: string
+  /** "owner" or the key of the approver that revoked it. */
+  revokedBy?: string
+  /** The valid approvers added through this one, which revoking it takes along. */
+  through?: string[]
+}
+
+/** What a browser sees of an "Add an approver" link: who made it, until when it works, and whether it was used. */
+export interface VoucherInfo {
+  claim: string
+  by: string
+  byName: string
+  expires: string
+  expired: boolean
+  usedBy?: string
+  /** True while the approver that made it approves. */
+  valid: boolean
+}
+
 export interface DaemonInfo {
   id: string
   version: string
@@ -308,6 +338,7 @@ export interface Message {
   live?: Live
   server?: ServerInfo
   world?: WorldInfo
+  approvers?: ApproverInfo[]
   islands?: Island[]
   island?: Island
   repos?: Repo[]
