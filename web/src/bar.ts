@@ -1,39 +1,22 @@
 import { byId, el } from './dom'
-import type { Island } from './protocol'
+import type { AgentModel, Island } from './protocol'
 import { agentLabel, isStale } from './status'
 import { level, type State } from './store'
-
-/**
- * The models the chip lists for each agent, newest first. Null means the
- * agent has no model choice; an empty list, or an agent not here, gets its
- * default and a model id typed by hand. Codex lists none: which models it
- * offers depends on the account it is logged in with. A model the agent
- * does not take stops the session from starting, with the ones it offers.
- */
-const MODELS: Record<string, string[] | null> = {
-  fake: null,
-  claude: [
-    'claude-opus-5-5',
-    'claude-fable-5-1',
-    'claude-sonnet-5-5',
-    'claude-haiku-5-5',
-    'claude-haiku-4-5-20251001',
-    'claude-sonnet-5',
-    'claude-opus-5',
-    'claude-fable-5',
-    'claude-opus-4-8',
-    'claude-opus-4-7',
-    'claude-opus-4-6',
-    'claude-sonnet-4-6',
-  ],
-  codex: [],
-}
 
 /** The agents in the order the chip lists them, offered as they are until the island says which it can run. */
 const AGENTS = ['fake', 'claude', 'codex']
 
 function agentText(name: string): string {
   return name === 'fake' ? 'Fake agent, built in' : agentLabel(name)
+}
+
+/**
+ * A model as the chip lists it: its id, which is what a session is set to,
+ * followed by the agent's name for it when that name says more.
+ */
+function modelText(m: AgentModel): string {
+  const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+  return m.name && !squash(m.id).includes(squash(m.name)) ? `${m.id} \u00b7 ${m.name}` : m.id
 }
 
 /** Known agents in their usual order, then any others by name. */
@@ -55,7 +38,10 @@ export class CommandBar {
   private readonly go = byId<HTMLButtonElement>('cmdGo')
   /** The agents the island can run, as its daemon last checked. */
   private readonly agent = byId<HTMLSelectElement>('agentSel')
-  /** The chosen agent's models, every one listed whatever is chosen; each agent's last choice stays chosen. */
+  /**
+   * The models the chosen agent offers this island's login, as its daemon
+   * last read them from the agent; each agent's last choice stays chosen.
+   */
   private readonly model = byId<HTMLSelectElement>('modelSel')
   /** A model id typed by hand, shown while the model is "Other". */
   private readonly otherModel = byId<HTMLInputElement>('modelOther')
@@ -67,8 +53,12 @@ export class CommandBar {
   private busy = false
   /** The agents the agent chip lists, so it is rebuilt only when they change. */
   private agentsShown: string | null = null
+  /** The island whose agents the chips list. */
+  private island: Island | null = null
   /** The agent the model chip lists models for. */
   private modelsFor: string | null = null
+  /** The agent and models the model chip lists, so it is rebuilt only when they change. */
+  private modelsShown: string | null = null
   /** Each agent's last model choice, kept while another agent is chosen. */
   private readonly lastModel = new Map<string, { value: string; other: string }>()
   /** What the status line is showing: the default hint, a link problem, a dispatch error, or a dispatch result. */
@@ -136,30 +126,40 @@ export class CommandBar {
    * daemon has said, keeping the chosen agent when it is still listed.
    */
   private syncAgents(island: Island | null): void {
+    this.island = island
     const names = (island?.agents ? island.agents.filter((a) => a.available).map((a) => a.name) : [...AGENTS]).sort(byOrder)
     const key = names.join(' ')
-    if (key === this.agentsShown) return
-    this.agentsShown = key
-    const keep = this.agent.value
-    this.agent.replaceChildren(...names.map((n) => el('option', { value: n, text: agentText(n) })))
-    if (names.includes(keep)) this.agent.value = keep
+    if (key !== this.agentsShown) {
+      this.agentsShown = key
+      const keep = this.agent.value
+      this.agent.replaceChildren(...names.map((n) => el('option', { value: n, text: agentText(n) })))
+      if (names.includes(keep)) this.agent.value = keep
+    }
     this.syncModels()
   }
 
-  /** Lists the chosen agent's models, bringing back its last choice. */
+  /**
+   * Lists the models the chosen agent offers, bringing back its last
+   * choice. Until the daemon has read them, there is the agent's default
+   * and a model id typed by hand; an agent with no model setting has only
+   * its default.
+   */
   private syncModels(): void {
     const agent = this.agent.value
-    if (agent === this.modelsFor) return
+    const known = this.island?.agents?.find((a) => a.name === agent)
+    const key = JSON.stringify([agent, known?.modelsRead ?? false, known?.models ?? [], known?.defaultModel ?? ''])
+    if (key === this.modelsShown) return
     if (this.modelsFor !== null) this.lastModel.set(this.modelsFor, { value: this.model.value, other: this.otherModel.value })
     this.modelsFor = agent
-    const models = Object.hasOwn(MODELS, agent) ? MODELS[agent] : []
-    const options = [el('option', { value: '', text: 'Agent’s default' })]
-    if (models) {
-      options.push(...models.map((m) => el('option', { value: m, text: m })))
-      options.push(el('option', { value: CommandBar.OTHER, text: 'Other model id…' }))
+    this.modelsShown = key
+    const none = !!known?.modelsRead && !known.models?.length
+    const options = [el('option', { value: '', text: known?.defaultModel ? `Agent\u2019s default (${known.defaultModel})` : 'Agent\u2019s default' })]
+    if (!none) {
+      options.push(...(known?.models ?? []).map((m) => el('option', { value: m.id, text: modelText(m), title: m.description || null })))
+      options.push(el('option', { value: CommandBar.OTHER, text: 'Other model id\u2026' }))
     }
     this.model.replaceChildren(...options)
-    this.model.disabled = !models
+    this.model.disabled = none
     const last = this.lastModel.get(agent)
     this.model.value = last && options.some((o) => o.value === last.value) ? last.value : ''
     this.otherModel.value = last?.other ?? ''

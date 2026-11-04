@@ -40,6 +40,22 @@ export interface AgentAvailability {
   login?: string
   /** The checks that failed or warned; a failed one is why it can't run. */
   notes?: AvailabilityNote[]
+  /**
+   * Whether the daemon read the models the agent offers this host's login,
+   * from its model setting; with no models, the agent has no model setting.
+   */
+  modelsRead?: boolean
+  /** The models the agent offered, in its order. */
+  models?: AgentModel[]
+  /** The model a new session started on. */
+  defaultModel?: string
+}
+
+/** One model an agent offers: the id a session's model is set to, and what the agent calls it. */
+export interface AgentModel {
+  id: string
+  name?: string
+  description?: string
 }
 
 /** One host as the citadel last heard it. Islands are never removed, only marked unreachable. */

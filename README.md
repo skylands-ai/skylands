@@ -56,14 +56,19 @@ skylands preflight
 
 It reports git, Node, and npx with the versions and paths it found, starts
 each agent over ACP without asking a model anything, reports whether Claude
-Code and Codex are logged in as each sees it, checks `gh`, and asks the
-daemon on the local socket which version it runs. Each problem comes with
+Code and Codex are logged in as each sees it and which models each offers
+that login, checks `gh`, and asks the daemon on the local socket which
+version it runs. Reading the models opens a session in the agent without
+prompting it, which starts what a session needs, such as its MCP servers.
+Each problem comes with
 what to do about it, and the command exits with status 1 when a check
 fails.
 
 The daemon makes the same agent checks itself, in its own environment,
 when it starts and every ten minutes, and records which agents it can run
-whenever that changes. The island's panel in the world lists those agents,
+whenever that changes. It reads the models at startup, when preflight asks
+it to check, and for an agent whose login changed in between. The island's
+panel in the world lists those agents,
 with each one's login and version, and `skylands daemon status` names them.
 An agent the host can't run isn't listed; the daemon's log and
 `skylands preflight` say why. Preflight also asks the daemon to check
@@ -180,12 +185,14 @@ can run. The built-in fake agent reads a few files and
 edits one, so you can see the loop without any API keys. Claude Code runs
 through its ACP adapter from npm, at the exact version pinned in
 `internal/daemon/agents/agents.go`, which `npx` fetches on first use, and
-needs a Claude Code login on that machine. The model chip overrides the model for
-that session and keeps your last choice for each agent; leave it on Agent's
-default for the agent's own default, or pick Other model id to type one that
-isn't listed. The daemon sets the model through the agent's own model
-setting over ACP, so a model the agent doesn't offer stops the session from
-starting, and the error lists the ones it does. A
+needs a Claude Code login on that machine. The model chip lists the models
+the chosen agent offers the island's login, as the island's daemon last
+read them from the agent, overrides the model for that session, and keeps
+your last choice for each agent; leave it on Agent's default for the
+agent's own default, or pick Other model id to type one that isn't listed.
+The daemon sets the model through the agent's own model setting over ACP,
+so a model the agent doesn't take stops the session from starting, and the
+error lists the ones it offers. A
 model alias such as `fable` in your Claude Code settings may not work under the
 adapter, so pick a full model id in the chip if a session fails on its model.
 
@@ -193,10 +200,9 @@ Codex runs the same way, through its ACP adapter from npm at the version
 pinned in `internal/daemon/agents/codex.go`, and needs a Codex login on that
 machine: run `npx -y @agentclientprotocol/codex-acp@2.5.0 login`, or `codex
 login` if you have the Codex CLI. An API key in the environment isn't
-enough; log in with the key through `codex login --with-api-key`. The model
-chip lists no models for Codex, because which ones Codex offers depends on
-the account: leave it on Agent's default, or type a model id the account
-has.
+enough; log in with the key through `codex login --with-api-key`. Which
+models Codex offers depends on the account, and the model chip lists the
+ones it offers the island's.
 
 ### Approvals
 

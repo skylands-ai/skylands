@@ -26,6 +26,8 @@ type host struct {
 	// daemonAgents is what the daemon finds when asked to check.
 	daemonAgents []v1.AgentAvailability
 	probed       []string
+	// modelsAsked are the agents whose models a probe was asked to read.
+	modelsAsked []string
 }
 
 func healthy() *host {
@@ -73,12 +75,18 @@ func (h *host) env() Env {
 			}
 			return h.output[cmd], nil
 		},
-		Probe: func(_ context.Context, ad agents.Adapter, _ string, _ time.Duration) (agents.Probe, error) {
+		Probe: func(_ context.Context, ad agents.Adapter, _ string, opts agents.ProbeOptions) (agents.Probe, error) {
 			h.probed = append(h.probed, ad.Name)
 			if err := h.probeErr[ad.Name]; err != nil {
 				return agents.Probe{}, err
 			}
-			return h.probes[ad.Name], nil
+			p := h.probes[ad.Name]
+			if opts.Models {
+				h.modelsAsked = append(h.modelsAsked, ad.Name)
+			} else {
+				p.ModelsRead, p.Models, p.DefaultModel, p.ModelsErr = false, nil, "", nil
+			}
+			return p, nil
 		},
 		Status: func(_ context.Context, path string) (socket.StatusInfo, error) {
 			if h.daemon == nil {
@@ -253,5 +261,53 @@ func TestRunAgentsLeavesOutGhAndTheDaemon(t *testing.T) {
 	}
 	if _, ok := m["daemon"]; ok {
 		t.Error("RunAgents checked the daemon")
+	}
+}
+
+func TestModelsCheck(t *testing.T) {
+	h := healthy()
+	claude := h.probes["claude"]
+	claude.ModelsRead, claude.DefaultModel = true, "default"
+	claude.Models = []v1.AgentModel{{ID: "default", Name: "Default"}, {ID: "opus", Name: "Opus"}}
+	h.probes["claude"] = claude
+	fake := h.probes["fake"]
+	fake.ModelsRead = true
+	h.probes["fake"] = fake
+
+	checks := RunAgents(context.Background(), h.env())
+	m := byName(checks)
+	if c := m["models claude"]; c.Status != OK || c.Found != "default (default), opus" {
+		t.Errorf("models claude = %+v", c)
+	}
+	if c := m["models fake"]; c.Status != OK || !strings.Contains(c.Found, "no model setting") {
+		t.Errorf("models fake = %+v", c)
+	}
+	found := Availability(checks, h.env().Registry)
+	if a := found[0]; a.Name != "claude" || !a.ModelsRead || a.DefaultModel != "default" || len(a.Models) != 2 || a.Models[1].ID != "opus" || len(a.Notes) != 0 {
+		t.Errorf("claude availability = %+v", a)
+	}
+	if a := found[1]; a.Name != "fake" || !a.ModelsRead || len(a.Models) != 0 {
+		t.Errorf("fake availability = %+v", a)
+	}
+
+	// An agent that would not open a session warns, and still runs.
+	claude.ModelsRead, claude.Models, claude.DefaultModel = false, nil, ""
+	claude.ModelsErr = errors.New("open a session: auth required")
+	h.probes["claude"] = claude
+	checks = RunAgents(context.Background(), h.env())
+	if c := byName(checks)["models claude"]; c.Status != Warn || !strings.Contains(c.Found, "auth required") {
+		t.Errorf("models claude = %+v", c)
+	}
+	if a := Availability(checks, h.env().Registry)[0]; !a.Available || a.ModelsRead || len(a.Notes) != 1 {
+		t.Errorf("claude availability = %+v", a)
+	}
+
+	// Models are read only for the agents asked for.
+	h.modelsAsked = nil
+	e := h.env()
+	e.Models = func(agent string) bool { return agent == "fake" }
+	checks = RunAgents(context.Background(), e)
+	if _, ok := byName(checks)["models claude"]; ok || !reflect.DeepEqual(h.modelsAsked, []string{"fake"}) {
+		t.Errorf("asked for models of %v", h.modelsAsked)
 	}
 }

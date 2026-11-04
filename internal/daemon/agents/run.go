@@ -300,17 +300,8 @@ func optionValue(o acp.SessionConfigOption) string {
 // optionChoices are the values a select option lists, in or out of groups.
 func optionChoices(o acp.SessionConfigOption) []string {
 	var out []string
-	if o.Options.Ungrouped != nil {
-		for _, c := range *o.Options.Ungrouped {
-			out = append(out, string(c.Value))
-		}
-	}
-	if o.Options.Groups != nil {
-		for _, g := range *o.Options.Groups {
-			for _, c := range g.Options {
-				out = append(out, string(c.Value))
-			}
-		}
+	for _, m := range optionModels(o) {
+		out = append(out, m.ID)
 	}
 	return out
 }
