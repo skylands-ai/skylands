@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { markShared } from './theme'
 
 /** Flat-shaded standard material, the look of everything solid in the world. */
 export function std(color: number, extra?: THREE.MeshStandardMaterialParameters): THREE.MeshStandardMaterial {
@@ -57,6 +58,7 @@ export const G = {
   ball: new THREE.SphereGeometry(0.35, 10, 8),
   bag: new THREE.SphereGeometry(0.13, 6, 5),
 }
+markShared([...Object.values(M), ...Object.values(G)])
 G.trunk.translate(0, 0.3, 0)
 G.pine.translate(0, 1.1, 0)
 G.round.translate(0, 0.95, 0)

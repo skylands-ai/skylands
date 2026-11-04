@@ -1,7 +1,7 @@
-import * as THREE from 'three'
+import type * as THREE from 'three'
 import type { Repo, TerrainFile } from '../protocol'
-import { G, M, std } from './materials'
 import { rng } from './noise'
+import type { BuildingMats } from './theme'
 
 /** Buildings drawn per terrace at most: an 8 by 8 grid. The daemon already keeps only this many files, largest first. */
 export const MAX_BUILDINGS = 64
@@ -20,18 +20,8 @@ export interface TerraceSpec {
   total: number
 }
 
-export interface TerraceMeshes {
-  group: THREE.Group
-  blds: THREE.Mesh[]
-  /** The rope's material, which pulses while the terrace is selected. */
-  rope: THREE.MeshStandardMaterial
-}
-
-/** The rope's resting glow. */
-export const ROPE_GLOW = 0.25
-
-/** One rope color per repo, the same everywhere the repo appears. */
-const ROPE_COLORS = [0xc8553d, 0x3f7cc4, 0x3fa37c, 0x9b6bc8, 0xd9a23b, 0x2e9e57]
+/** One color per repo, the same everywhere the repo appears: its terrace's boundary in the world. */
+const REPO_COLORS = [0xc8553d, 0x3f7cc4, 0x3fa37c, 0x9b6bc8, 0xd9a23b, 0x2e9e57]
 
 function hashId(s: string): number {
   let h = 2166136261
@@ -43,10 +33,13 @@ function hashId(s: string): number {
 }
 
 export function ropeColor(id: string): number {
-  return ROPE_COLORS[hashId(id) % ROPE_COLORS.length]
+  return REPO_COLORS[hashId(id) % REPO_COLORS.length]
 }
 
 const CELL = 0.95
+
+/** The height of a terrace's plaza, which its buildings stand on. */
+export const PLAZA_TOP = 0.35
 
 /**
  * Lays out an island's terraces: one in the middle, or a ring of them, each
@@ -75,70 +68,23 @@ export function layoutTerraces(R: number, repos: Repo[]): TerraceSpec[] {
   })
 }
 
-const POST_MAT = std(0xb8954a, { metalness: 0.45, roughness: 0.45 })
-const POST_GEO = new THREE.CylinderGeometry(0.045, 0.06, 0.6, 6)
-const KNOB_GEO = new THREE.SphereGeometry(0.08, 8, 6)
-const FOOT_GEO = new THREE.CylinderGeometry(0.12, 0.14, 0.05, 8)
-
-/** Stanchions with a colored rope around a terrace: the repository boundary. Returns the rope's material. */
-function addStanchions(g: THREE.Group, t: TerraceSpec): THREE.MeshStandardMaterial {
-  const col = ropeColor(t.id)
-  const ropeMat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: ROPE_GLOW, roughness: 0.8 })
-  const hx = t.sx / 2 + 0.14
-  const hz = t.sz / 2 + 0.14
-  const base = 0.35
-  const top = base + 0.6
-  const anchor = top - 0.07
-  const corners = [
-    [-hx, -hz],
-    [hx, -hz],
-    [hx, hz],
-    [-hx, hz],
-  ]
-  const pts: [number, number][] = []
-  for (let c = 0; c < 4; c++) {
-    const a = corners[c]
-    const b = corners[(c + 1) % 4]
-    const n = Math.max(1, Math.round(Math.hypot(b[0] - a[0], b[1] - a[1]) / 1.1))
-    for (let i = 0; i < n; i++) pts.push([t.x + a[0] + ((b[0] - a[0]) * i) / n, t.z + a[1] + ((b[1] - a[1]) * i) / n])
-  }
-  pts.forEach((p, i) => {
-    const foot = new THREE.Mesh(FOOT_GEO, POST_MAT)
-    foot.position.set(p[0], base + 0.025, p[1])
-    const post = new THREE.Mesh(POST_GEO, POST_MAT)
-    post.position.set(p[0], base + 0.3, p[1])
-    const knob = new THREE.Mesh(KNOB_GEO, POST_MAT)
-    knob.position.set(p[0], top + 0.04, p[1])
-    const q = pts[(i + 1) % pts.length]
-    const curve = new THREE.QuadraticBezierCurve3(
-      new THREE.Vector3(p[0], anchor, p[1]),
-      new THREE.Vector3((p[0] + q[0]) / 2, anchor - 0.32, (p[1] + q[1]) / 2),
-      new THREE.Vector3(q[0], anchor, q[1]),
-    )
-    const rope = new THREE.Mesh(new THREE.TubeGeometry(curve, 10, 0.035, 5, false), ropeMat)
-    for (const m of [foot, post, knob, rope]) {
-      m.userData.terraceId = t.id
-      g.add(m)
-    }
-  })
-  return ropeMat
+/** Where one file's building stands on its terrace, and how tall it is. */
+export interface Lot {
+  x: number
+  z: number
+  height: number
+  file: TerrainFile
+  idx: number
 }
 
 /**
- * A terrace: a plaza with a rope around it and a building per file, its
- * height scaled by file size. Building placement is seeded so a repo looks
- * the same on every visit.
+ * The lots of a terrace's buildings: one per file on a seeded shuffle of
+ * the grid, each as tall as the square root of its file's share of the
+ * largest. Every theme builds on these, so an airship lands on the same
+ * roof whichever theme draws it.
  */
-export function buildTerrace(t: TerraceSpec, seed: number): TerraceMeshes {
-  const g = new THREE.Group()
+export function terraceLots(t: TerraceSpec, seed: number): Lot[] {
   const r = rng(seed)
-  const plaza = new THREE.Mesh(G.box, M.plaza)
-  plaza.scale.set(t.sx, 0.35, t.sz)
-  plaza.position.set(t.x, 0.17, t.z)
-  plaza.userData.terraceId = t.id
-  g.add(plaza)
-  const rope = addStanchions(g, t)
-
   const cols = Math.max(1, Math.floor((t.sx - 0.5) / CELL))
   const rows = Math.max(1, Math.floor((t.sz - 0.5) / CELL))
   const cells: [number, number][] = []
@@ -150,37 +96,46 @@ export function buildTerrace(t: TerraceSpec, seed: number): TerraceMeshes {
     cells[q] = tmp
   }
   const maxSize = Math.max(1, ...t.files.map((f) => f.size))
-  const blds: THREE.Mesh[] = []
-  cells.slice(0, Math.min(t.files.length, cells.length)).forEach((c, idx) => {
-    const f = t.files[idx]
-    const bh = 0.4 + 2.2 * Math.sqrt(f.size / maxSize)
-    const b = new THREE.Mesh(G.box, M.bld)
-    b.scale.set(0.7, bh, 0.7)
-    const bx = t.x - t.sx / 2 + 0.25 + (c[0] + 0.5) * ((t.sx - 0.5) / cols)
-    const bz = t.z - t.sz / 2 + 0.25 + (c[1] + 0.5) * ((t.sz - 0.5) / rows)
-    b.position.set(bx, 0.35 + bh / 2, bz)
-    b.userData = { top: 0.35 + bh, file: f.path, size: f.size, terraceId: t.id, bldIdx: idx, dwell: {} }
-    // Outline every edge, so buildings keep their individuality at low angles.
-    // The outline sits a hair outside the faces, so no renderer can hide it.
-    const edges = new THREE.LineSegments(G.boxEdges, M.bldEdge)
-    edges.scale.setScalar(1.006)
-    // Outlines are not pickable. A line counts as hit anywhere near the ray,
-    // so a neighbor's edge would steal clicks meant for this roof.
-    edges.raycast = () => {}
-    b.add(edges)
-    g.add(b)
-    blds.push(b)
-  })
-  return { group: g, blds, rope }
-}
-
-/** Frees a terrace's own geometry. Shared geometry and materials stay. */
-export function disposeTerrace(t: TerraceMeshes): void {
-  t.group.traverse((o) => {
-    if (o instanceof THREE.Mesh && o.geometry !== G.box && o.geometry !== POST_GEO && o.geometry !== KNOB_GEO && o.geometry !== FOOT_GEO) {
-      o.geometry.dispose()
+  return cells.slice(0, Math.min(t.files.length, cells.length)).map((c, idx) => {
+    const file = t.files[idx]
+    return {
+      x: t.x - t.sx / 2 + 0.25 + (c[0] + 0.5) * ((t.sx - 0.5) / cols),
+      z: t.z - t.sz / 2 + 0.25 + (c[1] + 0.5) * ((t.sz - 0.5) / rows),
+      height: 0.4 + 2.2 * Math.sqrt(file.size / maxSize),
+      file,
+      idx,
     }
   })
-  t.rope.dispose()
-  t.group.parent?.remove(t.group)
+}
+
+/**
+ * Makes a mesh a terrace's building: stands it on its lot, in its theme's
+ * resting material, with what the world reads from it. Its geometry is a
+ * unit block, stretched here to the lot's footprint and height.
+ */
+export function asBuilding(b: THREE.Mesh, lot: Lot, t: TerraceSpec, mats: BuildingMats): void {
+  b.material = mats.rest
+  b.scale.set(0.7, lot.height, 0.7)
+  b.position.set(lot.x, PLAZA_TOP + lot.height / 2, lot.z)
+  b.userData = { top: PLAZA_TOP + lot.height, file: lot.file.path, size: lot.file.size, terraceId: t.id, bldIdx: lot.idx, dwell: {}, mats }
+}
+
+/** Points around a terrace, out from its plaza's edge and about a step apart, where its boundary posts stand. */
+export function boundaryPoints(t: TerraceSpec, out: number, step: number): [number, number][] {
+  const hx = t.sx / 2 + out
+  const hz = t.sz / 2 + out
+  const corners = [
+    [-hx, -hz],
+    [hx, -hz],
+    [hx, hz],
+    [-hx, hz],
+  ]
+  const pts: [number, number][] = []
+  for (let c = 0; c < 4; c++) {
+    const a = corners[c]
+    const b = corners[(c + 1) % 4]
+    const n = Math.max(1, Math.round(Math.hypot(b[0] - a[0], b[1] - a[1]) / step))
+    for (let i = 0; i < n; i++) pts.push([t.x + a[0] + ((b[0] - a[0]) * i) / n, t.z + a[1] + ((b[1] - a[1]) * i) / n])
+  }
+  return pts
 }

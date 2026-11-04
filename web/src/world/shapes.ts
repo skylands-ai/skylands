@@ -52,11 +52,18 @@ export function slabGeo(R: number, noise: Noise): THREE.BufferGeometry {
   return geo
 }
 
+/**
+ * What marks a link under an island or the citadel, a crystal in the
+ * default theme: the world turns it while the link is up, and colors its
+ * glow by the link's state.
+ */
 export interface Crystal {
-  mesh: THREE.Mesh
+  /** What turns while the link is up. */
+  mesh: THREE.Object3D
+  /** The glow, lit while the link is up and grey while it can't tell. */
   mat: THREE.MeshStandardMaterial
   light: THREE.PointLight
-  /** Where the crystal sits in its group, which is where tethers attach. */
+  /** Where it sits in its group, which is where tethers attach. */
   local: THREE.Vector3
 }
 

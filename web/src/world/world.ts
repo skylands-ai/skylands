@@ -2,18 +2,19 @@ import * as THREE from 'three'
 import { css, el, reduceMotion } from '../dom'
 import type { Repo } from '../protocol'
 import { level, type Nav } from '../store'
+import type { WorldThemeId } from '../worldthemes'
 import { Agents, bldWorld, refreshBuilding, type AgentState, type TerraceAccess } from './agents'
 import { CameraRig, HOME } from './camera'
-import { buildCitadel, type Citadel } from './citadel'
 import { attachPointerInput } from './input'
-import { buildIsland } from './island'
 import { Labels } from './labels'
 import { M } from './materials'
 import { placeIsland, type Placement } from './placement'
 import type { Crystal } from './shapes'
 import { Sky } from './sky'
-import { buildTerrace, disposeTerrace, layoutTerraces, ROPE_GLOW, type TerraceMeshes, type TerraceSpec } from './terrace'
+import { layoutTerraces, type TerraceSpec } from './terrace'
 import { Tethers } from './tethers'
+import { disposeTree, type BuildingMats, type Citadel, type IslandMeshes, type TerraceMeshes, type WorldTheme } from './theme'
+import { themeFor } from './themes'
 
 /** Text and a CSS color for a status dot. */
 export type Status = [text: string, color: string]
@@ -37,6 +38,7 @@ interface IslandView {
   group: THREE.Group
   core: Crystal
   ring: THREE.Group
+  animate?: IslandMeshes['animate']
   pos: THREE.Vector3
   /** 0 while reachable, easing to 1 while the citadel can't reach the host. */
   drift: number
@@ -45,6 +47,8 @@ interface IslandView {
   terraces: Map<string, TerraceView>
   /** What the terraces were built from, so unchanged repos are not rebuilt. */
   terrainKey: string
+  /** The repos the terraces show, to build them again in another theme. */
+  repos: Repo[]
 }
 
 /** What a click landed on. */
@@ -64,7 +68,9 @@ const tmpW = new THREE.Vector3()
  * page tells it which islands and repos exist and whether each is reachable.
  */
 export class World {
-  readonly citadel: Citadel
+  citadel: Citadel
+  /** How the world is drawn. */
+  private theme: WorldTheme
   /** Where the camera is. */
   nav: Nav = { selected: 'cit', terrace: null, file: null, agent: null }
   /** Called whenever navigation changes, from a click in the world or a label. */
@@ -99,27 +105,35 @@ export class World {
     private readonly stage: HTMLElement,
     private readonly canvas: HTMLCanvasElement,
     labelsEl: HTMLElement,
+    theme: WorldThemeId = 'default',
   ) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+    this.theme = themeFor(theme)
     this.sky = new Sky(this.scene)
+    this.sky.setLook(this.theme.sky)
     this.tethers = new Tethers(this.scene)
-    this.citadel = buildCitadel()
+    this.citadel = this.theme.buildCitadel()
     this.scene.add(this.citadel.group)
     this.pickRoots.push(this.citadel.group)
     this.labels = new Labels(labelsEl, stage, this.rig.camera)
     this.citLabel = this.labels.create(() => this.select('cit'))
-    this.agents = new Agents(labelsEl, this.labels, (host, terrace) => this.terraceAccess(host, terrace))
+    this.agents = new Agents(
+      labelsEl,
+      this.labels,
+      (host, terrace) => this.terraceAccess(host, terrace),
+      (prov) => this.theme.airship(prov),
+    )
     this.agents.onPick = (host, terrace, id) => this.selectAgent(host, terrace, id)
 
     if (window.ResizeObserver) new ResizeObserver(() => this.resize()).observe(stage)
     window.addEventListener('resize', () => this.resize())
     this.resize()
 
-    this.applyTheme()
+    this.applyColorScheme()
     const mq = window.matchMedia?.('(prefers-color-scheme: dark)')
-    mq?.addEventListener('change', () => this.applyTheme())
-    new MutationObserver(() => this.applyTheme()).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] })
+    mq?.addEventListener('change', () => this.applyColorScheme())
+    new MutationObserver(() => this.applyColorScheme()).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] })
 
     attachPointerInput(canvas, this.rig, {
       onPick: (x, y, deep) => this.act(this.pickAt(x, y), deep),
@@ -133,7 +147,7 @@ export class World {
     let isl = this.islands.get(id)
     if (!isl) {
       const def = placeIsland(id, [...this.islands.values()].map((i) => i.def))
-      const m = buildIsland(id, def)
+      const m = this.theme.buildIsland(id, def)
       this.scene.add(m.group)
       this.pickRoots.push(m.group)
       this.tethers.add(id)
@@ -144,12 +158,14 @@ export class World {
         group: m.group,
         core: m.core,
         ring: m.ring,
+        animate: m.animate,
         pos: new THREE.Vector3(),
         drift: 1,
         reachable,
         label: this.labels.create(() => this.select(id)),
         terraces: new Map(),
         terrainKey: '',
+        repos: [],
       }
       this.islands.set(id, isl)
       this.updateIslands(0)
@@ -164,24 +180,62 @@ export class World {
     const key = repos.map((r) => `${r.id}:${r.snapshottedAt}:${r.totalFiles}`).join('|')
     if (key === isl.terrainKey) return
     isl.terrainKey = key
-    for (const t of isl.terraces.values()) disposeTerrace(t.meshes)
+    isl.repos = repos
+    for (const t of isl.terraces.values()) disposeTree(t.meshes.group)
     isl.terraces.clear()
     const specs = layoutTerraces(isl.def.R, repos)
     specs.forEach((spec, k) => {
-      const meshes = buildTerrace(spec, isl.def.seed * 31 + k)
+      const meshes = this.theme.buildTerrace(spec, isl.def.seed * 31 + k)
       isl.group.add(meshes.group)
       const pathIdx = new Map<string, number>()
       meshes.blds.forEach((_, i) => pathIdx.set(spec.files[i].path, i))
       isl.terraces.set(spec.id, { spec, meshes, pathIdx })
       this.agents.terraceRebuilt(host, spec.id)
     })
-    // Scenery was placed before the terraces existed, so clear what they cover.
+    // Scenery was placed before the terraces existed, so clear what they
+    // cover, with the room around it each piece asks for.
     for (const o of isl.group.children) {
-      const kind = o.userData.scenery as string | undefined
-      if (!kind) continue
-      const pad = kind === 'hill' ? 1.6 : 0.7
+      const pad = o.userData.scenery as number | undefined
+      if (pad === undefined) continue
       o.visible = !specs.some((t) => Math.abs(o.position.x - t.x) < t.sx / 2 + pad && Math.abs(o.position.z - t.z) < t.sz / 2 + pad)
     }
+  }
+
+  /**
+   * Draws the world in another theme. The citadel, the islands, their
+   * terraces, and the airships are built again where they were; what is
+   * selected, where the camera is, and what each agent is doing stay.
+   */
+  setTheme(id: WorldThemeId): void {
+    const theme = themeFor(id)
+    if (theme === this.theme) return
+    this.theme = theme
+    this.sky.setLook(theme.sky)
+    // Airships ride on islands, so they come off before the islands go.
+    this.agents.detachShips()
+    const old = this.citadel.group
+    disposeTree(old)
+    this.citadel = theme.buildCitadel()
+    this.scene.add(this.citadel.group)
+    this.pickRoots[this.pickRoots.indexOf(old)] = this.citadel.group
+    for (const isl of this.islands.values()) {
+      const was = isl.group
+      disposeTree(was)
+      const m = theme.buildIsland(isl.id, isl.def)
+      isl.group = m.group
+      isl.core = m.core
+      isl.ring = m.ring
+      isl.animate = m.animate
+      this.scene.add(m.group)
+      this.pickRoots[this.pickRoots.indexOf(was)] = m.group
+      isl.terraces.clear()
+      isl.terrainKey = ''
+      this.setRepos(isl.id, isl.repos)
+    }
+    this.selectedBld = null
+    this.updateIslands(0)
+    this.agents.rebuildShips()
+    this.showRings()
   }
 
   /** Gives a host's agents their airships, and takes them away as sessions end. */
@@ -349,9 +403,10 @@ export class World {
     return isl.group.localToWorld(new THREE.Vector3(t.spec.x, 0.6, t.spec.z))
   }
 
-  private applyTheme(): void {
-    this.sky.applyTheme()
-    this.tethers.applyTheme()
+  /** Follows the page's light or dark colors, which the sky keeps unless the theme has its own. */
+  private applyColorScheme(): void {
+    this.sky.applyColorScheme()
+    this.tethers.applyColorScheme()
   }
 
   private showRings(): void {
@@ -413,21 +468,18 @@ export class World {
     const focused = n.file !== null && n.terrace ? this.islands.get(n.selected) : undefined
     const b = (focused && n.terrace ? focused.terraces.get(n.terrace)?.meshes.blds[n.file as number] : undefined) ?? null
     if (this.selectedBld && this.selectedBld !== b) {
-      this.selectedBld.material = M.bld
+      this.selectedBld.material = (this.selectedBld.userData.mats as BuildingMats).rest
       refreshBuilding(this.selectedBld)
     }
     this.selectedBld = b
     if (b) {
-      if (b.material !== M.bldSelected) b.material = M.bldSelected
-      M.bldSelected.emissiveIntensity = reduceMotion ? 0.55 : 0.4 + 0.35 * Math.sin(this.time * 2.6)
+      const selected = (b.userData.mats as BuildingMats).selected
+      if (b.material !== selected) b.material = selected
+      selected.emissiveIntensity = reduceMotion ? 0.55 : 0.4 + 0.35 * Math.sin(this.time * 2.6)
     }
     for (const isl of this.islands.values()) {
       if (isl.ring.visible) isl.ring.rotation.z += spin
-      for (const t of isl.terraces.values()) {
-        const selected = isl.id === n.selected && t.spec.id === n.terrace
-        const glow = selected ? (reduceMotion ? 0.7 : 0.45 + 0.4 * Math.sin(this.time * 2.6)) : ROPE_GLOW
-        if (t.meshes.rope.emissiveIntensity !== glow) t.meshes.rope.emissiveIntensity = glow
-      }
+      for (const t of isl.terraces.values()) t.meshes.animate(this.time, isl.id === n.selected && t.spec.id === n.terrace)
     }
   }
 
@@ -450,6 +502,7 @@ export class World {
       isl.core.mat.color.set(up ? 0x7fe0f0 : 0x4a5866)
       isl.core.light.intensity = up ? 1.3 : 0
       isl.core.mesh.rotation.y += dt * (up && !this.stale ? 0.8 : 0)
+      isl.animate?.(this.time, dt)
     }
   }
 
@@ -517,6 +570,7 @@ export class World {
     cit.halo.scale.setScalar(reduceMotion ? 1.6 : (1 + 0.6 * cycle) * 1.6)
     cit.halo.material.opacity = reduceMotion ? 0.3 : 0.45 * (1 - cycle)
     cit.light.intensity = this.beaconOn ? 1.1 : 0.4
+    cit.animate?.(this.time, dt)
     if (!reduceMotion) this.sky.puffs.rotation.y += dt * 0.01
 
     this.rig.update(reduceMotion ? 1 : Math.min(1, dt * 3))

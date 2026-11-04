@@ -1,16 +1,9 @@
 import * as THREE from 'three'
-import { G, M } from './materials'
-import { ringNoise, rng } from './noise'
-import type { Placement } from './placement'
-import { crystalAt, selectionRing, SLAB, slabGeo, underside, type Crystal } from './shapes'
-
-export interface IslandMeshes {
-  group: THREE.Group
-  /** The daemon as the citadel last heard it: lit while reachable, grey while it can't tell. */
-  core: Crystal
-  /** The selection ring around the island. It turns slowly while visible. */
-  ring: THREE.Group
-}
+import { G, M } from '../../materials'
+import { ringNoise, rng } from '../../noise'
+import type { Placement } from '../../placement'
+import { crystalAt, selectionRing, SLAB, slabGeo, underside } from '../../shapes'
+import type { IslandMeshes } from '../../theme'
 
 /**
  * One host's island: a grassy slab on a rock, with hills and trees.
@@ -36,7 +29,8 @@ export function buildIsland(id: string, h: Placement): IslandMeshes {
     const hill = new THREE.Mesh(G.hill, M.hill)
     hill.scale.set(1.3 + r(), 0.45 + r() * 0.3, 1.2 + r())
     hill.position.set(Math.cos(a) * d, 0, Math.sin(a) * d)
-    hill.userData.scenery = 'hill'
+    // Scenery under a terrace is hidden, with this much room around it.
+    hill.userData.scenery = 1.6
     g.add(hill)
   }
   let trees = Math.round(h.R * 1.8)
@@ -53,7 +47,7 @@ export function buildIsland(id: string, h: Placement): IslandMeshes {
     tree.scale.setScalar(0.8 + r() * 0.6)
     tree.position.set(tx, 0, tz)
     tree.rotation.y = r() * 6.283
-    tree.userData.scenery = 'tree'
+    tree.userData.scenery = 0.7
     g.add(tree)
     trees--
   }

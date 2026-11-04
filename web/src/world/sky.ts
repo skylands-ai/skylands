@@ -2,8 +2,13 @@ import * as THREE from 'three'
 import { css } from '../dom'
 import { std } from './materials'
 import { rng } from './noise'
+import type { SkyLook } from './theme'
 
-/** Sky dome, stars, fog, lights, and clouds. Scenery that carries no data, themed from CSS tokens. */
+/**
+ * Sky dome, stars, fog, lights, and clouds. Scenery that carries no data.
+ * It follows the page's light or dark colors, unless the world's theme has
+ * a sky of its own.
+ */
 export class Sky {
   readonly skyMat: THREE.ShaderMaterial
   readonly starMat: THREE.PointsMaterial
@@ -13,6 +18,10 @@ export class Sky {
   readonly cloudMat: THREE.MeshStandardMaterial
   /** Loose cloud puffs that drift slowly around the world. */
   readonly puffs: THREE.Group
+  private readonly clouds: THREE.InstancedMesh
+  /** Stars below the horizon too, for a sky in space. */
+  private readonly starsAround: THREE.Points
+  private look: SkyLook | null = null
 
   constructor(scene: THREE.Scene) {
     this.skyMat = new THREE.ShaderMaterial({
@@ -43,6 +52,21 @@ export class Sky {
     }
     this.starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 1.6, sizeAttenuation: false, transparent: true, opacity: 0, fog: false, depthWrite: false })
     scene.add(new THREE.Points(starGeo, this.starMat))
+    {
+      const r = rng(23)
+      const p: number[] = []
+      for (let i = 0; i < 900; i++) {
+        const u = r() * 6.283
+        const y = r() * 2 - 1
+        const s = Math.sqrt(1 - y * y)
+        p.push(Math.cos(u) * s * 640, y * 640, Math.sin(u) * s * 640)
+      }
+      const g = new THREE.BufferGeometry()
+      g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3))
+      this.starsAround = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xdfe8ff, size: 1.3, sizeAttenuation: false, transparent: true, opacity: 0.85, fog: false, depthWrite: false }))
+      this.starsAround.visible = false
+      scene.add(this.starsAround)
+    }
 
     this.hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.9)
     scene.add(this.hemi)
@@ -61,6 +85,7 @@ export class Sky {
     }
     const PER_BANK = 4
     const clouds = new THREE.InstancedMesh(cloudGeo, this.cloudMat, banks.length * PER_BANK)
+    this.clouds = clouds
     {
       const r = rng(19)
       const m = new THREE.Matrix4()
@@ -104,8 +129,36 @@ export class Sky {
     scene.add(this.puffs)
   }
 
-  /** Re-reads the theme tokens. Day sky in the light theme, dusk in the dark one. */
-  applyTheme(): void {
+  /** Gives the sky a theme's look, or, with null, the page's colors. */
+  setLook(look: SkyLook | null): void {
+    this.look = look
+    this.applyColorScheme()
+  }
+
+  /**
+   * Re-reads the page's color tokens: a day sky in the light color scheme,
+   * dusk in the dark one. A theme with a sky of its own keeps it.
+   */
+  applyColorScheme(): void {
+    const l = this.look
+    this.clouds.visible = this.puffs.visible = !l || l.clouds
+    this.starsAround.visible = !!l?.starsAround
+    if (l) {
+      this.skyMat.uniforms.top.value.set(l.top)
+      this.skyMat.uniforms.horizon.value.set(l.horizon)
+      this.fog.color.set(l.fog)
+      this.fog.near = l.fogNear
+      this.fog.far = l.fogFar
+      this.hemi.color.set(l.hemiSky)
+      this.hemi.groundColor.set(l.hemiGround)
+      this.hemi.intensity = l.hemiIntensity
+      this.sun.color.set(l.sun)
+      this.sun.intensity = l.sunIntensity
+      this.starMat.opacity = l.stars
+      return
+    }
+    this.fog.near = 120
+    this.fog.far = 330
     this.skyMat.uniforms.top.value.set(css('--sky-top', '#5C9BE0'))
     this.skyMat.uniforms.horizon.value.set(css('--sky-horizon', '#D6E9F7'))
     this.fog.color.set(css('--fog', '#D6E9F7'))

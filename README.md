@@ -85,6 +85,14 @@ Open <http://127.0.0.1:8080>. `devworld up` runs an embedded NATS server, a
 citadel, and a daemon for this machine in one process, so you get the castle
 and one island.
 
+The world has two themes, switched from the citadel's panel: Default, a
+castle and floating islands in a daytime sky, and Sci-fi, a space station
+with asteroids for islands, communications arrays where the crystals hang,
+towers lit by landing-strip lights for terraces, and starships for
+airships, always in a starfield. A theme changes only how
+the 3D world is drawn, never what it shows or the rest of the page, and the
+choice is kept in your browser.
+
 ### Keep it running
 
 `up` runs in the terminal you start it from. To have it start when you log

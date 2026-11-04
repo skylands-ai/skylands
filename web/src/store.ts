@@ -1,4 +1,5 @@
 import type { Island, Repo, ServerInfo, Session, TokenUsage } from './protocol'
+import { isWorldTheme, type WorldThemeId } from './worldthemes'
 
 /** The browser's link to its citadel over the WebSocket. */
 export type LinkState = 'connecting' | 'connected' | 'lost'
@@ -35,11 +36,14 @@ export interface State extends Nav {
   inbox: string | null
   /** Which conversations the inbox lists: open ones, or all. */
   inboxFilter: 'open' | 'all'
+  /** How the 3D world is drawn, as chosen in this browser. */
+  worldTheme: WorldThemeId
 }
 
 const VIEWED_KEY = 'skylands.viewed'
 const VIEW_KEY = 'skylands.view'
 const FILTER_KEY = 'skylands.inboxFilter'
+const WORLD_THEME_KEY = 'skylands.worldTheme'
 
 function loadViewed(): Record<string, number> {
   try {
@@ -65,11 +69,20 @@ function loadView(): 'world' | 'inbox' {
   }
 }
 
+function loadWorldTheme(): WorldThemeId {
+  try {
+    const v = localStorage.getItem(WORLD_THEME_KEY)
+    return isWorldTheme(v) ? v : 'default'
+  } catch {
+    return 'default'
+  }
+}
+
 type Listener = (s: State) => void
 
 /** One place for everything the page renders from. Every change notifies every listener. */
 export class Store {
-  state: State = { link: 'connecting', server: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), inbox: null, inboxFilter: loadFilter() }
+  state: State = { link: 'connecting', server: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), inbox: null, inboxFilter: loadFilter(), worldTheme: loadWorldTheme() }
   private listeners: Listener[] = []
 
   subscribe(fn: Listener): void {
@@ -134,6 +147,17 @@ export class Store {
       // Same as above.
     }
     this.update({ view })
+  }
+
+  /** Draws the world in another theme, and remembers which. */
+  setWorldTheme(worldTheme: WorldThemeId): void {
+    if (worldTheme === this.state.worldTheme) return
+    try {
+      localStorage.setItem(WORLD_THEME_KEY, worldTheme)
+    } catch {
+      // Same as above.
+    }
+    this.update({ worldTheme })
   }
 
   /** Re-renders without changing anything, for times that tick. */

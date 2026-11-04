@@ -1,21 +1,8 @@
 import * as THREE from 'three'
-import { G, M } from './materials'
-import { ringNoise } from './noise'
-import { crenelRing, crenelSquare, crystalAt, selectionRing, slit, underside, type Crystal } from './shapes'
-
-export interface Citadel {
-  group: THREE.Group
-  /** The world's NATS server. Every tether ends here. */
-  core: Crystal
-  /** Lit and pulsing while anything in the world waits on a person. */
-  beacon: THREE.Mesh
-  halo: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
-  light: THREE.PointLight
-  /** The selection ring around the castle. It turns slowly while visible. */
-  ring: THREE.Group
-  /** Height above the group where its label floats. */
-  labelY: number
-}
+import { G, M } from '../../materials'
+import { ringNoise } from '../../noise'
+import { crenelRing, crenelSquare, crystalAt, selectionRing, slit, underside } from '../../shapes'
+import type { Citadel } from '../../theme'
 
 /** The castle at the center of the world. It looks the same whether one citadel runs or ten. */
 export function buildCitadel(): Citadel {

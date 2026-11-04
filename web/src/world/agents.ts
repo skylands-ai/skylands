@@ -1,9 +1,10 @@
 import * as THREE from 'three'
 import { el, reduceMotion } from '../dom'
 import { base } from '../files'
-import { airshipMesh, type Provider } from './airship'
+import type { Airship, Provider } from './airship'
 import type { Labels } from './labels'
 import { G, M } from './materials'
+import { disposeTree, type BuildingMats } from './theme'
 
 /** What the page knows about one running or just-finished agent. */
 export interface AgentState {
@@ -100,6 +101,8 @@ export class Agents {
     private readonly labelsEl: HTMLElement,
     private readonly labels: Labels,
     private readonly terraceOf: (host: string, terrace: string) => TerraceAccess | undefined,
+    /** Builds an airship in the world's current theme. */
+    private readonly airship: (prov: Provider) => Airship,
   ) {
     for (let i = 0; i < FILE_TAGS; i++) {
       const tag = el('span', { class: 'ftag', 'aria-hidden': 'true' })
@@ -141,16 +144,54 @@ export class Agents {
     for (const v of this.views.values()) if (v.host === host && v.terrace === terrace) v.dwellIdx = null
   }
 
-  private create(host: string, s: AgentState, t: TerraceAccess): AgentView {
-    const ship = airshipMesh(s.prov)
-    ship.group.userData.agentId = s.id
-    ship.group.userData.terraceId = s.terrace
-    // The beam drops from the gondola to whatever is below while a tool
+  /** Builds an agent's airship, with the beam it shows while a tool call waits on a person. */
+  private ship(id: string, terrace: string, prov: Provider): { ship: Airship; beam: THREE.Mesh } {
+    const ship = this.airship(prov)
+    ship.group.userData.agentId = id
+    ship.group.userData.terraceId = terrace
+    // The beam drops from under the hull to whatever is below while a tool
     // call waits on a person. It is not pickable; the airship is.
     const beam = new THREE.Mesh(G.beam, M.beam)
     beam.visible = false
     beam.raycast = () => {}
     ship.group.add(beam)
+    return { ship, beam }
+  }
+
+  /** Takes every airship off its island, before the islands are rebuilt. */
+  detachShips(): void {
+    for (const v of this.views.values()) v.mesh.parent?.remove(v.mesh)
+  }
+
+  /**
+   * Gives every airship a new hull from the current theme, where the old
+   * one was, on its island as rebuilt. Buildings were rebuilt too, so what
+   * an agent was lighting is lit again as it lands. A ship already leaving
+   * is gone.
+   */
+  rebuildShips(): void {
+    for (const v of [...this.views.values()]) {
+      const t = this.terraceOf(v.host, v.terrace)
+      if (!t || v.phase === 'leave') {
+        this.remove(v)
+        continue
+      }
+      const { ship, beam } = this.ship(v.id, v.terrace, v.prov)
+      ship.group.position.copy(v.mesh.position)
+      ship.group.rotation.copy(v.mesh.rotation)
+      disposeTree(v.mesh)
+      t.island.add(ship.group)
+      v.mesh = ship.group
+      v.mats = ship.mats
+      v.bags = ship.bags
+      v.beam = beam
+      v.dwellIdx = null
+      if (v.to.idx !== null) v.to = t.blds[v.to.idx] ? bldSpot(t, v.to.idx) : padSpot(t)
+    }
+  }
+
+  private create(host: string, s: AgentState, t: TerraceAccess): AgentView {
+    const { ship, beam } = this.ship(s.id, s.terrace, s.prov)
     t.island.add(ship.group)
     const tag = el('button', { type: 'button', class: 'tag', onclick: () => this.onPick(host, s.terrace, s.id) })
     this.labelsEl.appendChild(tag)
@@ -214,8 +255,7 @@ export class Agents {
   }
 
   private remove(v: AgentView): void {
-    v.mesh.parent?.remove(v.mesh)
-    for (const m of v.mats) m.dispose()
+    disposeTree(v.mesh)
     v.tag.remove()
     this.views.delete(v.id)
   }
@@ -323,7 +363,8 @@ export class Agents {
         const n = Object.keys(dwell).length
         if ((!n && bi !== focusedIdx) || used >= this.fileTags.length) return
         const node = this.fileTags[used++]
-        const cls = b.material === M.bldConflict ? 'conflict' : b.material === M.bldEdit ? 'edit' : b.material === M.bldRead ? 'read' : ''
+        const mats = b.userData.mats as BuildingMats
+        const cls = b.material === mats.conflict ? 'conflict' : b.material === mats.edit ? 'edit' : b.material === mats.read ? 'read' : ''
         const txt = base(b.userData.file as string) + (cls === 'conflict' ? `, ${n} sessions` : '')
         if (node.textContent !== txt) node.textContent = txt
         const cn = `ftag ${cls}`
@@ -378,16 +419,17 @@ function clearDwell(t: TerraceAccess, idx: number, agentId: string): void {
   refreshBuilding(b)
 }
 
-/** Amber while an agent edits, blue while one reads, red when two sessions are on the file at once. */
+/** Amber while an agent edits, blue while one reads, red when two sessions are on the file at once, in the building's theme. */
 export function refreshBuilding(b: THREE.Mesh): void {
+  const mats = b.userData.mats as BuildingMats
   // A selected building keeps its pulse; the world restores it on deselect.
-  if (b.material === M.bldSelected) return
+  if (b.material === mats.selected) return
   const dwell = b.userData.dwell as Record<string, string>
   const ids = Object.keys(dwell)
   if (!ids.length) {
-    b.material = M.bld
+    b.material = mats.rest
     return
   }
   const edit = ids.some((id) => dwell[id] === 'edit')
-  b.material = ids.length > 1 ? M.bldConflict : edit ? M.bldEdit : M.bldRead
+  b.material = ids.length > 1 ? mats.conflict : edit ? mats.edit : mats.read
 }
