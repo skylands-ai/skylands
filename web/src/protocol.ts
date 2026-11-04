@@ -58,7 +58,7 @@ export interface AgentModel {
   description?: string
 }
 
-/** One host as the citadel last heard it. Islands are never removed, only marked unreachable. */
+/** One host as the citadel last saw it. Islands are never removed, only marked unreachable. */
 export interface Island {
   host: string
   reachable: boolean

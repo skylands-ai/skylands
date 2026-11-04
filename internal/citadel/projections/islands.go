@@ -13,9 +13,9 @@ import (
 	v1 "github.com/skylands-ai/skylands/api/v1"
 )
 
-// Island is one host as the citadel last heard it. An island is never
+// Island is one host as the citadel last saw it. An island is never
 // removed: a host the citadel can't reach keeps its last state, along with
-// when it was last heard.
+// when it was last seen.
 type Island struct {
 	Host string `json:"host"`
 	// Reachable is false once the host has missed enough pings. The citadel

@@ -408,7 +408,7 @@ need visual re-tuning.
 
 **Replace the mock data with a store fed by the WebSocket.** The `HOSTS`,
 `AGENTS`, and `QUEUE` constants become a store that starts empty.
-`reachable`, `statusOf`, `connectedCount`, and the last-heard times read from
+`reachable`, `statusOf`, `connectedCount`, and the last-seen times read from
 it. The agent, terrace, queue, and work order code stays in place and simply
 has nothing to render, so it comes back as later features arrive. The
 simulation drivers go: the laptop offline cycle, the NUC toggle, and the
@@ -423,7 +423,7 @@ hosts land in the same slot, so every host keeps its place across reloads and
 across citadels.
 
 The world panel shows islands connected and the NATS server. The island panel
-shows link state, last heard, and the daemon facts from the micro metadata.
+shows link state, last seen, and the daemon facts from the micro metadata.
 Levels below island render nothing yet.
 
 Demo: the MVP.

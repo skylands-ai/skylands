@@ -26,7 +26,7 @@ export interface State extends Nav {
   repos: Record<string, Repo>
   /** Every agent session the citadel knows, by session id. */
   sessions: Record<string, Session>
-  /** When this page last heard from the citadel, in ms since the epoch, or null before the first contact. */
+  /** When this page last saw the citadel, in ms since the epoch, or null before the first contact. */
   lastContact: number | null
   /** When each session was last looked at here, in ms since the epoch. A per-viewer convenience. */
   viewed: Record<string, number>

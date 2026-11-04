@@ -40,7 +40,7 @@ export interface Citadel {
 
 export interface IslandMeshes {
   group: THREE.Group
-  /** The daemon as the citadel last heard it: lit while reachable, grey while it can't tell. */
+  /** The daemon as the citadel last saw it: lit while reachable, grey while it can't tell. */
   core: Crystal
   /** The selection ring around the island. It turns slowly while visible. */
   ring: THREE.Group
