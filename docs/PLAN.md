@@ -229,6 +229,28 @@ specifies. No events, streams, or aggregates are needed for it.
   (`skylands.worldTheme`). Checked in headless Chrome at every level in
   both themes, in light and dark, switching both ways with agents
   waiting on approval, and opening a page with the theme saved.
+- goose is in progress, the third real agent. It comes as a binary per
+  platform rather than from npm, so the daemon runs `goose acp` from its
+  PATH, and an adapter's new Install hint says how to get it when it is
+  missing. goose advertises session load, form questions, and session
+  close, offers its mode and model as ACP config options by category, and
+  reports token usage, so it needs nothing goose-specific beyond its
+  adapter. Its default mode, auto, approves every tool call itself, so
+  every session is set to approve, where it asks before every tool call
+  its own settings don't always allow; smart_approve would let goose,
+  partly by asking a model, decide which calls are reads. goose reports
+  no kind for its tool calls, so the rules can't let its reads pass and
+  every call waits on a person unless a rule or trust allows it. It
+  reports no login, so preflight can't say whether a provider is
+  configured; a session that won't open shows in the models check. An
+  agent that isn't installed (its command not on PATH, or no Node for an
+  agent from npm) is skipped, a new check status, rather than failed,
+  while the host has another installed; with only the built-in fake
+  agent, which an adapter's BuiltIn marks, it still fails. The daemon
+  logs a skipped agent as not installed, at info rather than warn. Its
+  airship is a taupe goose with a neck and an orange beak, and its ship
+  in the sci-fi theme a swept-wing glider. Not yet run live: goose is
+  not installed on the machine this was built on.
 
 ## After the MVP
 

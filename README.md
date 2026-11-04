@@ -62,7 +62,10 @@ version it runs. Reading the models opens a session in the agent without
 prompting it, which starts what a session needs, such as its MCP servers.
 Each problem comes with
 what to do about it, and the command exits with status 1 when a check
-fails.
+fails. An agent that isn't installed, such as goose without `goose` on
+PATH, or Claude Code and Codex without Node, is skipped rather than failed
+as long as another agent is installed; with none but the built-in fake
+agent, it fails.
 
 The daemon makes the same agent checks itself, in its own environment,
 when it starts and every ten minutes, and records which agents it can run
@@ -188,7 +191,7 @@ top of the inbox shows the total across every conversation, and a
 terrace's panel shows the total for its repository under the tracked
 files, with the exact counts as a tooltip.
 
-Three agents are available, and the agent chip lists the ones the island
+Four agents are available, and the agent chip lists the ones the island
 can run. The built-in fake agent reads a few files and
 edits one, so you can see the loop without any API keys. Claude Code runs
 through its ACP adapter from npm, at the exact version pinned in
@@ -211,6 +214,13 @@ login` if you have the Codex CLI. An API key in the environment isn't
 enough; log in with the key through `codex login --with-api-key`. Which
 models Codex offers depends on the account, and the model chip lists the
 ones it offers the island's.
+
+goose runs as installed on the host: the daemon starts `goose acp` from its
+PATH, so install goose
+([installation](https://block.github.io/goose/docs/getting-started/installation))
+and run `goose configure` to choose its model provider, which also decides
+the models the chip lists. A service gets only PATH from your shell, so
+install goose where that PATH finds it.
 
 ### Approvals
 
@@ -238,6 +248,13 @@ a command blocked by the sandbox, tell it to ask for escalated permissions.
 That request waits for the rules or a person like any other. A command the
 sandbox stopped doesn't appear in the conversation, because Codex doesn't
 report it.
+
+goose approves every tool call itself in its default mode, so the daemon
+sets every goose session to its approve mode, in which goose asks before
+every tool call it hasn't been told in its own settings to always allow.
+goose doesn't say what kind of call each one is, a read or an edit, so the
+host's rules can't let its reads pass on their own: every goose call waits
+for a person unless a rule or "Trust this session" lets it through.
 
 On the host itself, `skylands request list` shows what is waiting, and
 `skylands request approve <id>` and `skylands request deny <id>` settle it

@@ -56,7 +56,7 @@ func (h *host) env() Env {
 	return Env{
 		Registry: agents.Registry{
 			"claude": {Name: "claude", Command: []string{"npx", "-y", "adapter@1.0.0"}, Login: "log in with claude"},
-			"fake":   {Name: "fake", Command: []string{"/usr/local/bin/skylands", "fakeagent"}},
+			"fake":   {Name: "fake", Command: []string{"/usr/local/bin/skylands", "fakeagent"}, BuiltIn: true},
 		},
 		SocketPath:   "/run/d.sock",
 		Version:      "v1.0.0",
@@ -210,6 +210,25 @@ func TestAnAgentThatCannotStartIsNotProbed(t *testing.T) {
 	}
 }
 
+// TestAnAgentNotOnPathSaysHowToInstallIt gives the adapter's install hint
+// for an agent whose own command is missing, such as goose, and skips it
+// while another agent is installed.
+func TestAnAgentNotOnPathSaysHowToInstallIt(t *testing.T) {
+	h := healthy()
+	h.missing["goose"] = true
+	e := h.env()
+	e.Registry["goose"] = agents.Adapter{Name: "goose", Command: []string{"goose", "acp"}, Install: "install goose"}
+	c := byName(RunAgents(context.Background(), e))["agent goose"]
+	if c.Status != Skip || c.Found != "cannot start: goose is not on PATH" || c.Fix != "install goose" {
+		t.Errorf("agent goose = %+v, want it skipped, saying how to install it", c)
+	}
+	for _, name := range h.probed {
+		if name == "goose" {
+			t.Error("a missing goose was probed")
+		}
+	}
+}
+
 func withAuth(p agents.Probe, a *agents.AuthStatus) agents.Probe {
 	p.ReportsAuth, p.Auth = true, a
 	return p
@@ -309,5 +328,71 @@ func TestModelsCheck(t *testing.T) {
 	checks = RunAgents(context.Background(), e)
 	if _, ok := byName(checks)["models claude"]; ok || !reflect.DeepEqual(h.modelsAsked, []string{"fake"}) {
 		t.Errorf("asked for models of %v", h.modelsAsked)
+	}
+}
+
+// TestMissingAgentsAreOptional skips the agents a host hasn't installed
+// while it has another, and fails them when it has none but the built-in
+// fake agent, since then no real session can run.
+func TestMissingAgentsAreOptional(t *testing.T) {
+	failed := func(checks []Check) []string {
+		var out []string
+		for _, c := range checks {
+			if c.Status == Fail {
+				out = append(out, c.Name)
+			}
+		}
+		return out
+	}
+	statuses := func(checks []Check, names ...string) string {
+		m := byName(checks)
+		var out []string
+		for _, n := range names {
+			out = append(out, n+"="+m[n].Status.String())
+		}
+		return strings.Join(out, " ")
+	}
+	goose := agents.Adapter{Name: "goose", Command: []string{"goose", "acp"}, Install: "install goose"}
+
+	// goose missing beside a working Claude Code: skipped, nothing fails.
+	h := healthy()
+	h.missing["goose"] = true
+	e := h.env()
+	e.Registry["goose"] = goose
+	checks := RunAgents(context.Background(), e)
+	if f := failed(checks); len(f) != 0 {
+		t.Errorf("failed %v, want nothing failed", f)
+	}
+	if got := Ready(checks); !reflect.DeepEqual(got, []string{"claude", "fake"}) {
+		t.Errorf("ready %v, want goose not among them", got)
+	}
+	a := Availability(checks, e.Registry)
+	if a[2].Name != "goose" || a[2].Available || len(a[2].Notes) != 1 || a[2].Notes[0].Failed || a[2].Agent != "" {
+		t.Errorf("goose availability = %+v, want unavailable with one note that is not a failure", a[2])
+	}
+
+	// No Node, with goose installed: Node, npx, and Claude Code are skipped.
+	h = healthy()
+	h.missing["npx"] = true
+	h.probes["goose"] = agents.Probe{Name: "goose", Version: "1.57.0", LoadSession: true}
+	e = h.env()
+	e.Registry["goose"] = goose
+	checks = RunAgents(context.Background(), e)
+	if f := failed(checks); len(f) != 0 {
+		t.Errorf("failed %v, want nothing failed", f)
+	}
+	if got := statuses(checks, "npx", "agent claude", "agent goose"); got != "npx=skip agent claude=skip agent goose=ok" {
+		t.Errorf("statuses %s", got)
+	}
+
+	// Nothing but the fake agent: the missing ones fail.
+	h = healthy()
+	h.missing["npx"] = true
+	h.missing["goose"] = true
+	e = h.env()
+	e.Registry["goose"] = goose
+	checks = RunAgents(context.Background(), e)
+	if got := statuses(checks, "npx", "agent claude", "agent goose"); got != "npx=fail agent claude=fail agent goose=fail" {
+		t.Errorf("statuses %s, want failures with no real agent installed", got)
 	}
 }
