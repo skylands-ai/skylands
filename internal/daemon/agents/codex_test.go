@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -31,6 +32,21 @@ func TestCodexAdapter(t *testing.T) {
 	}
 	if ad.Login == "" || ad.Instructions == "" {
 		t.Error("codex adapter has no login hint or instructions")
+	}
+}
+
+// TestGooseAdapter runs the goose on PATH over ACP, in the mode where it
+// asks before every tool call, and says how to install it.
+func TestGooseAdapter(t *testing.T) {
+	ad := DefaultRegistry()["goose"]
+	if !reflect.DeepEqual(ad.Command, []string{"goose", "acp"}) || ad.Provider != "goose" {
+		t.Errorf("goose adapter = %+v", ad)
+	}
+	if ad.Mode != "approve" || len(ad.Env) != 0 {
+		t.Errorf("goose mode = %q and env = %q, want approve sessions set over ACP alone", ad.Mode, ad.Env)
+	}
+	if ad.Install == "" {
+		t.Error("goose adapter has no install hint")
 	}
 }
 

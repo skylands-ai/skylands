@@ -14,8 +14,8 @@ function part(g: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Material,
 
 /**
  * A ship in the sci-fi theme, flying nose first along +x: a shuttle for
- * Claude, a hauler for Codex, a saucer for Gemini, and a ringed drone for
- * local models, each in its provider's color. Four lit cells under the
+ * Claude, a hauler for Codex, a saucer for Gemini, a swept-wing glider for
+ * goose, and a ringed drone for local models, each in its provider's color. Four lit cells under the
  * hull count the context used, a quarter each.
  */
 export function starship(prov: Provider): Airship {
@@ -46,6 +46,13 @@ export function starship(prov: Provider): Airship {
     part(g, new THREE.SphereGeometry(0.66, 16, 8), hull, [0, 0, 0], [0, 0, 0], [1, 0.26, 1])
     part(g, new THREE.SphereGeometry(0.26, 12, 6, 0, Math.PI * 2, 0, half), dark, [0, 0.1, 0])
     part(g, new THREE.TorusGeometry(0.63, 0.03, 6, 24), engine, [0, 0, 0], [half, 0, 0])
+  } else if (prov === 'goose') {
+    // A slim body with a long nose, and wings swept back like a goose in flight.
+    part(g, new THREE.ConeGeometry(0.16, 0.9, 6), hull, [0.55, 0.02, 0], [0, 0, -half])
+    part(g, new THREE.CylinderGeometry(0.16, 0.2, 0.7, 6), hull, [-0.15, 0, 0], [0, 0, half])
+    for (const s of [1, -1]) part(g, G.box, hull, [-0.2, 0.02, s * 0.55], [0, s * 0.62, 0], [0.32, 0.04, 1.05])
+    part(g, new THREE.SphereGeometry(0.12, 8, 6), dark, [0.3, 0.14, 0])
+    part(g, new THREE.CylinderGeometry(0.12, 0.12, 0.06, 8), engine, [-0.52, 0, 0], [0, 0, half])
   } else {
     part(g, new THREE.OctahedronGeometry(0.42, 0), hull, [0, 0, 0], [0, 0, 0], [1.1, 1, 1])
     part(g, new THREE.TorusGeometry(0.62, 0.06, 6, 20), dark, [0, 0, 0], [half, 0, 0])

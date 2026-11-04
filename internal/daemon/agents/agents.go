@@ -25,7 +25,7 @@ import (
 type Adapter struct {
 	// Name is what a StartSession command asks for, such as "claude".
 	Name string
-	// Provider colors the airship: claude, codex, gemini, or local.
+	// Provider colors the airship: claude, codex, gemini, goose, or local.
 	Provider string
 	// Command runs the ACP agent, with the worktree as its working directory.
 	Command []string
@@ -39,6 +39,13 @@ type Adapter struct {
 	// Login tells a person how to log the agent in, for an agent that
 	// reports its login.
 	Login string
+	// Install tells a person how to install the agent when its command is
+	// not on PATH. Empty for an agent that comes with its command, such as
+	// one that npx fetches.
+	Install string
+	// BuiltIn marks the fake agent inside the skylands binary, which needs
+	// nothing installed, so it does not count as an agent the host has.
+	BuiltIn bool
 	// Instructions are added to the agent's own instructions for every
 	// session it opens or loads, through ACP's session system prompt in
 	// append mode. An agent that does not advertise the system prompt
@@ -56,20 +63,22 @@ type Registry map[string]Adapter
 // Move it on purpose, after a session with the new version works.
 const ClaudeAdapterPackage = "@agentclientprotocol/claude-agent-acp@0.100.0"
 
-// DefaultRegistry holds the fake agent built into the skylands binary and
-// the Claude Code and Codex adapters from npm.
+// DefaultRegistry holds the fake agent built into the skylands binary, the
+// Claude Code and Codex adapters from npm, and goose as installed on the
+// host.
 func DefaultRegistry() Registry {
 	exe, err := os.Executable()
 	if err != nil {
 		exe = "skylands"
 	}
 	return Registry{
-		"fake": {Name: "fake", Provider: "local", Command: []string{exe, "fakeagent"}},
+		"fake": {Name: "fake", Provider: "local", Command: []string{exe, "fakeagent"}, BuiltIn: true},
 		"claude": {Name: "claude", Provider: "claude", Command: []string{"npx", "-y", ClaudeAdapterPackage},
 			Login: "run claude and log in with /login, or set ANTHROPIC_API_KEY"},
 		"codex": {Name: "codex", Provider: "codex", Command: []string{"npx", "-y", CodexAdapterPackage},
 			Mode: codexMode, Instructions: codexInstructions,
 			Login: "run npx -y " + CodexAdapterPackage + " login, or codex login if the Codex CLI is installed"},
+		"goose": {Name: "goose", Provider: "goose", Command: []string{"goose", "acp"}, Mode: gooseMode, Install: gooseInstall},
 	}
 }
 

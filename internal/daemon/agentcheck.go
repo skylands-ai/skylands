@@ -115,11 +115,18 @@ func (c *agentChecker) checkAgents(ctx context.Context, allModels bool) ([]v1.Ag
 				ready = append(ready, a.Name)
 				continue
 			}
-			var why []string
+			var why, skipped []string
 			for _, n := range a.Notes {
 				if n.Failed {
 					why = append(why, n.Check+": "+n.Found)
+				} else {
+					skipped = append(skipped, n.Check+": "+n.Found)
 				}
+			}
+			// An agent that isn't installed, while another is, is no fault.
+			if len(why) == 0 {
+				slog.Info("daemon: agent not installed", "agent", a.Name, "why", strings.Join(skipped, "; "))
+				continue
 			}
 			slog.Warn("daemon: agent cannot run", "agent", a.Name, "why", strings.Join(why, "; "))
 		}

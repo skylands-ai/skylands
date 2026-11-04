@@ -82,7 +82,8 @@ const ICONS: Record<Place, string> = {
 /**
  * An agent type's glyph: its airship's hull in its color, so the panel and
  * the sky agree on who is who. A long envelope for Claude, a boxy hull for
- * Codex, a round one for Gemini, and a four-sided one for local agents.
+ * Codex, a round one for Gemini, a goose for goose, and a four-sided one for
+ * local agents.
  */
 export function agentGlyph(agent: string): HTMLElement {
   const color = agentColor(agent)
@@ -90,6 +91,7 @@ export function agentGlyph(agent: string): HTMLElement {
     claude: `<ellipse cx="11" cy="10" rx="9" ry="4.5" fill="${color}"/><rect x="8" y="14" width="6" height="3" rx="1" fill="${color}" opacity=".7"/>`,
     codex: `<rect x="3" y="5" width="16" height="9" rx="2.5" fill="${color}"/><rect x="8" y="14" width="6" height="3" rx="1" fill="${color}" opacity=".7"/>`,
     gemini: `<circle cx="11" cy="9" r="7" fill="${color}"/><rect x="8" y="16" width="6" height="3" rx="1" fill="${color}" opacity=".7"/>`,
+    goose: `<ellipse cx="9" cy="11" rx="7" ry="4" fill="${color}"/><path d="M14 10 L17 5" stroke="${color}" stroke-width="2.2" stroke-linecap="round"/><circle cx="17.5" cy="4.5" r="2.2" fill="${color}"/><path d="M19.5 4 L22 4.6 L19.5 5.4 Z" fill="#F0A030"/><rect x="6" y="15" width="6" height="3" rx="1" fill="${color}" opacity=".7"/>`,
     local: `<path d="M11 2l8 7-8 7-8-7z" fill="${color}"/><rect x="8" y="16" width="6" height="3" rx="1" fill="${color}" opacity=".7"/>`,
   }
   const icon = el('span', { 'aria-hidden': 'true', style: 'display:inline-flex;flex:none' })

@@ -48,6 +48,8 @@ export function agentColor(agent: string): string {
       return '#3FBF9C'
     case 'gemini':
       return '#7C9BFF'
+    case 'goose':
+      return '#9C8466'
     default:
       return '#B58BEB'
   }
@@ -62,6 +64,8 @@ export function agentLabel(agent: string): string {
       return 'Codex'
     case 'gemini':
       return 'Gemini CLI'
+    case 'goose':
+      return 'goose'
     case 'fake':
       return 'Fake agent'
     default:

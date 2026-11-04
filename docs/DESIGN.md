@@ -389,13 +389,14 @@ The daemon decides what leaves the host. Session and host events carry metadata 
 
 ## Agents and adapters
 
-Every agent runs over ACP, the Agent Client Protocol, so the daemon speaks one protocol to all of them. The first release supports four agent types.
+Every agent runs over ACP, the Agent Client Protocol, so the daemon speaks one protocol to all of them. The first release supports five agent types.
 
 | Agent | Connects through |
 | --- | --- |
 | Claude Code | The claude-agent-acp adapter, distributed through npm |
 | Codex CLI | The codex-acp adapter, distributed through npm |
 | Gemini CLI | Its native ACP mode |
+| goose | Its native ACP mode, `goose acp`, as installed on the host |
 | Local models | OpenCode in ACP mode, pointed at Ollama |
 
 Claude Code also reports through command hooks, which cover subagent lifecycle and sessions started by hand.

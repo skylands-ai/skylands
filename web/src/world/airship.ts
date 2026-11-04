@@ -1,15 +1,16 @@
 import type * as THREE from 'three'
 
 /** Who runs the agent. The hull's shape and color say which, in every theme. */
-export type Provider = 'claude' | 'codex' | 'gemini' | 'local'
+export type Provider = 'claude' | 'codex' | 'gemini' | 'goose' | 'local'
 
-export const PROVIDER_COLOR: Record<Provider, number> = { claude: 0xf2995e, codex: 0x3fbf9c, gemini: 0x7c9bff, local: 0xb58beb }
+export const PROVIDER_COLOR: Record<Provider, number> = { claude: 0xf2995e, codex: 0x3fbf9c, gemini: 0x7c9bff, goose: 0x9c8466, local: 0xb58beb }
 
 /** Maps an adapter name to its provider. Unknown adapters fly the local hull. */
 export function providerOf(agent: string): Provider {
   if (agent.startsWith('claude')) return 'claude'
   if (agent.startsWith('codex')) return 'codex'
   if (agent.startsWith('gemini')) return 'gemini'
+  if (agent.startsWith('goose')) return 'goose'
   return 'local'
 }
 

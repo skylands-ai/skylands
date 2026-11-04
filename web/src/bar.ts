@@ -4,7 +4,7 @@ import { agentLabel, isStale } from './status'
 import { level, type State } from './store'
 
 /** The agents in the order the chip lists them, offered as they are until the island says which it can run. */
-const AGENTS = ['fake', 'claude', 'codex']
+const AGENTS = ['fake', 'claude', 'codex', 'goose']
 
 function agentText(name: string): string {
   return name === 'fake' ? 'Fake agent, built in' : agentLabel(name)

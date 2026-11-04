@@ -24,13 +24,15 @@ import (
 
 // Status is how a check came out. A failure means agents will not run
 // until it is fixed; a warning means something works less well, or could
-// not be confirmed.
+// not be confirmed. A skip is an agent that isn't installed while another
+// is: it can't run, but nothing has failed.
 type Status int
 
 const (
 	OK Status = iota
 	Warn
 	Fail
+	Skip
 )
 
 func (s Status) String() string {
@@ -39,6 +41,8 @@ func (s Status) String() string {
 		return "ok"
 	case Warn:
 		return "warn"
+	case Skip:
+		return "skip"
 	default:
 		return "fail"
 	}
@@ -56,6 +60,9 @@ type Check struct {
 	Agent string
 	// Login, on a login check, is the login the agent reported.
 	Login string
+	// Missing, on an agent check, means the agent isn't installed: its
+	// command isn't on PATH, or Node isn't there to run it.
+	Missing bool
 	// On a models check: whether a session opened to read the agent's
 	// models, what it offered, and the one the session started on.
 	ModelsRead   bool
@@ -147,7 +154,31 @@ func RunAgents(ctx context.Context, e Env) []Check {
 	for _, name := range names {
 		checks = append(checks, agentChecks(ctx, e, e.Registry[name], nodeUsable)...)
 	}
+	skipMissing(checks, e.Registry)
 	return checks
+}
+
+// skipMissing makes the agents that aren't installed optional while the
+// host has another: their checks, and the Node and npx checks only the
+// agents from npm need, are skipped rather than failed. With no agent
+// installed but the built-in fake one, they fail, since then no real
+// session can run.
+func skipMissing(checks []Check, r agents.Registry) {
+	installed := false
+	for _, c := range checks {
+		if strings.HasPrefix(c.Name, "agent ") && !c.Missing && !r[c.Agent].BuiltIn {
+			installed = true
+		}
+	}
+	if !installed {
+		return
+	}
+	for i := range checks {
+		c := &checks[i]
+		if c.Status == Fail && (c.Missing || c.Name == "node" || c.Name == "npx") {
+			c.Status = Skip
+		}
+	}
 }
 
 // Ready lists the agents whose checks all passed or only warned. With no
@@ -163,7 +194,7 @@ func Ready(checks []Check) []string {
 		if c.Agent == "" {
 			continue
 		}
-		if c.Status == Fail {
+		if c.Status == Fail || c.Status == Skip {
 			failed[c.Agent] = true
 		}
 		if !seen[c.Agent] {
@@ -209,16 +240,16 @@ func Availability(checks []Check, r agents.Registry) []v1.AgentAvailability {
 		for _, h := range host {
 			if c, ok := byName[h]; ok && c.Status != OK {
 				a.Notes = append(a.Notes, note(c))
-				hostFailed = hostFailed || c.Status == Fail
+				hostFailed = hostFailed || c.Status == Fail || c.Status == Skip
 			}
 		}
 		if c, ok := byName["agent "+name]; ok {
-			if c.Status != Fail {
+			if c.Status == OK || c.Status == Warn {
 				a.Agent = c.Found
 			}
 			// A failure caused by a failed git, Node, or npx check is noted
 			// by that check, not again here.
-			if c.Status == Warn || c.Status == Fail && !hostFailed {
+			if c.Status == Warn || (c.Status == Fail || c.Status == Skip) && !hostFailed {
 				a.Notes = append(a.Notes, note(c))
 			}
 		}
@@ -341,10 +372,15 @@ func agentChecks(ctx context.Context, e Env, ad agents.Adapter, nodeUsable bool)
 	}
 	if runsOnNode(ad) && !nodeUsable {
 		c.Status, c.Found, c.Fix = Fail, fmt.Sprintf("cannot start without Node %d or newer and npx", MinNodeMajor), "see node and npx above"
+		c.Missing = true
 		return []Check{c}
 	}
 	if _, err := e.LookPath(ad.Command[0]); err != nil {
 		c.Status, c.Found, c.Fix = Fail, "cannot start: "+ad.Command[0]+" is not on PATH", "fix the checks above"
+		if ad.Install != "" {
+			c.Fix = ad.Install
+		}
+		c.Missing = true
 		return []Check{c}
 	}
 	dir, err := probeDir()
