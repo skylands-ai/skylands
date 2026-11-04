@@ -50,11 +50,7 @@ function addHost(w: WorldInfo): HTMLElement | null {
   return el('div', { class: 'sub-sec', 'aria-label': 'Add a host' }, [
     el('h4', { text: 'Add a host' }),
     el('div', { class: 'addhost' }, [
-      el('p', { class: 'muted', style: 'margin:0;font-size:13px' }, [
-        'On the machine to add, with skylands installed, run this. ',
-        el('code', { text: '--world' }),
-        ' names this world’s owner key, so the daemon joins this world and no other.',
-      ]),
+      el('p', { class: 'muted', style: 'margin:0;font-size:13px', text: 'On the machine to add, with skylands installed, run this.' }),
       el('pre', {}, [el('code', { text: command })]),
     ]),
     el('div', {}, [copyButton(command, 'Copy the install command', 'btn small')]),

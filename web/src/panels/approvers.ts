@@ -18,7 +18,7 @@ export function approversSection(s: State, actions: ApproverActions, keepStorage
   const me = myApprover(s)
   const canAct = !!me?.valid
 
-  const kids: (Node | null)[] = [hint('Browsers that can approve what agents do in this world. Each keeps its own key; revoking one also removes the approvers added through it.')]
+  const kids: (Node | null)[] = [hint('Browsers that can approve what agents do in this world.')]
   const valid = s.approvers.filter((a) => a.valid)
   kids.push(
     el(
