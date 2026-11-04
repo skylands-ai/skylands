@@ -31,13 +31,19 @@ type Adapter struct {
 	Command []string
 	// Env adds to the daemon's environment for the agent process.
 	Env []string
-	// ModelEnv is the environment variable that picks the agent's model,
-	// such as ANTHROPIC_MODEL for Claude Code. Empty means the adapter has
-	// no model choice.
-	ModelEnv string
+	// Mode is the value every session is set to in the agent's mode
+	// setting: the ACP session config option in the "mode" category. Empty
+	// leaves the agent's own. A session the agent will not set it for does
+	// not start.
+	Mode string
 	// Login tells a person how to log the agent in, for an agent that
 	// reports its login.
 	Login string
+	// Instructions are added to the agent's own instructions for every
+	// session it opens or loads, through ACP's session system prompt in
+	// append mode. An agent that does not advertise the system prompt
+	// does not get them.
+	Instructions string
 }
 
 // Registry is the adapters a daemon can launch, by name.
@@ -51,7 +57,7 @@ type Registry map[string]Adapter
 const ClaudeAdapterPackage = "@agentclientprotocol/claude-agent-acp@0.100.0"
 
 // DefaultRegistry holds the fake agent built into the skylands binary and
-// the Claude Code adapter from npm.
+// the Claude Code and Codex adapters from npm.
 func DefaultRegistry() Registry {
 	exe, err := os.Executable()
 	if err != nil {
@@ -59,8 +65,11 @@ func DefaultRegistry() Registry {
 	}
 	return Registry{
 		"fake": {Name: "fake", Provider: "local", Command: []string{exe, "fakeagent"}},
-		"claude": {Name: "claude", Provider: "claude", Command: []string{"npx", "-y", ClaudeAdapterPackage}, ModelEnv: "ANTHROPIC_MODEL",
+		"claude": {Name: "claude", Provider: "claude", Command: []string{"npx", "-y", ClaudeAdapterPackage},
 			Login: "run claude and log in with /login, or set ANTHROPIC_API_KEY"},
+		"codex": {Name: "codex", Provider: "codex", Command: []string{"npx", "-y", CodexAdapterPackage},
+			Mode: codexMode, Instructions: codexInstructions,
+			Login: "run npx -y " + CodexAdapterPackage + " login, or codex login if the Codex CLI is installed"},
 	}
 }
 
@@ -315,7 +324,13 @@ func (h *handler) RequestPermission(ctx context.Context, req *acp.RequestPermiss
 		return &acp.RequestPermissionResponse{Outcome: acp.CancelledRequestPermissionOutcome()}, nil
 	}
 	u := req.ToolCall
-	tc := ToolCall{ID: string(u.ToolCallID), Status: "pending"}
+	// A request about a call the agent already reported may say only what
+	// changed, as Codex does when asking to run a command it has started,
+	// so what it leaves out is what the agent last said about the call.
+	h.mu.Lock()
+	known := h.calls[u.ToolCallID]
+	h.mu.Unlock()
+	tc := ToolCall{ID: string(u.ToolCallID), Status: "pending", Title: known.Title, Kind: known.Kind, Locations: known.Locations}
 	if u.Title != nil {
 		tc.Title = *u.Title
 	}
@@ -325,7 +340,7 @@ func (h *handler) RequestPermission(ctx context.Context, req *acp.RequestPermiss
 	if u.Locations != nil {
 		tc.Locations = h.relative(*u.Locations)
 	}
-	var input json.RawMessage
+	input := known.Input
 	if u.RawInput != nil {
 		if data, err := json.Marshal(u.RawInput); err == nil {
 			input = data

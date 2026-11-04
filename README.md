@@ -47,8 +47,8 @@ web client, which is fine for a machine that only runs a daemon, but a
 citadel from it serves a page saying the client is missing.
 
 Every machine that runs agents needs git, and Node 22 or newer for Claude
-Code, whose adapter comes from npm. `gh` is needed only to open pull
-requests from a conversation. To check a machine, run:
+Code and Codex, whose adapters come from npm. `gh` is needed only to open
+pull requests from a conversation. To check a machine, run:
 
 ```sh
 skylands preflight
@@ -56,7 +56,7 @@ skylands preflight
 
 It reports git, Node, and npx with the versions and paths it found, starts
 each agent over ACP without asking a model anything, reports whether Claude
-Code is logged in as Claude Code itself sees it, checks `gh`, and asks the
+Code and Codex are logged in as each sees it, checks `gh`, and asks the
 daemon on the local socket which version it runs. Each problem comes with
 what to do about it, and the command exits with status 1 when a check
 fails.
@@ -175,15 +175,28 @@ top of the inbox shows the total across every conversation, and a
 terrace's panel shows the total for its repository under the tracked
 files, with the exact counts as a tooltip.
 
-Two agents are available. The built-in fake agent reads a few files and
+Three agents are available, and the agent chip lists the ones the island
+can run. The built-in fake agent reads a few files and
 edits one, so you can see the loop without any API keys. Claude Code runs
 through its ACP adapter from npm, at the exact version pinned in
 `internal/daemon/agents/agents.go`, which `npx` fetches on first use, and
 needs a Claude Code login on that machine. The model chip overrides the model for
-that session and keeps your last choice; leave it on Agent's default for Claude
-Code's own default, or pick Other model id to type one that isn't listed. A
+that session and keeps your last choice for each agent; leave it on Agent's
+default for the agent's own default, or pick Other model id to type one that
+isn't listed. The daemon sets the model through the agent's own model
+setting over ACP, so a model the agent doesn't offer stops the session from
+starting, and the error lists the ones it does. A
 model alias such as `fable` in your Claude Code settings may not work under the
 adapter, so pick a full model id in the chip if a session fails on its model.
+
+Codex runs the same way, through its ACP adapter from npm at the version
+pinned in `internal/daemon/agents/codex.go`, and needs a Codex login on that
+machine: run `npx -y @agentclientprotocol/codex-acp@2.5.0 login`, or `codex
+login` if you have the Codex CLI. An API key in the environment isn't
+enough; log in with the key through `codex login --with-api-key`. The model
+chip lists no models for Codex, because which ones Codex offers depends on
+the account: leave it on Agent's default, or type a model id the account
+has.
 
 ### Approvals
 
@@ -198,6 +211,19 @@ session", in a conversation's header, lets that session's calls through
 without asking from then on. A request nobody answers in 30 minutes
 expires, and the agent is told it was cancelled; ending the session
 cancels whatever it was asking.
+
+Codex has a sandbox of its own, and the daemon sets every Codex session to
+its read-only mode, through Codex's mode setting over ACP, so Codex asks
+before every edit; a session whose mode can't be set doesn't start. A shell command runs inside that
+sandbox without asking, where it can read the machine but not write to it
+or reach the network. A command that needs more fails there unless Codex
+asks to run it outside the sandbox. The daemon adds instructions to every
+Codex session, after any of your own in Codex's config, telling it to ask
+whenever a command needs to write or reach the network. If it still reports
+a command blocked by the sandbox, tell it to ask for escalated permissions.
+That request waits for the rules or a person like any other. A command the
+sandbox stopped doesn't appear in the conversation, because Codex doesn't
+report it.
 
 On the host itself, `skylands request list` shows what is waiting, and
 `skylands request approve <id>` and `skylands request deny <id>` settle it

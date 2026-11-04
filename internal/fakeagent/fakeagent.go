@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,6 +48,38 @@ const EnvAuth = "SKYLANDS_FAKE_AGENT_AUTH"
 // running, and write the child's PID to that file. Tests use it to see
 // that stopping an agent ends what it started.
 const EnvChild = "SKYLANDS_FAKE_AGENT_CHILD"
+
+// EnvSystemPrompt, when set to 1, makes the fake agent advertise ACP's
+// session system prompt, and keep the one each session is opened or
+// loaded with, which it gives when asked InstructionsQuestion.
+const EnvSystemPrompt = "SKYLANDS_FAKE_AGENT_SYSTEM_PROMPT"
+
+// InstructionsQuestion, as a whole prompt, makes the fake agent answer
+// with the system prompt its session got, or NoInstructions, and nothing
+// else.
+const InstructionsQuestion = "what are your instructions?"
+
+// NoInstructions is the fake agent's answer to InstructionsQuestion for a
+// session that got no system prompt.
+const NoInstructions = "(none)"
+
+// EnvConfigOptions, when set to 1, makes the fake agent offer two ACP
+// session config options, a mode and a model, which every session opens
+// or loads with at their first values, and which it gives when asked
+// SettingsQuestion. Set to "stuck", it takes every change and makes none,
+// like an agent that ignores what it is told.
+const EnvConfigOptions = "SKYLANDS_FAKE_AGENT_CONFIG_OPTIONS"
+
+// The values the fake agent's config options take, the first of each
+// being what a session starts with.
+var (
+	Modes  = []string{"auto", "ask"}
+	Models = []string{"fake-small", "fake-large"}
+)
+
+// SettingsQuestion, as a whole prompt, makes the fake agent answer with
+// its session's mode and model, as "mode=<mode> model=<model>".
+const SettingsQuestion = "what are your settings?"
 
 // EnvHang, when set to 1, makes the fake agent one that will not stop: it
 // ignores SIGTERM and SIGINT and keeps running after its stdin closes.
@@ -86,7 +119,8 @@ func Run(ctx context.Context) error {
 		delay = d
 	}
 	return acp.RunAgent(ctx, &acp.StdioTransport{}, func(conn *acp.AgentConnection) any {
-		return &agent{conn: conn, delay: delay, noLoad: os.Getenv(EnvNoLoad) == "1", auth: os.Getenv(EnvAuth), sessions: map[acp.SessionId]*session{}}
+		return &agent{conn: conn, delay: delay, noLoad: os.Getenv(EnvNoLoad) == "1", auth: os.Getenv(EnvAuth),
+			systemPrompt: os.Getenv(EnvSystemPrompt) == "1", config: os.Getenv(EnvConfigOptions), sessions: map[acp.SessionId]*session{}}
 	})
 }
 
@@ -117,6 +151,11 @@ type session struct {
 	cancelled bool
 	// turns numbers the prompts so far, so each turn's tool calls get fresh ids.
 	turns int
+	// instructions is the system prompt the session was opened or loaded
+	// with, as text.
+	instructions string
+	// mode and model are the session's config options, when it has them.
+	mode, model string
 }
 
 type agent struct {
@@ -125,6 +164,10 @@ type agent struct {
 	noLoad bool
 	// auth is the kind of login to report, or empty to report none.
 	auth string
+	// systemPrompt means the agent advertises ACP's session system prompt.
+	systemPrompt bool
+	// config is EnvConfigOptions: empty for no config options.
+	config string
 	// canAsk means the client fills in forms, so the agent may ask a person
 	// a question.
 	canAsk   bool
@@ -137,6 +180,9 @@ func (a *agent) Initialize(_ context.Context, req *acp.InitializeRequest) (*acp.
 	a.canAsk = req.ClientCapabilities != nil && req.ClientCapabilities.Elicitation != nil && req.ClientCapabilities.Elicitation.Form != nil
 	a.mu.Unlock()
 	caps := &acp.AgentCapabilities{LoadSession: !a.noLoad}
+	if a.systemPrompt {
+		caps.SessionCapabilities = &acp.SessionCapabilities{SystemPrompt: &acp.SessionSystemPromptCapabilities{}}
+	}
 	if a.auth != "" {
 		// Like Claude Code's adapter: advertise the report, then send it
 		// once initialize has been answered.
@@ -161,21 +207,109 @@ func (a *agent) LoadSession(ctx context.Context, req *acp.LoadSessionRequest) (*
 	if a.noLoad {
 		return nil, fmt.Errorf("this agent cannot load sessions")
 	}
+	instructions, err := systemPromptText(req.SystemPrompt)
+	if err != nil {
+		return nil, err
+	}
+	s := a.newSession(req.Cwd, instructions)
 	a.mu.Lock()
-	a.sessions[req.SessionID] = &session{cwd: req.Cwd}
+	a.sessions[req.SessionID] = s
+	options := a.configOptions(s)
 	a.mu.Unlock()
 	if err := a.conn.SessionUpdate(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(ReplayedLine))}); err != nil {
 		return nil, err
 	}
-	return &acp.LoadSessionResponse{}, nil
+	return &acp.LoadSessionResponse{ConfigOptions: options}, nil
 }
 
 func (a *agent) NewSession(_ context.Context, req *acp.NewSessionRequest) (*acp.NewSessionResponse, error) {
+	instructions, err := systemPromptText(req.SystemPrompt)
+	if err != nil {
+		return nil, err
+	}
 	id := acp.SessionId(nuid.Next())
+	s := a.newSession(req.Cwd, instructions)
 	a.mu.Lock()
-	a.sessions[id] = &session{cwd: req.Cwd}
+	a.sessions[id] = s
+	options := a.configOptions(s)
 	a.mu.Unlock()
-	return &acp.NewSessionResponse{SessionID: id}, nil
+	return &acp.NewSessionResponse{SessionID: id, ConfigOptions: options}, nil
+}
+
+// newSession is a session at the first value of each config option, which
+// is also where a loaded one comes back.
+func (a *agent) newSession(cwd, instructions string) *session {
+	s := &session{cwd: cwd, instructions: instructions}
+	if a.config != "" {
+		s.mode, s.model = Modes[0], Models[0]
+	}
+	return s
+}
+
+// configOptions are a session's config options as ACP describes them, or
+// nil for an agent that offers none. The caller holds a.mu.
+func (a *agent) configOptions(s *session) *[]acp.SessionConfigOption {
+	if a.config == "" {
+		return nil
+	}
+	sel := func(id, name string, category acp.SessionConfigOptionCategory, current string, values []string) acp.SessionConfigOption {
+		choices := acp.UngroupedSessionConfigSelectOptions{}
+		for _, v := range values {
+			choices = append(choices, acp.SessionConfigSelectOption{Name: v, Value: acp.SessionConfigValueId(v)})
+		}
+		o := acp.SelectSessionConfigOption(acp.SessionConfigId(id), name, acp.SessionConfigValueId(current), acp.SessionConfigSelectOptions{Ungrouped: &choices})
+		o.Category = &category
+		return o
+	}
+	return &[]acp.SessionConfigOption{
+		sel("fake-mode", "Mode", acp.SessionConfigOptionCategoryMode, s.mode, Modes),
+		sel("fake-model", "Model", acp.SessionConfigOptionCategoryModel, s.model, Models),
+	}
+}
+
+// SetSessionConfigOption changes a session's mode or model to a value the
+// agent offers.
+func (a *agent) SetSessionConfigOption(_ context.Context, req *acp.SetSessionConfigOptionRequest) (*acp.SetSessionConfigOptionResponse, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	s, ok := a.sessions[req.SessionID]
+	if !ok || a.config == "" {
+		return nil, fmt.Errorf("no config options for session %s", req.SessionID)
+	}
+	value := fmt.Sprint(req.Value)
+	var field *string
+	var values []string
+	switch req.ConfigID {
+	case "fake-mode":
+		field, values = &s.mode, Modes
+	case "fake-model":
+		field, values = &s.model, Models
+	default:
+		return nil, fmt.Errorf("unknown config option %q", req.ConfigID)
+	}
+	if !slices.Contains(values, value) {
+		return nil, fmt.Errorf("invalid value %q for %s", value, req.ConfigID)
+	}
+	if a.config != "stuck" {
+		*field = value
+	}
+	return &acp.SetSessionConfigOptionResponse{ConfigOptions: *a.configOptions(s)}, nil
+}
+
+// systemPromptText is a session's system prompt as text. Only append mode
+// is taken, which is what an agent that advertises the prompt must take.
+func systemPromptText(p *acp.SystemPrompt) (string, error) {
+	if p == nil {
+		return "", nil
+	}
+	if p.Mode != acp.SystemPromptModeAppend {
+		return "", fmt.Errorf("system prompt mode %q is not supported", p.Mode)
+	}
+	text := ""
+	for _, c := range p.Content {
+		text += c.Text
+	}
+	return text, nil
 }
 
 func (a *agent) Cancel(_ context.Context, n *acp.CancelNotification) error {
@@ -222,6 +356,27 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	}
 	send := func(u acp.SessionUpdate) error {
 		return a.conn.SessionUpdate(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: u})
+	}
+	if promptText(req) == SettingsQuestion {
+		a.mu.Lock()
+		answer := "mode=" + s.mode + " model=" + s.model
+		a.mu.Unlock()
+		if err := send(acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(answer))); err != nil {
+			return nil, err
+		}
+		return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
+	}
+	if promptText(req) == InstructionsQuestion {
+		a.mu.Lock()
+		answer := s.instructions
+		a.mu.Unlock()
+		if answer == "" {
+			answer = NoInstructions
+		}
+		if err := send(acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(answer))); err != nil {
+			return nil, err
+		}
+		return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
 	}
 	if asked := promptText(req); titles.IsRequest(asked) {
 		// A title request gets a title and nothing else, like a well-behaved agent.

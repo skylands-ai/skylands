@@ -141,6 +141,52 @@ specifies. No events, streams, or aggregates are needed for it.
   every conversation. UsageReported stays what it was, a reading of the
   context window. The fake agent returns fixed counts, so the sums are
   tested end to end.
+- Codex is in progress, the second real agent. It runs through
+  `@agentclientprotocol/codex-acp` from npm, pinned like Claude Code's
+  adapter, and reports its login with the same `_auth/status_update`
+  extension, so preflight and the island list it the same way. Codex
+  has its own sandbox and approval policy, and the adapter's default
+  mode lets Codex edit the worktree without asking, so the daemon sets
+  every session it opens or loads to read-only mode: every edit asks, and
+  a command runs in Codex's read-only sandbox, where one that writes
+  fails unless the model asks to leave the sandbox. The adapter takes no other
+  approval policy for its built-in modes, so the daemon tells the model
+  when to ask: an adapter's Instructions go to every session it opens or
+  loads as ACP's session system prompt in append mode, after the
+  developer instructions in the person's Codex config, and only to an
+  agent that advertises the system prompt. The fake agent can advertise
+  it and say what it got, so that path is tested.
+
+  Only ACP reaches an agent: no environment variable an adapter reads.
+  The mode and the model are ACP session config options, found by
+  category ("mode", "model") among the ones the agent gives for each
+  session it opens or loads, the title's side session included, and set
+  with session/set_config_option. An adapter names the mode value to set
+  (Codex's is read-only); the mode must read back as set or the session
+  does not start, since it is what keeps an agent asking. The model is
+  the one chosen in the command bar; an agent may take a value it does
+  not list, as Claude Code takes a full model id for one it lists by
+  alias, and a refusal names the values it lists. Claude Code's model
+  moved from ANTHROPIC_MODEL to its model option the same way. The fake
+  agent can offer both options, or take changes and ignore them, so
+  every path is tested. A permission request that
+  leaves out what the agent already reported about the call, as Codex's
+  do for a command it has started, takes the call's kind, title, and
+  input from that report. The command bar lists the agents the island
+  can run, with each agent's own models; none for Codex, whose models
+  depend on the account.
+
+  Run live with a ChatGPT Free login: the edit waited for approval, the
+  title came from a side session, tokens added up, a daemon restart
+  brought the session back by load and back to read-only, a model the
+  account lacks stopped the session with the account's models named, and
+  Claude Code ran on the model chosen for it.
+  Without the instructions, Codex reported `touch` blocked by its sandbox
+  and asked only when told to; with them, it asked to escalate on its own,
+  and the command waited for approval and then ran. Open: Codex does not
+  report a command its sandbox stopped, so it is missing from the
+  conversation; and the island could learn each agent's models from the
+  agent, which lists the ones its account offers when a session opens.
 
 ## After the MVP
 
