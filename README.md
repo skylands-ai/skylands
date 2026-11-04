@@ -180,9 +180,10 @@ edits one, so you can see the loop without any API keys. Claude Code runs
 through its ACP adapter from npm, at the exact version pinned in
 `internal/daemon/agents/agents.go`, which `npx` fetches on first use, and
 needs a Claude Code login on that machine. The model chip overrides the model for
-that session; leave it empty for Claude Code's own default. A model alias
-such as `fable` in your Claude Code settings may not work under the adapter,
-so set a full model id in the chip if a session fails on its model.
+that session and keeps your last choice; leave it on Agent's default for Claude
+Code's own default, or pick Other model id to type one that isn't listed. A
+model alias such as `fable` in your Claude Code settings may not work under the
+adapter, so pick a full model id in the chip if a session fails on its model.
 
 ### Approvals
 

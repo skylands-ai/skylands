@@ -38,9 +38,8 @@
         <div class="cmdrow">
           <span class="why" id="scopeWhy">Dispatches straight to this island’s daemon.</span>
           <label class="chip">Agent <select id="agentSel" aria-label="Agent"><option value="fake">Fake agent, built in</option><option value="claude">Claude Code</option></select></label>
-          <label class="chip">Model <input id="modelInput" list="models" placeholder="Agent’s default" autocomplete="off" aria-label="Model" style="min-height:32px;padding:0 8px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--text);font:inherit;font-size:13px;width:190px"></label>
+          <span class="chip"><label for="modelSel">Model</label><select id="modelSel" aria-label="Model"><option value="">Agent’s default</option><option>claude-opus-5-5</option><option>claude-fable-5-1</option><option>claude-sonnet-5-5</option><option>claude-haiku-5-5</option><option>claude-haiku-4-5-20251001</option><option>claude-sonnet-5</option><option>claude-opus-5</option><option>claude-fable-5</option><option>claude-opus-4-8</option><option>claude-opus-4-7</option><option>claude-opus-4-6</option><option>claude-sonnet-4-6</option><option value="other">Other model id…</option></select><input id="modelOther" hidden placeholder="Full model id" autocomplete="off" aria-label="Other model id" style="min-height:32px;padding:0 8px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--text);font:inherit;font-size:13px;width:190px"></span>
           <label class="chip">Where <select id="whereSel" aria-label="Where the agent works"><option value="worktree">A worktree of its own</option><option value="checkout">The checkout itself</option></select></label>
-          <datalist id="models"><option value="claude-sonnet-5-5"><option value="claude-opus-5-5"><option value="claude-haiku-5-5"><option value="claude-fable-5-1"></datalist>
         </div>
       </div>
       <div class="legend" aria-label="Legend">

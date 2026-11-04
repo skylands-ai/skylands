@@ -12,7 +12,10 @@ export class CommandBar {
   private readonly input = byId<HTMLInputElement>('cmdInput')
   private readonly go = byId<HTMLButtonElement>('cmdGo')
   private readonly agent = byId<HTMLSelectElement>('agentSel')
-  private readonly model = byId<HTMLInputElement>('modelInput')
+  /** Every model stays listed whatever is chosen, and the last choice stays chosen. */
+  private readonly model = byId<HTMLSelectElement>('modelSel')
+  /** A model id typed by hand, shown while the model is "Other". */
+  private readonly otherModel = byId<HTMLInputElement>('modelOther')
   private readonly where = byId<HTMLSelectElement>('whereSel')
   private readonly scopeTo = byId<HTMLElement>('scopeTo')
   private readonly why = byId<HTMLElement>('scopeWhy')
@@ -23,8 +26,14 @@ export class CommandBar {
   private kind: 'hint' | 'blocked' | 'error' | 'info' = 'hint'
 
   private static readonly HINT = 'Dispatches straight to this island\u2019s daemon.'
+  private static readonly OTHER = 'other'
 
   constructor() {
+    this.model.addEventListener('change', () => {
+      const other = this.model.value === CommandBar.OTHER
+      this.otherModel.hidden = !other
+      if (other) this.otherModel.focus()
+    })
     this.go.addEventListener('click', () => void this.submit())
     this.input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
@@ -64,6 +73,11 @@ export class CommandBar {
     this.kind = kind
   }
 
+  /** The model for the next session, or empty for the agent's default. */
+  private chosenModel(): string {
+    return this.model.value === CommandBar.OTHER ? this.otherModel.value.trim() : this.model.value
+  }
+
   private async submit(): Promise<void> {
     const prompt = this.input.value.trim()
     if (!prompt || this.busy || !this.host) return
@@ -74,7 +88,7 @@ export class CommandBar {
       const resp = await fetch('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ host: this.host, repoId: this.repoId, agent: this.agent.value, model: this.model.value.trim(), prompt, inCheckout: this.where.value === 'checkout' }),
+        body: JSON.stringify({ host: this.host, repoId: this.repoId, agent: this.agent.value, model: this.chosenModel(), prompt, inCheckout: this.where.value === 'checkout' }),
       })
       const body = (await resp.json().catch(() => ({}))) as { error?: string }
       if (!resp.ok) {
