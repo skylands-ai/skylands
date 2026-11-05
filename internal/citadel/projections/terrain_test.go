@@ -29,10 +29,15 @@ func TestTerrainFollowsHostEvents(t *testing.T) {
 	if len(changes) != 3 || len(changes[2].Rules) != 1 || changes[2].Rules[0].Pattern != "worktree" {
 		t.Fatalf("after rules, changes = %+v", changes)
 	}
-	cleared, _ := v1.NewEvent(v1.EventRepoRulesSet, "c5", v1.RepoRulesSet{RepoID: "r1"})
+	lapsed, _ := v1.NewEvent(v1.EventRepoRulesLapsed, "", v1.RepoRulesLapsed{RepoID: "r1", Approver: "UPHONE"})
+	tr.Apply("ws", lapsed)
+	if r := tr.List()[0]; !r.RulesLapsed || r.RulesRevision != 1 {
+		t.Errorf("lapsed rules = lapsed %v, revision %d", r.RulesLapsed, r.RulesRevision)
+	}
+	cleared, _ := v1.NewEvent(v1.EventRepoRulesSet, "c5", v1.RepoRulesSet{RepoID: "r1", By: "local", Revision: 1})
 	tr.Apply("ws", cleared)
-	if r := tr.List()[0]; r.Rules == nil || len(r.Rules) != 0 {
-		t.Errorf("cleared rules = %#v, want an empty list", r.Rules)
+	if r := tr.List()[0]; r.Rules == nil || len(r.Rules) != 0 || r.RulesLapsed || r.RulesRevision != 2 || r.RulesBy != "local" {
+		t.Errorf("cleared rules = %#v, lapsed %v, revision %d, by %q", r.Rules, r.RulesLapsed, r.RulesRevision, r.RulesBy)
 	}
 	changes = changes[:2]
 

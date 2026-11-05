@@ -294,7 +294,7 @@ A work order scoped to the host goes to the daemon's placement processor. It sea
 
 ### Rules and local control
 
-The daemon evaluates its local rule set before anything reaches a person. A rule can approve or deny a tool call outright, and only what no rule settles becomes a PermissionRequested event. A local CLI talks to the daemon over its Unix socket: `skylands request list` shows what is waiting on a person, `skylands request approve` and `skylands request deny` settle it, and `skylands daemon status` reports the host's state. The daemon accepts local approvals from the OS user that owns it, which unblocks agents while the host is offline.
+The daemon evaluates its local rule set before anything reaches a person. A rule can approve or deny a tool call outright, and only what no rule settles becomes a PermissionRequested event. A deny is final: any matching deny rule refuses the call, whatever allow rule or trust would let it through. Otherwise the most specific matching rule wins. A local CLI talks to the daemon over its Unix socket: `skylands request list` shows what is waiting on a person, `skylands request approve` and `skylands request deny` settle it, and `skylands daemon status` reports the host's state. The daemon accepts local approvals from the OS user that owns it, which unblocks agents while the host is offline.
 
 ## NATS
 
@@ -355,7 +355,7 @@ Citadels have no roles. Each one does work as soon as it's available, a second c
 
 ## Approvals and security
 
-A daemon acts on an approval only when it carries a signature from an enrolled approver over the exact tool call. The citadel relays approvals and can't create them.
+A daemon acts on an approval only when it carries a signature from an enrolled approver over the exact tool call. The same goes for answering a question, trusting a session, and setting rules, which approve in advance. The citadel relays decisions and can't create them.
 
 ![A daemon acts only on an approval signed for the exact call](./approval-flow.svg)
 
@@ -363,12 +363,22 @@ Rules settle most tool calls on the host, so only what no rule covers reaches a 
 
 ### Signatures
 
-- The approver's browser signs, with its approver key, the SHA-256 of the canonical JSON (RFC 8785) of `{v: 1, world, host, session, request, decision, option, input}`: the world's owner key, the request's ids, "allow" or "deny", the option an approval chose (none for a denial), and the SHA-256 of the exact tool input. `internal/canonical` and `web/src/canonical.ts` write the same bytes, checked against the RFC's test vectors and a shared vector both must reproduce.
-- The daemon builds the same decision from its own record of the request and verifies the signature over it, after reading the approver registry up to its latest record, so a revocation stored before a decision arrived counts against it. Only then does it record PermissionGranted or PermissionDenied, with the approver's key and the signature.
-- Once the world exists, a decision through the citadel without a valid signature is refused. Decisions an approver signed before it was revoked stand; `skylands request history` shows them as signed by an approver that no longer approves.
+- The approver's browser signs, with its approver key, the SHA-256 of the canonical JSON (RFC 8785) of a decision that starts `{v: 1, kind, world, host}`: the decision's kind, the world's owner key, and the host. `kind` keeps a signature over one kind from verifying as another:
+  - `toolcall` adds `session`, `request`, `decision` ("allow" or "deny"), `option` (the option an approval chose, none for a denial), and `input` (the SHA-256 of the exact tool input).
+  - `answer` adds `session`, `question`, `form` (the SHA-256 of the question's message and fields as the daemon recorded them, each property present), `declined`, and `answers` (the SHA-256 of the answers' canonical JSON, none for a decline).
+  - `trust` adds `session`, `trusted`, and `revision`.
+  - `session-rules` and `repo-rules` add `session` or `repo`, `rules` (the SHA-256 of the whole list as the daemon keeps it), and `revision`.
+- `internal/canonical` and `web/src/canonical.ts` write the same bytes, checked against the RFC's test vectors and a shared vector of every kind both must reproduce.
+- Trust and rule lists can be set back and forth, and the citadel names the commands, so their decisions name the revision they replace: how many times that session's trust, that session's rules, or that repository's rules were set. The daemon refuses a change against any other revision, so an old signed change can't be sent again, and two browsers changing the same list conflict rather than overwrite each other.
+- The daemon checks answers against the question's form before the signature: only its fields, a choice among its options, numbers as numbers and integers whole within ±2^53, booleans as booleans, an unanswered field left out rather than empty, and every required field answered. It records the answers, and gives them to the agent, as the canonical JSON that was signed.
+- The daemon builds the same decision from its own record and verifies the signature over it, after reading the approver registry up to its latest record, so a revocation stored before a decision arrived counts against it. Only then does it record the decision (PermissionGranted or PermissionDenied, QuestionAnswered, SessionTrusted, SessionRulesSet, or RepoRulesSet) with the approver's key and the signature.
+- Once the world exists, a decision through the citadel without a valid signature is refused. Declining, turning trust off, and rule changes that only make things stricter are signed too. Interrupting, stopping, and prompting aren't, so anyone who can open a conversation can still stop an agent.
+- Decisions an approver signed before it was revoked stand; `skylands request history` shows them as signed by an approver that no longer approves. What it approved in advance doesn't: trust it turned on ends (SessionTrusted, by "revocation"), and a rule list it signed lapses (SessionRulesLapsed, RepoRulesLapsed), keeping its deny and ask rules while its allow rules ask, until an approver sets the list again. A session's copy of its repository's rules stands on the repository list's signature, which SessionStarted records. The daemon records a lapse as soon as it reads the revocation, and checks the signer again before trust or an allow rule lets any call through. Trust and rules set on the host never lapse.
+- A deny rule is final: no allow rule, however specific, and no trust lets through a call a deny rule matches.
+- The daemon answers an agent's permission request only with its "allow once" or "reject once" option. An "always" option would settle later calls inside the agent, where neither a deny rule nor a revocation reaches them, so a signed approval naming one is refused.
 - `PermissionRequested` names the tool input by the SHA-256 of its exact bytes and its size, with a preview that is the whole input when it is at most 8 KB, so events stay small. The daemon keeps the whole input while the request waits and serves it on request. The browser shows the whole input, from the preview or fetched, hashes it itself, and its approval names that hash; the daemon refuses an approval through the citadel whose hash isn't that of the input the agent proposed, so an input changed on its way to the person can't be approved.
 - The first valid decision wins, and any later decision for the same request is rejected.
-- Approvals made at the host through the local CLI are accepted from the OS user that owns the daemon.
+- Approvals, answers, and repository rules set at the host through the local CLI are accepted from the OS user that owns the daemon.
 
 ### Keys
 

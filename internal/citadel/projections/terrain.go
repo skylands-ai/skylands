@@ -22,7 +22,15 @@ type Repo struct {
 	Files      []v1.TerrainFile `json:"files"`
 	// Rules settle tool calls in sessions on this repository; a new session
 	// copies them when it starts. Never null, so browsers can index it.
+	// RulesBy and RulesApprover are who set them, RulesRevision how many
+	// times they were set, which a change names, and RulesLapsed that the
+	// approver who signed them no longer approves, so their allow rules
+	// ask.
 	Rules         []v1.Rule `json:"rules"`
+	RulesBy       string    `json:"rulesBy,omitempty"`
+	RulesApprover string    `json:"rulesApprover,omitempty"`
+	RulesRevision int       `json:"rulesRevision"`
+	RulesLapsed   bool      `json:"rulesLapsed,omitempty"`
 	RegisteredAt  time.Time `json:"registeredAt"`
 	SnapshottedAt time.Time `json:"snapshottedAt"`
 }
@@ -70,6 +78,16 @@ func (t *Terrain) Apply(host string, ev v1.Event) {
 				if r.Rules == nil {
 					r.Rules = []v1.Rule{}
 				}
+				r.RulesBy, r.RulesApprover, r.RulesLapsed = d.By, d.Approver, false
+				r.RulesRevision++
+				changed = r
+			}
+		}
+	case v1.EventRepoRulesLapsed:
+		var d v1.RepoRulesLapsed
+		if ev.Decode(&d) == nil {
+			if r, ok := repos[d.RepoID]; ok {
+				r.RulesLapsed = true
 				changed = r
 			}
 		}

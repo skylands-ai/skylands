@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -416,7 +417,15 @@ func newRuleListCmd() *cobra.Command {
 					fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\n", r.Repo, i+1, rule.Decision, rule.Kind, rule.Pattern)
 				}
 			}
-			return tw.Flush()
+			if err := tw.Flush(); err != nil {
+				return err
+			}
+			for _, r := range repos {
+				if r.Lapsed {
+					fmt.Fprintf(out, "%s's rules lapsed: the approver who set them no longer approves, so their allow rules ask until an approver or this host sets them again.\n", r.Repo)
+				}
+			}
+			return nil
 		},
 	}
 	socketFlag(cmd, &socketPath)
@@ -576,7 +585,11 @@ the agent is told you will not answer.`,
 					}
 					values[k] = v
 					for _, f := range fields {
-						if f.Key == k && f.Type == "array" {
+						if f.Key != k {
+							continue
+						}
+						switch f.Type {
+						case "array":
 							var items []string
 							for _, it := range strings.Split(v, ",") {
 								if it = strings.TrimSpace(it); it != "" {
@@ -584,6 +597,20 @@ the agent is told you will not answer.`,
 								}
 							}
 							values[k] = items
+						case "number", "integer":
+							if len(f.Options) == 0 {
+								n := strings.TrimSpace(v)
+								if _, err := strconv.ParseFloat(n, 64); err != nil {
+									return fmt.Errorf("%s takes a number", k)
+								}
+								values[k] = json.Number(n)
+							}
+						case "boolean":
+							b, err := strconv.ParseBool(strings.TrimSpace(v))
+							if err != nil {
+								return fmt.Errorf("%s takes true or false", k)
+							}
+							values[k] = b
 						}
 					}
 				}

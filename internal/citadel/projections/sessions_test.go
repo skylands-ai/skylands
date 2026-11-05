@@ -85,9 +85,27 @@ func TestSessionsFollowSessionEvents(t *testing.T) {
 	if s := p.List()[0]; len(s.Questions) != 0 {
 		t.Errorf("session after the answer = %+v", s.Questions)
 	}
-	apply(v1.EventSessionRulesSet, v1.SessionRulesSet{SessionID: "s1", Rules: []v1.Rule{{Decision: "deny", Kind: "execute", Pattern: "rm -rf *"}}})
-	if s := p.List()[0]; len(s.Rules) != 1 || s.Rules[0].Decision != "deny" {
-		t.Errorf("session with rules = %+v", s.Rules)
+	apply(v1.EventSessionRulesSet, v1.SessionRulesSet{SessionID: "s1", Rules: []v1.Rule{{Decision: "allow", Kind: "execute", Pattern: "go test *"}}, By: "citadel", Approver: "UPHONE"})
+	if s := p.List()[0]; len(s.Rules) != 1 || s.Rules[0].Decision != "allow" || s.RulesRevision != 1 || s.RulesApprover != "UPHONE" || s.RulesLapsed {
+		t.Errorf("session with rules = %+v, revision %d, approver %q", s.Rules, s.RulesRevision, s.RulesApprover)
+	}
+	// Revoking the approver lapses the list; setting it again restores it.
+	apply(v1.EventSessionRulesLapsed, v1.SessionRulesLapsed{SessionID: "s1", Approver: "UPHONE"})
+	if s := p.List()[0]; !s.RulesLapsed || s.RulesRevision != 1 {
+		t.Errorf("lapsed rules = lapsed %v, revision %d", s.RulesLapsed, s.RulesRevision)
+	}
+	apply(v1.EventSessionRulesSet, v1.SessionRulesSet{SessionID: "s1", Rules: []v1.Rule{{Decision: "deny", Kind: "execute", Pattern: "rm -rf *"}}, By: "citadel", Approver: "ULAPTOP", Revision: 1})
+	if s := p.List()[0]; len(s.Rules) != 1 || s.Rules[0].Decision != "deny" || s.RulesRevision != 2 || s.RulesLapsed || s.RulesApprover != "ULAPTOP" {
+		t.Errorf("session with rules set again = %+v", s)
+	}
+	trustBefore := p.List()[0].TrustRevision
+	apply(v1.EventSessionTrusted, v1.SessionTrusted{SessionID: "s1", Trusted: true, By: "citadel", Approver: "UPHONE", Revision: trustBefore})
+	if s := p.List()[0]; !s.Trusted || s.TrustRevision != trustBefore+1 || s.TrustApprover != "UPHONE" {
+		t.Errorf("trusted session = %+v", s)
+	}
+	apply(v1.EventSessionTrusted, v1.SessionTrusted{SessionID: "s1", By: "revocation", Approver: "UPHONE", Revision: trustBefore + 1})
+	if s := p.List()[0]; s.Trusted || s.TrustRevision != trustBefore+2 || s.TrustedBy != "revocation" {
+		t.Errorf("session whose trust lapsed = %+v", s)
 	}
 	apply(v1.EventSessionTitled, v1.SessionTitled{SessionID: "s1", Title: "Fix the tests"})
 	if s := p.List()[0]; s.Title != "Fix the tests" {

@@ -6,7 +6,7 @@ import { agentGlyph, timeNode } from './panels/parts'
 import type { Permission, Question, QuestionField, Session } from './protocol'
 import { replyBox } from './reply'
 import { inputsVersion, requestInput } from './requestinput'
-import { myApprover } from './approvers'
+import { canSign as canSignIn, myApprover } from './approvers'
 import { HOST_DEFAULTS, proposeRule, ruleText, rulesSheet } from './rules'
 import { agentLabel, isOpen, sessionLabel, sessionStatus, tokensBreakdown, tokensLabel, tokensText } from './status'
 import { conversationList, isUnread, isWaiting, sumTokens, type State } from './store'
@@ -143,9 +143,12 @@ function approvalCard(s: State, x: Session, p: Permission, actions: InboxActions
     )
     note.style.color = ''
   }
-  const allows = p.options.filter((o) => o.kind.startsWith('allow'))
-  const rejects = p.options.filter((o) => o.kind.startsWith('reject'))
-  const once = allows.find((o) => o.kind === 'allow_once') ?? allows[0]
+  // Only the agent's "once" options: an "always" option would settle later
+  // calls inside the agent, out of reach of the rules and of revoking an
+  // approver, so the daemon refuses it.
+  const once = p.options.find((o) => o.kind === 'allow_once')
+  const rejects = p.options.filter((o) => o.kind === 'reject_once')
+  if (!once && canSign) note.textContent = 'The agent offers no \u201callow once\u201d answer, so this can only be denied, or allowed by a rule.'
   if (once) {
     buttons.push(el('button', { type: 'button', class: 'btn small primary', 'data-allows': 'true', text: once.kind === 'allow_once' ? 'Allow once' : once.name, onclick: () => void decide(() => actions.approve(x, p, once.id, view.hash ?? ''), 'Allowing\u2026') }) as HTMLButtonElement)
   }
@@ -304,7 +307,7 @@ function questionControl(q: Question, f: QuestionField, read: Map<string, () => 
     read.set(f.key, () => input.checked)
     return el('div', { class: 'qfield' }, [el('label', { class: 'choice' }, [input, label])])
   }
-  const input = el('input', { type: f.type === 'number' || f.type === 'integer' ? 'number' : 'text', name, 'aria-label': f.title ?? f.key, placeholder: f.description ?? '' }) as HTMLInputElement
+  const input = el('input', { type: f.type === 'number' || f.type === 'integer' ? 'number' : 'text', step: f.type === 'integer' ? '1' : f.type === 'number' ? 'any' : null, name, 'aria-label': f.title ?? f.key, placeholder: f.description ?? '' }) as HTMLInputElement
   read.set(f.key, () => {
     const v = input.value.trim()
     if (v === '') return undefined
@@ -314,8 +317,10 @@ function questionControl(q: Question, f: QuestionField, read: Map<string, () => 
 }
 
 /** A question the agent is waiting on: its message, a control per field, and the answer or the refusal. */
-function questionCard(x: Session, q: Question, actions: InboxActions): HTMLElement {
+function questionCard(s: State, x: Session, q: Question, actions: InboxActions): HTMLElement {
   const note = el('span', { class: 'sub' })
+  // Only an approver's browser can answer: the daemon checks its signature.
+  const signs = canSignIn(s)
   const read = new Map<string, () => unknown>()
   const fields = q.fields.map((f) => questionControl(q, f, read))
   const buttons: HTMLButtonElement[] = []
@@ -351,6 +356,10 @@ function questionCard(x: Session, q: Question, actions: InboxActions): HTMLEleme
   }) as HTMLButtonElement
   const decline = el('button', { type: 'button', class: 'btn small ghost', text: 'Decline to answer', onclick: () => void act(() => actions.decline(x, q), 'Declining\u2026') }) as HTMLButtonElement
   buttons.push(answer, decline)
+  if (!signs) {
+    for (const b of buttons) b.disabled = true
+    note.textContent = `${myApprover(s) ? 'This browser no longer approves for this world' : 'This browser isn\u2019t an approver for this world'}, so it can\u2019t answer here. Answer on the host with skylands request answer, or from an approver.`
+  }
   return el('div', { class: 'approval question', role: 'group', 'aria-label': `The agent asks: ${q.message}` }, [
     el('div', { class: 'ask' }, [el('span', { class: 'mark', style: 'background:#E0B000' }), el('strong', { text: q.message }), el('span', { class: 'muted', style: 'margin-left:auto;font-size:12px' }, ['asked ', timeNode(q.at, 'ago')])]),
     ...fields,
@@ -358,11 +367,14 @@ function questionCard(x: Session, q: Question, actions: InboxActions): HTMLEleme
   ])
 }
 
-/** The switch that lets a session's tool calls through without asking. */
-function trustSwitch(x: Session, actions: InboxActions): HTMLElement {
+/** The switch that lets a session's tool calls through without asking, unless a deny rule refuses them. */
+function trustSwitch(s: State, x: Session, actions: InboxActions): HTMLElement {
   const input = el('input', { type: 'checkbox', 'aria-label': 'Trust this session' }) as HTMLInputElement
   input.checked = !!x.trusted
-  const label = el('label', { class: 'trust', title: 'Allow every tool call in this session without asking' }, [input, 'Trust this session'])
+  const signs = canSignIn(s)
+  input.disabled = !signs
+  const title = signs ? 'Allow every tool call in this session without asking, unless a deny rule refuses it' : 'Only an approver for this world can trust a session'
+  const label = el('label', { class: 'trust', title }, [input, 'Trust this session'])
   input.addEventListener('change', async () => {
     input.disabled = true
     const err = await actions.trust(x, input.checked)
@@ -569,11 +581,11 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
     el('span', { class: 'muted', text: `${x.turns} ${x.turns === 1 ? 'turn' : 'turns'}` }),
     el('span', { class: 'muted', title: tokensBreakdown(x.tokens) || null, text: tokensLabel(x.tokens) }),
     el('div', { class: 'acts' }, [
-      isOpen(x) ? trustSwitch(x, actions) : null,
+      isOpen(x) ? trustSwitch(s, x, actions) : null,
       el('button', {
         type: 'button',
         class: 'btn small ghost',
-        text: `Rules (${x.rules.length})`,
+        text: isOpen(x) && x.rulesLapsed ? `Rules (${x.rules.length}, lapsed)` : `Rules (${x.rules.length})`,
         'aria-expanded': rulesOpen.has(x.id) ? 'true' : 'false',
         onclick: () => {
           if (rulesOpen.has(x.id)) rulesOpen.delete(x.id)
@@ -603,7 +615,7 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
   }
   if (running && !liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, '', cache, actions.refresh)]))
   for (const p of x.pending) body.appendChild(approvalCard(s, x, p, actions))
-  for (const q of x.questions) body.appendChild(questionCard(x, q, actions))
+  for (const q of x.questions) body.appendChild(questionCard(s, x, q, actions))
   if (fetchError) body.appendChild(el('p', { class: 'convo-end', style: 'color:var(--bad)', text: fetchError }))
   if (x.status === 'failed') body.appendChild(el('p', { class: 'convo-end', style: 'color:var(--bad)', text: `Failed: ${x.error ?? 'unknown error'}` }))
   else if (x.status === 'ended') body.appendChild(el('p', { class: 'convo-end', text: x.stopReason === 'stopped' ? 'You ended this session.' : `This session ended (${(x.stopReason ?? 'done').replace(/_/g, ' ')}).` }))
@@ -613,14 +625,37 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
   if (isOpen(x)) foot.appendChild(replyBox(x, { prompt: (text) => actions.prompt(x, text), cancel: () => actions.cancel(x), stop: () => actions.stop(x) }))
   else foot.appendChild(el('p', { class: 'muted', style: 'margin:0;font-size:13px', text: 'This session is over. Start a new one from its terrace in the world.' }))
 
-  const hint = isOpen(x) && x.trusted ? el('p', { class: 'trust-hint', text: 'Tool calls in this session run without asking.' }) : null
+  const hint = !isOpen(x)
+    ? null
+    : x.trusted
+      ? el('p', { class: 'trust-hint', text: 'Tool calls in this session run without asking, unless a deny rule refuses them.' })
+      : x.trustedBy === 'revocation'
+        ? el('p', { class: 'trust-hint ended', text: `Trust ended when ${approverName(s, x.trustApprover)} stopped approving for this world. Tool calls ask again.` })
+        : null
   const rules = rulesOpen.has(x.id)
     ? el('div', { class: 'convo-rules' }, [
-        rulesSheet(x.rules, { defaults: HOST_DEFAULTS, copiedFrom: repo?.name ?? 'the repository', readOnly: !isOpen(x), onChange: (next) => actions.setSessionRules(x, next) }),
+        rulesSheet(x.rules, {
+          defaults: HOST_DEFAULTS,
+          copiedFrom: repo?.name ?? 'the repository',
+          readOnly: !isOpen(x) || !canSignIn(s),
+          lapsed: isOpen(x) && x.rulesLapsed ? lapsedText(s, x.rulesApprover, x.rulesBy) : undefined,
+          onChange: (next) => actions.setSessionRules(x, next),
+        }),
       ])
     : null
   const convo = el('section', { class: 'convo', 'aria-label': `${sessionLabel(x)}, with ${name}`, 'data-session': x.id }, [head, hint, rules, body, foot])
   return convo
+}
+
+/** An approver's name as the registry has it, for saying whose approval lapsed. */
+export function approverName(s: State, key: string | undefined): string {
+  return (key && s.approvers?.find((a) => a.key === key)?.name) || 'an approver'
+}
+
+/** Why a rule list lapsed, for its rules sheet. */
+export function lapsedText(s: State, approver: string | undefined, by: string | undefined): string {
+  const who = approver ? `${approverName(s, approver)}, who set them, no longer approves for this world` : by === 'citadel' ? 'They were set before this world had approvers' : 'Nobody who approves for this world set them'
+  return `${who}, so their allow rules ask until an approver approves them again.`
 }
 
 /** "512 bytes", "12 KB", "3.4 MB". */

@@ -31,14 +31,18 @@ type Call struct {
 }
 
 // Decide applies rules to a call and returns v1.RuleAllow, v1.RuleAsk, or
-// v1.RuleDeny: the most specific matching rule wins, among equals a deny
-// beats an ask beats an allow and a session's own rule beats a copied or
-// default one, and no match means ask.
+// v1.RuleDeny. A deny is final: any matching deny rule denies the call,
+// however specific the allow rules beside it. Otherwise the most specific
+// matching rule wins, among equals an ask beats an allow and a session's
+// own rule beats a copied or default one, and no match means ask.
 func Decide(rules []v1.Rule, c Call) string {
 	best, bestScore := "", -1
 	for _, r := range rules {
 		if !Matches(r, c) {
 			continue
+		}
+		if r.Decision == v1.RuleDeny {
+			return v1.RuleDeny
 		}
 		score := 0
 		if r.Kind != v1.RuleAnyKind {
@@ -228,6 +232,30 @@ func Inherit(rules []v1.Rule) []v1.Rule {
 		out = append(out, r)
 	}
 	return out
+}
+
+// WithoutAllows is a rule list with its allow rules left out, which is
+// how a list applies once the approver who signed it no longer approves:
+// its deny and ask rules still apply, and what it allowed asks.
+func WithoutAllows(list []v1.Rule) []v1.Rule {
+	out := make([]v1.Rule, 0, len(list))
+	for _, r := range list {
+		if r.Decision != v1.RuleAllow {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// HasAllow reports whether a list allows anything, which is what a
+// signature behind it vouches for.
+func HasAllow(list []v1.Rule) bool {
+	for _, r := range list {
+		if r.Decision == v1.RuleAllow {
+			return true
+		}
+	}
+	return false
 }
 
 // Text is a rule on one line, the way the CLI and the browser show it.

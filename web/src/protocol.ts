@@ -144,6 +144,13 @@ export interface Repo {
   files: TerrainFile[]
   /** The rules a new session on this repository starts with. */
   rules: Rule[]
+  /** Who set the rules ("local" or "citadel") and the approver key that signed them. */
+  rulesBy?: string
+  rulesApprover?: string
+  /** How many times the rules were set: a change names the revision it replaces. */
+  rulesRevision: number
+  /** The approver who signed the rules no longer approves, so their allow rules ask until they are set again. */
+  rulesLapsed?: boolean
   registeredAt: string
   snapshottedAt: string
 }
@@ -263,12 +270,24 @@ export interface Session {
   turns: number
   /** What the agent named the conversation, once it has. */
   title?: string
-  /** Whether the session's tool calls are allowed without asking. */
+  /** Whether the session's tool calls are allowed without asking, unless a deny rule denies them. */
   trusted: boolean
+  /** Who last set trust: "citadel", "local", or "revocation" when the approver who turned it on was revoked. */
+  trustedBy?: string
+  trustApprover?: string
+  /** How many times trust was set: a change names the revision it replaces. */
+  trustRevision: number
   /** A person interrupted the turn and the agent has not stopped yet. */
   cancelling?: boolean
   /** The rules that settle this session's tool calls: the repository's as copied, and its own. */
   rules: Rule[]
+  /** Who stands behind the rules: the repository list's signer for the copy, or whoever set the session's own. */
+  rulesBy?: string
+  rulesApprover?: string
+  /** How many times the session's rules were set: a change names the revision it replaces. */
+  rulesRevision: number
+  /** The approver behind the rules no longer approves, so their allow rules ask until they are set again. */
+  rulesLapsed?: boolean
   /** The tool calls waiting on a person, oldest first, and the questions waiting on an answer. */
   pending: Permission[]
   questions: Question[]

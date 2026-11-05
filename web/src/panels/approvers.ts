@@ -1,7 +1,8 @@
 import { myApprover, myKey, type ApproverActions } from '../approvers'
 import { el } from '../dom'
-import type { ApproverInfo } from '../protocol'
+import type { ApproverInfo, Rule } from '../protocol'
 import { qrCode } from '../qr'
+import { isOpen } from '../status'
 import type { State } from '../store'
 import { copyButton, factsBox, foldSection, hint, timeNode } from './parts'
 
@@ -76,10 +77,12 @@ function approverRow(a: ApproverInfo, s: State, actions: ApproverActions, canAct
   // Everyone added through it, directly or by an approver it added, at any depth.
   const names = through.map((k) => (k === me ? 'this browser' : nameOf(k)))
   const left = (s.approvers ?? []).filter((x) => x.valid && x.key !== a.key && !through.includes(x.key)).length
+  const ask = approvedInAdvance(s, new Set([a.key, ...through]))
   const lines = [
     names.length
       ? `Also removes ${names.length} ${names.length === 1 ? 'approver' : 'approvers'} added through it, directly or in turn: ${listText(names)}.`
       : '',
+    ask.length ? `What ${names.length ? 'they' : 'it'} approved in advance will ask again until another approver approves it: ${listText(ask)}.` : '',
     loseMe ? 'This browser stops approving too, until it’s added again.' : '',
     left ? '' : 'No approver will be left: only your recovery file can add one after this.',
   ].filter(Boolean)
@@ -91,6 +94,24 @@ function approverRow(a: ApproverInfo, s: State, actions: ApproverActions, canAct
       el('button', { type: 'button', class: 'btn small ghost', text: 'Cancel', onclick: () => actions.askRevoke(null) }),
     ]),
   ])
+}
+
+/**
+ * What the given approvers approved in advance and revoking them ends, as
+ * counted phrases: trust they turned on in open sessions, and rule lists
+ * with allow rules that stand on their signature.
+ */
+function approvedInAdvance(s: State, keys: Set<string>): string[] {
+  const allows = (rules: Rule[]): boolean => rules.some((r) => r.decision === 'allow')
+  const open = Object.values(s.sessions).filter(isOpen)
+  const trusted = open.filter((x) => x.trusted && !!x.trustApprover && keys.has(x.trustApprover)).length
+  const lists =
+    Object.values(s.repos).filter((r) => !r.rulesLapsed && !!r.rulesApprover && keys.has(r.rulesApprover) && allows(r.rules)).length +
+    open.filter((x) => !x.rulesLapsed && !!x.rulesApprover && keys.has(x.rulesApprover) && allows(x.rules)).length
+  const out: string[] = []
+  if (trusted) out.push(`${trusted} trusted ${trusted === 1 ? 'session' : 'sessions'}`)
+  if (lists) out.push(`${lists} ${lists === 1 ? 'rule list' : 'rule lists'}`)
+  return out
 }
 
 /** The "Add an approver" link, as a QR code and a link, until it is used or expires. */

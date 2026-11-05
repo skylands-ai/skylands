@@ -186,6 +186,7 @@ button.toolchip[aria-expanded="true"]::before{ content:"\25BE"; }
 .trust{ display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--muted); cursor:pointer; padding:0 6px; }
 .trust input{ accent-color:#E0B000; width:16px; height:16px; }
 .trust-hint{ margin:0; padding:6px 18px; font-size:13px; color:var(--muted); background:var(--surface); border-bottom:1px solid var(--line); }
+.trust-hint.ended{ color:var(--warn); }
 .convo-foot{ padding:12px 18px; background:var(--surface); border-top:1px solid var(--line); display:flex; flex-direction:column; gap:10px; }
 .changes{ display:flex; flex-direction:column; gap:8px; padding:10px 12px; border-radius:10px; background:var(--surface-2); border:1px solid var(--line); font-size:13px; }
 .changes .ask{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
@@ -195,6 +196,7 @@ button.toolchip[aria-expanded="true"]::before{ content:"\25BE"; }
 .changes a{ color:var(--accent); }
 .rules{ display:flex; flex-direction:column; gap:6px; font-size:13px; }
 .rules .sub{ font-size:12px; color:var(--muted); }
+.rules .lapsed{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 8px; padding:8px 10px; border-radius:8px; border:1px solid var(--warn); background:var(--surface-2); font-size:12px; color:var(--text); }
 .rule{ display:flex; align-items:center; gap:10px; padding:6px 10px; border-radius:8px; background:var(--surface-2); border:1px solid var(--line); }
 .rule .pill{ min-width:52px; justify-content:center; }
 .rule.allow .pill{ color:var(--ok); }

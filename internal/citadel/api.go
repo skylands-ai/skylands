@@ -60,9 +60,12 @@ func (c *citadel) api() http.Handler {
 	return mux
 }
 
-// rulesBody is the body of the rule endpoints: the whole list.
+// rulesBody is the body of the rule endpoints: the whole list, the
+// revision it replaces, and an approver's signature over both.
 type rulesBody struct {
-	Rules []v1.Rule `json:"rules"`
+	Rules     []v1.Rule             `json:"rules"`
+	Revision  int                   `json:"revision"`
+	Signature *v1.DecisionSignature `json:"signature"`
 }
 
 // sessionRules replaces a session's rules on its island.
@@ -73,7 +76,7 @@ func (c *citadel) sessionRules(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "a list of rules is required")
 		return
 	}
-	cmd := v1.SetSessionRules{ID: nuid.Next(), SessionID: id, Rules: body.Rules}
+	cmd := v1.SetSessionRules{ID: nuid.Next(), SessionID: id, Rules: body.Rules, Revision: body.Revision, Signature: body.Signature}
 	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandSetSessionRules), cmd, http.StatusOK)
 }
 
@@ -86,7 +89,7 @@ func (c *citadel) repoRules(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "a list of rules is required")
 		return
 	}
-	cmd := v1.SetRepoRules{ID: nuid.Next(), RepoID: id, Rules: body.Rules}
+	cmd := v1.SetRepoRules{ID: nuid.Next(), RepoID: id, Rules: body.Rules, Revision: body.Revision, Signature: body.Signature}
 	c.relay(w, host, v1.RepoCommandSubject(host, id, v1.CommandSetRepoRules), cmd, http.StatusOK)
 }
 
@@ -179,14 +182,15 @@ func (c *citadel) deny(w http.ResponseWriter, r *http.Request) {
 func (c *citadel) answer(w http.ResponseWriter, r *http.Request) {
 	host, id, qid := r.PathValue("host"), r.PathValue("id"), r.PathValue("qid")
 	var body struct {
-		Answers json.RawMessage `json:"answers"`
-		Decline bool            `json:"decline"`
+		Answers   json.RawMessage       `json:"answers"`
+		Decline   bool                  `json:"decline"`
+		Signature *v1.DecisionSignature `json:"signature"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || (!body.Decline && len(body.Answers) == 0) {
 		writeError(w, http.StatusBadRequest, "answers by field, or decline, are required")
 		return
 	}
-	cmd := v1.AnswerQuestion{ID: nuid.Next(), SessionID: id, QuestionID: qid, Answers: body.Answers, Decline: body.Decline}
+	cmd := v1.AnswerQuestion{ID: nuid.Next(), SessionID: id, QuestionID: qid, Answers: body.Answers, Decline: body.Decline, Signature: body.Signature}
 	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandAnswerQuestion), cmd, http.StatusOK)
 }
 
@@ -194,13 +198,15 @@ func (c *citadel) answer(w http.ResponseWriter, r *http.Request) {
 func (c *citadel) trust(w http.ResponseWriter, r *http.Request) {
 	host, id := r.PathValue("host"), r.PathValue("id")
 	var body struct {
-		Trusted bool `json:"trusted"`
+		Trusted   bool                  `json:"trusted"`
+		Revision  int                   `json:"revision"`
+		Signature *v1.DecisionSignature `json:"signature"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "trusted: true or false is required")
 		return
 	}
-	cmd := v1.TrustSession{ID: nuid.Next(), SessionID: id, Trusted: body.Trusted}
+	cmd := v1.TrustSession{ID: nuid.Next(), SessionID: id, Trusted: body.Trusted, Revision: body.Revision, Signature: body.Signature}
 	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandTrustSession), cmd, http.StatusOK)
 }
 

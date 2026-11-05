@@ -67,6 +67,12 @@ export interface RulesSheetOptions {
   onChange(rules: Rule[]): Promise<string>
   /** Whether the list can be changed at all. */
   readOnly?: boolean
+  /**
+   * Why the list lapsed, when the approver who set it no longer approves:
+   * its allow rules ask until an approver approves it again, which the
+   * sheet offers.
+   */
+  lapsed?: string
 }
 
 /**
@@ -98,6 +104,14 @@ export function rulesSheet(rules: Rule[], opts: RulesSheetOptions): HTMLElement 
         ? el('button', { type: 'button', class: 'btn small ghost', text: 'Remove', 'aria-label': `Remove the rule ${ruleText(r)}`, onclick: () => void change(rules.filter((_, j) => j !== i)) })
         : null,
     ])
+  }
+  if (opts.lapsed) {
+    box.appendChild(
+      el('div', { class: 'lapsed', role: 'status' }, [
+        el('span', { text: opts.lapsed }),
+        opts.readOnly ? null : el('button', { type: 'button', class: 'btn small', text: 'Approve these rules again', onclick: () => void change(rules) }),
+      ]),
+    )
   }
   if (!rules.length) box.appendChild(el('p', { class: 'sub', text: 'No rules yet. Everything but the host defaults asks you.' }))
   for (const [i, r] of rules.entries()) box.appendChild(row(r, i))

@@ -81,8 +81,9 @@ const ApproversSubjectPrefix = "v1.world.approvers"
 // ApproverSubject is the subject of one approver registry record.
 func ApproverSubject(kind, key string) string { return ApproversSubjectPrefix + "." + kind + "." + key }
 
-// DecisionSignature is an approver's signature over a decision on a tool
-// call, which an approval or a denial through the citadel carries. Sig is
+// DecisionSignature is an approver's signature over a decision: allowing
+// or denying a tool call, answering a question, trusting a session, or
+// setting rules, which the command through the citadel carries. Sig is
 // the approver key's signature, in unpadded base64url, over the SHA-256 of
 // the decision's canonical JSON (see approval.Decision).
 type DecisionSignature struct {

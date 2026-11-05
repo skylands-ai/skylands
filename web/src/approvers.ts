@@ -1,6 +1,6 @@
 import { keepStorage, keyFromSeed, loadApprover, newApproverKey, seedOf, sign, type Signed } from './approver'
-import { DECISION_VERSION, signDecision, type Decision, type DecisionSignature } from './decision'
-import type { ApproverInfo, Permission, Session, VoucherInfo } from './protocol'
+import { answersHash, DECISION_VERSION, formHash, normalizeRules, rulesHash, signDecision, type Decision, type DecisionSignature } from './decision'
+import type { ApproverInfo, Permission, Question, Repo, Rule, Session, VoucherInfo } from './protocol'
 import type { State, Store } from './store'
 
 /** What the Approvers section can do: show an "Add an approver" link, and revoke an approver once confirmed. */
@@ -99,14 +99,57 @@ export async function keepThisBrowser(store: Store): Promise<void> {
 }
 
 /**
- * This browser's signature over a decision on a waiting request, as the
- * daemon will check it, or why it can't sign: it has no approver key for
- * this world, or the key no longer approves.
+ * Signs a decision built for this world with this browser's approver key,
+ * or says why it can't: it has no approver key for this world, or the key
+ * no longer approves.
  */
-export function signFor(s: State, x: Session, p: Permission, decision: 'allow' | 'deny', option: string, inputHash: string): DecisionSignature | string {
+function signAs(s: State, build: (world: string) => Decision): DecisionSignature | string {
   const mine = myApprover(s)
-  if (!s.me || !mine || !s.world?.owner) return 'This browser isn’t an approver for this world, so it can’t answer here.'
-  if (!mine.valid) return 'This browser no longer approves for this world, so it can’t answer here.'
-  const d: Decision = { v: DECISION_VERSION, world: s.world.owner, host: x.host, session: x.id, request: p.requestId, decision, option: decision === 'allow' ? option : '', input: inputHash }
-  return signDecision(keyFromSeed(s.me.seed), d)
+  if (!s.me || !mine || !s.world?.owner) return 'This browser isn’t an approver for this world, so it can’t do that here.'
+  if (!mine.valid) return 'This browser no longer approves for this world, so it can’t do that here.'
+  return signDecision(keyFromSeed(s.me.seed), build(s.world.owner))
+}
+
+/** This browser's signature over a decision on a waiting request, as the daemon will check it, or why it can't sign. */
+export function signFor(s: State, x: Session, p: Permission, decision: 'allow' | 'deny', option: string, inputHash: string): DecisionSignature | string {
+  return signAs(s, (world) => ({ v: DECISION_VERSION, kind: 'toolcall', world, host: x.host, session: x.id, request: p.requestId, decision, option: decision === 'allow' ? option : '', input: inputHash }))
+}
+
+/** This browser's signature over an answer to a question, or a decline when answers is null. */
+export function signAnswer(s: State, x: Session, q: Question, answers: Record<string, unknown> | null): DecisionSignature | string {
+  return signAs(s, (world) => ({
+    v: DECISION_VERSION,
+    kind: 'answer',
+    world,
+    host: x.host,
+    session: x.id,
+    question: q.questionId,
+    form: formHash(q.message, q.fields),
+    declined: answers === null,
+    answers: answers === null ? '' : answersHash(answers),
+  }))
+}
+
+/** This browser's signature over turning a session's trust on or off, from the revision it shows. */
+export function signTrust(s: State, x: Session, trusted: boolean): DecisionSignature | string {
+  return signAs(s, (world) => ({ v: DECISION_VERSION, kind: 'trust', world, host: x.host, session: x.id, trusted, revision: x.trustRevision ?? 0 }))
+}
+
+/** A session's rules as the daemon will keep them, and this browser's signature over them. */
+export function signSessionRules(s: State, x: Session, rules: Rule[]): { rules: Rule[]; revision: number; signature: DecisionSignature | string } {
+  const list = normalizeRules(rules, false)
+  const revision = x.rulesRevision ?? 0
+  return { rules: list, revision, signature: signAs(s, (world) => ({ v: DECISION_VERSION, kind: 'session-rules', world, host: x.host, session: x.id, rules: rulesHash(list), revision })) }
+}
+
+/** A repository's rules as the daemon will keep them, and this browser's signature over them. */
+export function signRepoRules(s: State, r: Repo, rules: Rule[]): { rules: Rule[]; revision: number; signature: DecisionSignature | string } {
+  const list = normalizeRules(rules, true)
+  const revision = r.rulesRevision ?? 0
+  return { rules: list, revision, signature: signAs(s, (world) => ({ v: DECISION_VERSION, kind: 'repo-rules', world, host: r.host, repo: r.id, rules: rulesHash(list), revision })) }
+}
+
+/** Whether this browser can sign for the world it shows. */
+export function canSign(s: State): boolean {
+  return !!myApprover(s)?.valid
 }

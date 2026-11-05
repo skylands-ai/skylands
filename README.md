@@ -283,9 +283,11 @@ Everything else, an edit, a shell command, a fetch, waits for a person. A
 waiting call lights the citadel's beacon, drops a yellow beam from the
 airship, counts in the Inbox badge and the tab title, and shows in the
 conversation as a card with the tool, the exact input the agent proposed,
-and the answers the agent accepts: Allow, Always allow, Deny. "Trust this
-session", in a conversation's header, lets that session's calls through
-without asking from then on. A request nobody answers in 30 minutes
+and two answers: Allow once and Deny. An agent's "always allow" answer is
+never given, because the agent would then stop asking, and neither a rule
+nor revoking an approver could reach those calls. "Trust this session", in
+a conversation's header, lets that session's calls through without asking
+from then on, except what a deny rule refuses. A request nobody answers in 30 minutes
 expires, and the agent is told it was cancelled; ending the session
 cancels whatever it was asking.
 
@@ -314,13 +316,24 @@ On the host itself, `skylands request list` shows what is waiting, and
 over the daemon's socket, which works while the citadel is unreachable.
 Every request and every answer is recorded in the session's history, with
 who answered: the host's CLI, a browser through the citadel, or trust.
-Answers from a browser are signed. Allowing or denying a tool call signs
-the decision with the browser's approver key, and the daemon checks the
-signature, against the world's approvers and against its own record of the
-request, before it acts, so a citadel can pass decisions along but can't
-make one. A browser that isn't an approver sees the request but can't
-answer it. `skylands request history` lists every decision on the host,
-with who made it and whether its signature still verifies.
+Answers from a browser are signed. Allowing or denying a tool call,
+answering or declining a question, trusting a session, and changing rules
+each sign the decision with the browser's approver key, and the daemon
+checks the signature, against the world's approvers and against its own
+record, before it acts, so a citadel can pass decisions along but can't
+make one. Trust and rule changes are signed over the version of them the
+browser showed, so one made since is refused rather than overwritten, and
+an old one can't be sent again. A browser that isn't an approver sees
+requests, questions, and rules but can't answer or change them.
+`skylands request history` lists every decision on tool calls on the
+host, with who made it and whether its signature still verifies.
+
+Revoking an approver doesn't undo what it already decided, but it ends
+what it approved in advance: a session it trusted asks again, and a rule
+list it set keeps its deny and ask rules while its allow rules ask, until
+another approver approves the list again from its rules sheet. The same
+goes for a session's copy of a repository's rules. Rules set on the host
+with `skylands rule` never lapse.
 
 ### An island on another machine
 
@@ -373,9 +386,12 @@ for every session on the repository, with a pattern it proposes from the
 request: `allow execute go test *`, `allow edit worktree`, `deny execute
 rm -rf *`. The rules sheet on a terrace and behind a conversation's Rules
 button lists and edits them, and on the host `skylands rule list|add|
-remove` do the same for a repository. The most specific matching rule
-wins, a deny beats an allow among equals, and a session's own rule beats
-one it copied from the repository.
+remove` do the same for a repository. A deny is final: a call any deny
+rule matches is refused, whatever allows it and whether or not the session
+is trusted. Otherwise the most specific matching rule wins, an ask beats
+an allow among equals, and a session's own rule beats one it copied from
+the repository. To allow only some commands, write the allow rules alone:
+everything else asks.
 
 When an agent needs something only you can tell it, such as Claude Code
 asking a clarifying question, the question arrives in the conversation as

@@ -19,15 +19,16 @@ import { renderTerracePanel } from './panels/terrace'
 import { renderWorldPanel } from './panels/world'
 import { agentLabel, citadelLabelStatus, clockText, durationText, islandStatus, isStale, secondsSince } from './status'
 import { islandList, isWaiting, level, pendingCount, reposOn, sessionsOn, Store, waitingCount, type State } from './store'
-import { growLive, renderInbox, type InboxActions } from './inbox'
+import { growLive, lapsedText, renderInbox, type InboxActions } from './inbox'
 import { LiveText } from './live'
 import { refreshOpenChips } from './toolchip'
 import { renderMarkdown } from './markdown'
 import { providerOf } from './world/airship'
 import type { AgentState } from './world/agents'
+import type { Rule } from './protocol'
 import { World } from './world/world'
 import { connectToCitadel } from './ws'
-import { approverActions, keepThisBrowser, loadThisBrowser, signFor } from './approvers'
+import { approverActions, canSign, keepThisBrowser, loadThisBrowser, signAnswer, signFor, signRepoRules, signSessionRules, signTrust } from './approvers'
 
 const stage = byId<HTMLElement>('stage')
 const canvas = byId<HTMLCanvasElement>('world')
@@ -118,15 +119,43 @@ const inboxActions: InboxActions = {
     if (typeof signature === 'string') return Promise.resolve(signature)
     return sessionCommand(x.host, x.id, `requests/${encodeURIComponent(p.requestId)}/deny`, { signature })
   },
-  answer: (x, q, answers) => sessionCommand(x.host, x.id, `questions/${encodeURIComponent(q.questionId)}/answer`, { answers }),
-  decline: (x, q) => sessionCommand(x.host, x.id, `questions/${encodeURIComponent(q.questionId)}/answer`, { decline: true }),
-  trust: (x, trusted) => sessionCommand(x.host, x.id, 'trust', { trusted }),
+  // An answer signs the question as shown and the answers' canonical JSON.
+  answer: (x, q, answers) => {
+    const signature = signAnswer(store.state, x, q, answers)
+    if (typeof signature === 'string') return Promise.resolve(signature)
+    return sessionCommand(x.host, x.id, `questions/${encodeURIComponent(q.questionId)}/answer`, { answers, signature })
+  },
+  decline: (x, q) => {
+    const signature = signAnswer(store.state, x, q, null)
+    if (typeof signature === 'string') return Promise.resolve(signature)
+    return sessionCommand(x.host, x.id, `questions/${encodeURIComponent(q.questionId)}/answer`, { decline: true, signature })
+  },
+  // Trust and rules are signed over the revision this browser shows, so
+  // a change made since is refused rather than overwritten.
+  trust: (x, trusted) => {
+    const signature = signTrust(store.state, x, trusted)
+    if (typeof signature === 'string') return Promise.resolve(signature)
+    return sessionCommand(x.host, x.id, 'trust', { trusted, revision: x.trustRevision ?? 0, signature })
+  },
   commit: (x, message) => sessionCommand(x.host, x.id, 'commit', { message }),
   merge: (x) => sessionCommand(x.host, x.id, 'merge', {}),
   pullRequest: (x) => sessionCommand(x.host, x.id, 'pull-request', {}),
-  setSessionRules: (x, rules) => sessionCommand(x.host, x.id, 'rules', { rules }),
-  setRepoRules: (host, repoId, rules) => repoCommand(host, repoId, 'rules', { rules }),
+  setSessionRules: (x, rules) => {
+    const signed = signSessionRules(store.state, x, rules)
+    if (typeof signed.signature === 'string') return Promise.resolve(signed.signature)
+    return sessionCommand(x.host, x.id, 'rules', signed)
+  },
+  setRepoRules: (host, repoId, rules) => setRepoRules(host, repoId, rules),
   refresh: () => store.touch(),
+}
+
+/** Replaces a repository's rules, signed over the revision this browser shows. */
+function setRepoRules(host: string, repoId: string, rules: Rule[]): Promise<string> {
+  const repo = store.state.repos[repoId]
+  if (!repo) return Promise.resolve('This browser doesn’t know that repository yet.')
+  const signed = signRepoRules(store.state, repo, rules)
+  if (typeof signed.signature === 'string') return Promise.resolve(signed.signature)
+  return repoCommand(host, repoId, 'rules', signed)
 }
 
 /** Posts a command for one repository to the citadel and returns an error message, or empty. */
@@ -194,7 +223,7 @@ function panelDeps(s: State, stale: boolean): unknown[] {
     case 'file':
       return ['file', repo, island, s.file]
     case 'terrace':
-      return ['terrace', repo, island, stale, s.viewed, ...(repo ? sessionsOn(s, repo.id) : [])]
+      return ['terrace', repo, island, stale, s.viewed, s.approvers, s.me, s.world, ...(repo ? sessionsOn(s, repo.id) : [])]
     case 'island':
       return ['island', island, stale, stale ? s.lastContact : 0, ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
     default:
@@ -259,7 +288,9 @@ function renderPanelContent(s: State, stale: boolean): void {
           sessionsOn(s, repo.id),
           (x) => isWaiting(s, x),
           () => nav.select(island.host),
-          (rules) => repoCommand(island.host, repo.id, 'rules', { rules }),
+          (rules) => setRepoRules(island.host, repo.id, rules),
+          canSign(s),
+          lapsedText(s, repo.rulesApprover, repo.rulesBy),
         )
         return
       }

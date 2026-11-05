@@ -16,6 +16,8 @@ export function renderTerracePanel(
   waiting: (s: Session) => boolean,
   backToIsland: () => void,
   setRules: (rules: Rule[]) => Promise<string>,
+  canSign: boolean,
+  lapsed: string | undefined,
 ): void {
   panel.textContent = ''
   const down = stale || !island.reachable
@@ -46,8 +48,14 @@ export function renderTerracePanel(
   if (!repo.files.length) panel.appendChild(note('This repository has no tracked files yet.'))
   panel.appendChild(
     section('Rules', [
-      el('p', { class: 'muted', style: 'margin:0 0 6px;font-size:12px', text: 'New sessions on this repository start with these rules. A session can change its own copy.' }),
-      rulesSheet(repo.rules ?? [], { defaults: HOST_DEFAULTS, readOnly: down, onChange: setRules }),
+      el('p', {
+        class: 'muted',
+        style: 'margin:0 0 6px;font-size:12px',
+        text: canSign
+          ? 'New sessions on this repository start with these rules. A session can change its own copy. A deny rule is final: nothing allows what it denies.'
+          : 'New sessions on this repository start with these rules. Only an approver for this world can change them, or the host with skylands rule.',
+      }),
+      rulesSheet(repo.rules ?? [], { defaults: HOST_DEFAULTS, readOnly: down || !canSign, lapsed: repo.rulesLapsed ? lapsed : undefined, onChange: setRules }),
     ]),
   )
   panel.appendChild(hint(sessions.length ? 'Click an airship to follow its agent, or a building to look closer. Conversations are in the inbox.' : 'Click a building to look closer.'))
