@@ -83,15 +83,22 @@ func startWorld(t *testing.T, ctx context.Context) *world {
 			t.Errorf("citadel.Run returned %v", err)
 		}
 	})
+	// Until the citadel knows whether the world is set up, it lets no
+	// browser in, since it can't tell whether one has to sign in. These
+	// worlds are never set up, so nobody needs to.
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		resp, err := http.Get(w.webURL + "/healthz")
+		var info web.WorldInfo
+		resp, err := http.Get(w.webURL + "/api/world")
 		if err == nil {
+			_ = json.NewDecoder(resp.Body).Decode(&info)
 			_ = resp.Body.Close()
-			return w
+			if info.Checked {
+				return w
+			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("citadel never answered: %v", err)
+			t.Fatalf("citadel never looked for the world: %v", err)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

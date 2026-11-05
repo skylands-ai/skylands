@@ -63,6 +63,7 @@ func TestRunServesWebAndTracksIslands(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
+	waitChecked(t, "http://"+addr)
 	c, _, err := websocket.Dial(ctx, "ws://"+addr+"/ws", nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
@@ -153,6 +154,28 @@ func TestRunServesWebAndTracksIslands(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Run did not stop after cancel")
+	}
+}
+
+// waitChecked waits until the citadel at base knows whether the world is
+// set up. Until then it lets no browser in, since it can't tell whether one
+// has to sign in.
+func waitChecked(t *testing.T, base string) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		var w web.WorldInfo
+		if resp, err := http.Get(base + "/api/world"); err == nil {
+			_ = json.NewDecoder(resp.Body).Decode(&w)
+			_ = resp.Body.Close()
+		}
+		if w.Checked {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the citadel never looked for the world")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 

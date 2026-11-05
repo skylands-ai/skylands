@@ -72,6 +72,22 @@ type Revocation struct {
 	Created string `json:"created"`
 }
 
+// SignIn is the payload a browser signs with its approver key to sign in to
+// a citadel. The citadel names the times when the browser asks, and the
+// browser signs them unchanged. The signed SignIn is the browser's cookie:
+// any citadel of the world checks it against the approvers on every
+// request, so no citadel keeps a session.
+type SignIn struct {
+	// Type is "signin".
+	Type  string `json:"type"`
+	World string `json:"world"`
+	// Citadel is the host, and port if any, that the browser signed in at,
+	// as its requests name it in their Host header.
+	Citadel string `json:"citadel"`
+	Issued  string `json:"issued"`
+	Expires string `json:"expires"`
+}
+
 // ApproversSubjectPrefix is where a world's approver registry is stored,
 // each record on a subject of its own: ".approver.KEY" for an entry the
 // owner key signs, ".voucher.CLAIM" for a voucher, ".vouched.CLAIM" for

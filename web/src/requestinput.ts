@@ -1,6 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import { bytesToHex } from '@noble/hashes/utils.js'
 import type { Permission } from './protocol'
+import { api } from './signin'
 
 const utf8 = new TextEncoder()
 
@@ -72,7 +73,7 @@ export function requestInput(host: string, sessionId: string, p: Permission, cha
     asked.add(key)
     void (async () => {
       try {
-        const resp = await fetch(`/api/sessions/${encodeURIComponent(host)}/${encodeURIComponent(sessionId)}/requests/${encodeURIComponent(p.requestId)}/input`)
+        const resp = await api(`/api/sessions/${encodeURIComponent(host)}/${encodeURIComponent(sessionId)}/requests/${encodeURIComponent(p.requestId)}/input`)
         const body = (await resp.json().catch(() => ({}))) as { input?: string; error?: string }
         fetched.set(key, resp.ok && typeof body.input === 'string' ? { text: body.input } : { error: body.error ?? `The host answered ${resp.status}.` })
       } catch (err) {

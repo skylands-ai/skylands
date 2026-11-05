@@ -1,5 +1,6 @@
 import { byId, el } from './dom'
 import type { AgentModel, Island } from './protocol'
+import { api } from './signin'
 import { agentLabel, isStale } from './status'
 import { level, type State } from './store'
 
@@ -178,7 +179,7 @@ export class CommandBar {
     this.go.disabled = true
     this.setWhy('Dispatching\u2026', 'info')
     try {
-      const resp = await fetch('/api/sessions', {
+      const resp = await api('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ host: this.host, repoId: this.repoId, agent: this.agent.value, model: this.chosenModel(), prompt, inCheckout: this.where.value === 'checkout' }),

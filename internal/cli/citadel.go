@@ -21,13 +21,15 @@ func newCitadelUpCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "up",
 		Short: "Serve the web application for a world",
-		Long: `Citadel up serves the 3D client and the phone inbox, builds projections from
-the world's streams, relays signed approvals to the daemon that owns each
-session, and sends push notifications. It connects to the world's NATS
+		Long: `Citadel up serves the 3D client and the phone inbox to browsers that sign in
+with an approver key, builds projections from the world's streams, relays
+signed approvals to the daemon that owns each session, and sends push
+notifications. It connects to the world's NATS
 server as an ordinary client. Any number of
 citadels can run against one world, and they are interchangeable.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.OnSetupLink = func(link string) { showSetupLink(cmd.ErrOrStderr(), link) }
 			return citadel.Run(cmd.Context(), cfg)
 		},
 	}

@@ -28,6 +28,7 @@ import type { AgentState } from './world/agents'
 import type { Rule } from './protocol'
 import { World } from './world/world'
 import { connectToCitadel } from './ws'
+import { api } from './signin'
 import { approverActions, canSign, keepThisBrowser, loadThisBrowser, signAnswer, signFor, signRepoRules, signSessionRules, signTrust } from './approvers'
 
 const stage = byId<HTMLElement>('stage')
@@ -83,7 +84,7 @@ const nav: NavActions = {
 /** Posts a command for one session to the citadel and returns an error message, or empty. */
 async function sessionCommand(host: string, id: string, action: string, body: unknown): Promise<string> {
   try {
-    const resp = await fetch(`/api/sessions/${encodeURIComponent(host)}/${encodeURIComponent(id)}/${action}`, {
+    const resp = await api(`/api/sessions/${encodeURIComponent(host)}/${encodeURIComponent(id)}/${action}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -161,7 +162,7 @@ function setRepoRules(host: string, repoId: string, rules: Rule[]): Promise<stri
 /** Posts a command for one repository to the citadel and returns an error message, or empty. */
 async function repoCommand(host: string, id: string, action: string, body: unknown): Promise<string> {
   try {
-    const resp = await fetch(`/api/repos/${encodeURIComponent(host)}/${encodeURIComponent(id)}/${action}`, {
+    const resp = await api(`/api/repos/${encodeURIComponent(host)}/${encodeURIComponent(id)}/${action}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
