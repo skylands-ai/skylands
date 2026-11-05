@@ -27,6 +27,7 @@ import (
 	v1 "github.com/skylands-ai/skylands/api/v1"
 	"github.com/skylands-ai/skylands/internal/approval"
 	"github.com/skylands-ai/skylands/internal/daemon/agents"
+	"github.com/skylands-ai/skylands/internal/daemon/blobs"
 	"github.com/skylands-ai/skylands/internal/daemon/fetch"
 	"github.com/skylands-ai/skylands/internal/daemon/host"
 	"github.com/skylands-ai/skylands/internal/daemon/session"
@@ -175,6 +176,7 @@ func Run(ctx context.Context, cfg Config) error {
 		Host:           hostName,
 		WorktreesDir:   filepath.Join(cfg.DataDir, "worktrees", hostName),
 		TranscriptsDir: transcriptsDir,
+		Blobs:          blobs.New(filepath.Join(cfg.DataDir, "blobs", hostName)),
 		Registry:       cfg.Adapters,
 		Repos:          agg,
 		Publish:        nc.Publish,
@@ -672,31 +674,74 @@ func (a *localAPI) History(_ context.Context, sessionID string) []socket.Decisio
 		if sessionID != "" && s.ID != sessionID {
 			continue
 		}
-		name := s.RepoID
-		if repo, ok := a.agg.Repo(s.RepoID); ok {
-			name = repo.Name
-		}
-		title := s.Title
-		if title == "" {
-			title = s.Prompt
-		}
 		for _, d := range s.Decided {
-			info := socket.DecisionInfo{
-				Request: d.Permission.RequestID, Session: s.ID, Conversation: title, Repo: name, Agent: s.Agent,
-				Tool: d.Permission.Title, Kind: d.Permission.Kind, Answer: d.Answer, Option: d.OptionID, By: d.By,
-				Approver: d.Approver, Reason: d.Reason, Asked: d.Permission.At, At: d.At,
-			}
-			if reg != nil && d.Approver != "" {
-				if ap, ok := reg.Approver(d.Approver); ok {
-					info.ApproverName = ap.Name
-				}
-			}
-			info.Signature = a.signatureStatus(world, reg, s.ID, d)
-			out = append(out, info)
+			out = append(out, a.decisionInfo(world, reg, s, d))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
 	return out
+}
+
+// decisionInfo is one decided request as the history lists it.
+func (a *localAPI) decisionInfo(world string, reg *approval.Registry, s session.Session, d session.Decided) socket.DecisionInfo {
+	name := s.RepoID
+	if repo, ok := a.agg.Repo(s.RepoID); ok {
+		name = repo.Name
+	}
+	title := s.Title
+	if title == "" {
+		title = s.Prompt
+	}
+	info := socket.DecisionInfo{
+		Request: d.Permission.RequestID, Session: s.ID, Conversation: title, Repo: name, Agent: s.Agent,
+		Tool: d.Permission.Title, Kind: d.Permission.Kind, Answer: d.Answer, Option: d.OptionID, By: d.By,
+		Approver: d.Approver, Reason: d.Reason, Asked: d.Permission.At, At: d.At,
+	}
+	if reg != nil && d.Approver != "" {
+		if ap, ok := reg.Approver(d.Approver); ok {
+			info.ApproverName = ap.Name
+		}
+	}
+	info.Signature = a.signatureStatus(world, reg, s.ID, d)
+	return info
+}
+
+// Decision is one decided request with the input it named and what its
+// tool call produced, as this host kept them. It leaves checking them
+// against their hashes to the reader.
+func (a *localAPI) Decision(_ context.Context, requestID string) (socket.DecisionDetail, error) {
+	world, reg := a.pin.get(), a.approvers.registry()
+	for _, s := range a.sessions.List() {
+		for _, d := range s.Decided {
+			if d.Permission.RequestID != requestID {
+				continue
+			}
+			out := socket.DecisionDetail{
+				DecisionInfo: a.decisionInfo(world, reg, s, d),
+				Sig:          d.Signature, ToolCall: d.Permission.ToolCallID,
+				InputHash: d.Permission.InputHash, InputSize: d.Permission.InputSize,
+			}
+			if d.Signature != "" {
+				out.World = world
+			}
+			if data, err := a.sessions.Blob(d.Permission.InputHash); err == nil {
+				out.Input, out.InputKept = data, true
+			}
+			for _, tc := range s.ToolCalls {
+				if tc.ID != d.Permission.ToolCallID || (tc.Status != "completed" && tc.Status != "failed") {
+					continue
+				}
+				out.CallStatus, out.OutputHash, out.OutputSize = tc.Status, tc.OutputHash, tc.OutputSize
+				if tc.OutputHash != "" {
+					if data, err := a.sessions.Blob(tc.OutputHash); err == nil {
+						out.Output, out.OutputKept = data, true
+					}
+				}
+			}
+			return out, nil
+		}
+	}
+	return socket.DecisionDetail{}, fmt.Errorf("%w: no decision on %s", session.ErrUnknownRequest, requestID)
 }
 
 // signatureStatus says whether a decision through the citadel is signed,

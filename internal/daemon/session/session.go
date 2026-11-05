@@ -26,7 +26,9 @@ import (
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
 	"github.com/skylands-ai/skylands/internal/approval"
+	"github.com/skylands-ai/skylands/internal/canonical"
 	"github.com/skylands-ai/skylands/internal/daemon/agents"
+	"github.com/skylands-ai/skylands/internal/daemon/blobs"
 	"github.com/skylands-ai/skylands/internal/daemon/host"
 	"github.com/skylands-ai/skylands/internal/es"
 	"github.com/skylands-ai/skylands/internal/rules"
@@ -51,6 +53,10 @@ type ToolCall struct {
 	Kind      string
 	Status    string
 	Locations []string
+	// OutputHash and OutputSize name what a finished call produced, which
+	// the host keeps whole.
+	OutputHash string
+	OutputSize int
 }
 
 // Session is one agent run on one repository.
@@ -203,8 +209,11 @@ type Config struct {
 	// TranscriptsDir holds each session's agent messages, which stay on the
 	// host.
 	TranscriptsDir string
-	Registry       agents.Registry
-	Repos          Repos
+	// Blobs, when set, keeps each request's exact input and each finished
+	// tool call's whole output under their SHA-256.
+	Blobs    *blobs.Store
+	Registry agents.Registry
+	Repos    Repos
 	// Publish, when set, sends each transcript append on the session's live
 	// subject so a browser can read along.
 	Publish func(subject string, data []byte) error
@@ -1634,6 +1643,7 @@ func (m *Manager) apply(ev v1.Event) {
 						if len(d.Locations) > 0 {
 							s.ToolCalls[i].Locations = d.Locations
 						}
+						s.ToolCalls[i].OutputHash, s.ToolCalls[i].OutputSize = d.OutputHash, d.OutputSize
 					}
 				}
 			}
@@ -1685,6 +1695,9 @@ type observer struct {
 	id string
 	t  *transcript
 	mu sync.Mutex
+	// outputs holds what each unfinished tool call has produced so far,
+	// whole, as the agent last reported it.
+	outputs map[string]*v1.ToolCallOutput
 }
 
 func (o *observer) Spawned(name, version, agentSessionID string) {
@@ -1698,6 +1711,7 @@ func (o *observer) ToolCall(tc agents.ToolCall) {
 	defer o.mu.Unlock()
 	now := time.Now().UTC()
 	o.m.recordTool(o.id, tc, now)
+	o.produced(tc)
 	s, _ := o.m.Get(o.id)
 	var known *ToolCall
 	for i := range s.ToolCalls {
@@ -1726,11 +1740,83 @@ func (o *observer) ToolCall(tc agents.ToolCall) {
 		if known != nil && known.Title != tc.Title {
 			done.Title = tc.Title
 		}
+		done.OutputHash, done.OutputSize = o.keepOutput(tc.ID)
 		_ = o.m.record(o.m.ctx, o.id, "", v1.EventToolCallCompleted, done)
 		if tc.Status == "failed" {
 			o.t.Line(ToolLine(tc.Title+" (failed)", tc.ID))
 		}
 	}
+}
+
+// produced notes what a report says the call produced so far: content
+// replaces what an earlier report said, and a raw output replaces the
+// last one. Unlike the call's record, nothing is cut.
+func (o *observer) produced(tc agents.ToolCall) {
+	if tc.ID == "" || (tc.Content == nil && tc.Output == "") {
+		return
+	}
+	if o.outputs == nil {
+		o.outputs = map[string]*v1.ToolCallOutput{}
+	}
+	out := o.outputs[tc.ID]
+	if out == nil {
+		out = &v1.ToolCallOutput{}
+		o.outputs[tc.ID] = out
+	}
+	if tc.Content != nil {
+		out.Content = append([]v1.ToolCallContent(nil), tc.Content...)
+	}
+	if tc.Output != "" {
+		out.Output = tc.Output
+	}
+}
+
+// keepOutput keeps what a finished call produced, whole, as the canonical
+// JSON of a ToolCallOutput, and returns its hash and size, or nothing when
+// the host keeps no blobs or couldn't keep this one.
+func (o *observer) keepOutput(toolCallID string) (string, int) {
+	out := o.outputs[toolCallID]
+	delete(o.outputs, toolCallID)
+	if o.m.cfg.Blobs == nil {
+		return "", 0
+	}
+	if out == nil {
+		out = &v1.ToolCallOutput{}
+	}
+	if out.Content == nil {
+		out.Content = []v1.ToolCallContent{}
+	}
+	data, err := canonical.Marshal(out)
+	if err != nil {
+		slog.Warn("session: a tool call's output isn't JSON that can be kept", "session", o.id, "toolCall", toolCallID, "err", err)
+		return "", 0
+	}
+	hash, err := o.m.cfg.Blobs.Put(data)
+	if err != nil {
+		slog.Warn("session: keep a tool call's output", "session", o.id, "toolCall", toolCallID, "err", err)
+		return "", 0
+	}
+	return hash, len(data)
+}
+
+// keepInput keeps a request's exact input under its SHA-256, which
+// PermissionRequested names and a signed decision covers.
+func (m *Manager) keepInput(sessionID, requestID string, input []byte) {
+	if m.cfg.Blobs == nil {
+		return
+	}
+	if _, err := m.cfg.Blobs.Put(input); err != nil {
+		slog.Warn("session: keep a request's input", "session", sessionID, "request", requestID, "err", err)
+	}
+}
+
+// Blob returns what the host keeps under a hash: a request's input or a
+// tool call's output.
+func (m *Manager) Blob(hash string) ([]byte, error) {
+	if m.cfg.Blobs == nil {
+		return nil, blobs.ErrNotKept
+	}
+	return m.cfg.Blobs.Get(hash)
 }
 
 // started puts a call the agent asks permission for on the record and in
@@ -1836,6 +1922,7 @@ func (o *observer) Permission(ctx context.Context, req agents.PermissionRequest)
 	case v1.RuleDeny:
 		requestID := nuid.Next()
 		option := pickOption(req.Options, false, "")
+		m.keepInput(o.id, requestID, req.Input)
 		_ = m.record(m.ctx, o.id, "", v1.EventPermissionRequested, permissionRequested(o.id, requestID, tc, req))
 		_ = m.record(m.ctx, o.id, "", v1.EventPermissionDenied, v1.PermissionDenied{SessionID: o.id, RequestID: requestID, OptionID: option, By: "rule"})
 		o.t.Line(ToolLine(tc.Title+" (denied by a rule)", tc.ID))
@@ -1863,6 +1950,7 @@ func (o *observer) Permission(ctx context.Context, req agents.PermissionRequest)
 		delete(l.inputs, requestID)
 		m.mu.Unlock()
 	}()
+	m.keepInput(o.id, requestID, req.Input)
 	if err := m.record(m.ctx, o.id, "", v1.EventPermissionRequested, permissionRequested(o.id, requestID, tc, req)); err != nil {
 		return agents.Decision{Cancelled: true}
 	}

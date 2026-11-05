@@ -302,13 +302,27 @@ type ToolCallStarted struct {
 
 // ToolCallCompleted records a tool call's end. Status is "completed" or
 // "failed". Title is set when the agent renamed the call since it started,
-// as one does once it knows the whole input.
+// as one does once it knows the whole input. OutputHash and OutputSize
+// name what the call produced, a ToolCallOutput, which the host keeps
+// whole under that SHA-256.
 type ToolCallCompleted struct {
 	SessionID  string   `json:"sessionId"`
 	ToolCallID string   `json:"toolCallId"`
 	Status     string   `json:"status"`
 	Title      string   `json:"title,omitempty"`
 	Locations  []string `json:"locations,omitempty"`
+	OutputHash string   `json:"outputHash,omitempty"`
+	OutputSize int      `json:"outputSize,omitempty"`
+}
+
+// ToolCallOutput is what a finished tool call produced: the content the
+// agent last reported for it, and its raw output as text when it gave
+// one. The host keeps its canonical JSON (RFC 8785) whole, which is what
+// ToolCallCompleted's OutputHash covers, while the call's record keeps
+// only so much of each text.
+type ToolCallOutput struct {
+	Content []ToolCallContent `json:"content"`
+	Output  string            `json:"output,omitempty"`
 }
 
 // PlanEntry is one step of an agent's plan.

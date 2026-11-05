@@ -326,7 +326,12 @@ browser showed, so one made since is refused rather than overwritten, and
 an old one can't be sent again. A browser that isn't an approver sees
 requests, questions, and rules but can't answer or change them.
 `skylands request history` lists every decision on tool calls on the
-host, with who made it and whether its signature still verifies.
+host, with who made it and whether its signature still verifies, and
+`skylands request history --show <id>` prints one decision whole: its
+signature, the exact input the request named, and what the tool call
+produced. The host keeps both whole under `blobs/` in the data directory,
+named by their SHA-256, and the command checks each against the hash the
+session's events name.
 
 Revoking an approver doesn't undo what it already decided, but it ends
 what it approved in advance: a session it trusted asks again, and a rule

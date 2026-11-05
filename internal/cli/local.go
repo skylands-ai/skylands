@@ -120,7 +120,7 @@ long it has waited. Approve or deny one by its id.`,
 }
 
 func newRequestHistoryCmd() *cobra.Command {
-	var socketPath string
+	var socketPath, show string
 	cmd := &cobra.Command{
 		Use:   "history [session]",
 		Short: "List the decisions made on this host's requests",
@@ -129,9 +129,24 @@ in one session or in all of them, oldest first: the tool, the answer, when,
 and who gave it. A decision made through the citadel carries the signature
 of the approver who made it, which is checked again here against the
 world's approvers as they stand now. It reads from this host's daemon, so it
-works while the citadel is unreachable.`,
+works while the citadel is unreachable.
+
+With --show and a request's id, it prints that one decision whole: the
+answer and its signature, the exact input the request named, which the
+signature covers, and what the tool call produced. The host keeps both
+whole under their SHA-256, and each is checked here against the hash the
+session's events name. It fails if either doesn't match.`,
+		Example: `  skylands request history
+  skylands request history --show 7Fq2pXc9KdLm3wVb1N0aZr`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if show != "" {
+				d, err := socket.Dial(socketPath).Decision(cmd.Context(), show)
+				if err != nil {
+					return err
+				}
+				return printDecision(cmd.OutOrStdout(), d)
+			}
 			session := ""
 			if len(args) == 1 {
 				session = args[0]
@@ -162,6 +177,7 @@ works while the citadel is unreachable.`,
 		},
 	}
 	socketFlag(cmd, &socketPath)
+	cmd.Flags().StringVar(&show, "show", "", "print one decision whole, with its input and its tool call's output, checked against their hashes")
 	return cmd
 }
 

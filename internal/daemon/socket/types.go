@@ -145,6 +145,38 @@ type DecisionInfo struct {
 	At        time.Time `json:"at"`
 }
 
+// DecisionDetail is one decision with what it covered, as GET
+// /v1/requests/{id}/decision shows it: the input the request named, which
+// a signature covers, and what the tool call produced, each as this host
+// kept it. The bytes come as the host has them, and whoever reads them
+// checks them against their hashes.
+type DecisionDetail struct {
+	DecisionInfo
+	// Sig is the approver's signature over the decision, in unpadded
+	// base64url, and World the world's owner key it names.
+	Sig   string `json:"sig,omitempty"`
+	World string `json:"world,omitempty"`
+	// ToolCall is the call the request was about.
+	ToolCall string `json:"toolCall,omitempty"`
+	// InputHash and InputSize are the input as PermissionRequested names
+	// it, and Input the bytes kept under that hash. InputKept is false
+	// when the host kept none, as before inputs were kept.
+	InputHash string `json:"inputHash"`
+	InputSize int    `json:"inputSize"`
+	Input     []byte `json:"input,omitempty"`
+	InputKept bool   `json:"inputKept"`
+	// CallStatus is how the tool call ended, "completed" or "failed", and
+	// empty while it hasn't. OutputHash and OutputSize name what it
+	// produced, as ToolCallCompleted records it, and Output is the bytes
+	// kept under that hash: a v1.ToolCallOutput as canonical JSON.
+	// OutputKept is false when the host kept none.
+	CallStatus string `json:"callStatus,omitempty"`
+	OutputHash string `json:"outputHash,omitempty"`
+	OutputSize int    `json:"outputSize,omitempty"`
+	Output     []byte `json:"output,omitempty"`
+	OutputKept bool   `json:"outputKept"`
+}
+
 // RepoRulesInfo is one repository's rules, as GET /v1/rules lists them.
 type RepoRulesInfo struct {
 	RepoID string    `json:"repoId"`

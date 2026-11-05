@@ -81,6 +81,11 @@ var (
 // input, about 20 KB, as an agent writing a whole file would.
 const BigEdit = "big edit"
 
+// BigOutput, anywhere in a prompt, makes what the fake agent's edit
+// produces long, a diff whose new text is about 200 KB, past what a tool
+// call's record keeps of any text.
+const BigOutput = "big output"
+
 // SettingsQuestion, as a whole prompt, makes the fake agent answer with
 // its session's mode and model, as "mode=<mode> model=<model>".
 const SettingsQuestion = "what are your settings?"
@@ -548,7 +553,11 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 			// What an edit produces is a diff of the file, as a real agent
 			// reports it, though the fake agent changes nothing on disk.
 			old := fileText(s.cwd, edited)
-			diff := acp.DiffToolCallContent(filepath.Join(s.cwd, edited), old+"// rewritten by the fake agent\n")
+			newText := old + "// rewritten by the fake agent\n"
+			if strings.Contains(strings.ToLower(promptText(req)), BigOutput) {
+				newText += strings.Repeat("// a long line the fake agent wrote, past what a record keeps, \u00e9h\n", 3000)
+			}
+			diff := acp.DiffToolCallContent(filepath.Join(s.cwd, edited), newText)
 			diff.OldText = &old
 			if err := send(toolResult(id, acp.ToolCallStatusCompleted, diff)); err != nil {
 				return nil, err
