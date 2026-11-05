@@ -82,14 +82,30 @@ type Session struct {
 	Error           string
 	// Title is the name the agent gave the conversation, once it has.
 	Title string
-	// Trusted means tool calls are allowed without asking.
-	Trusted bool
+	// Trusted means tool calls are allowed without asking, unless a deny
+	// rule denies them. TrustedBy is who last set trust ("citadel",
+	// "local", or "revocation"), TrustApprover the approver key behind it,
+	// and TrustRevision how many times it has been set.
+	Trusted       bool
+	TrustedBy     string
+	TrustApprover string
+	TrustRevision int
 	// Cancelling means a person interrupted the turn in progress and the
 	// agent has not stopped yet.
 	Cancelling bool
 	// Rules settle tool calls before they reach a person: the repository's
 	// rules as copied at the start, and any set on the session since.
-	Rules []v1.Rule
+	// RulesBy, RulesApprover, and RulesSignature are who stands behind the
+	// list: the repository list's signer for the copy, and whoever set the
+	// session's own. RulesRevision counts the times the session's rules
+	// were set, and RulesLapsed means the approver behind them no longer
+	// approves, so their allow rules ask.
+	Rules          []v1.Rule
+	RulesBy        string
+	RulesApprover  string
+	RulesSignature string
+	RulesRevision  int
+	RulesLapsed    bool
 	// AgentSessionID is the agent's own id for the conversation, which a
 	// restart asks it to load again.
 	AgentSessionID string
@@ -205,6 +221,10 @@ type Config struct {
 	// VerifyDecision checks an approver's signature over a decision that
 	// came through the citadel, against the world's approvers.
 	VerifyDecision func(ctx context.Context, d approval.Decision, s v1.DecisionSignature) error
+	// Valid reports whether an approver approves for the world now. Trust
+	// and allow rules stand on the approver who signed them only while it
+	// does.
+	Valid func(ctx context.Context, approver string) bool
 }
 
 // DefaultAllowKinds are the tool call kinds a host allows when no rule
@@ -422,40 +442,77 @@ func (m *Manager) Approve(ctx context.Context, cmd v1.ApproveToolCall, by string
 	return m.decide(ctx, cmd.ID, cmd.SessionID, cmd.RequestID, by, cmd.OptionID, cmd.InputHash, cmd.Signature, true)
 }
 
-// checkSigned checks a decision through the citadel, once the world
-// exists: an approver must have signed it, and the signature must be over
-// the decision as the daemon itself records it, with the host, session,
-// request, option, and input hash it knows. It returns the approver and
-// signature to record, or none for a decision that needs no signature.
+// checkSigned checks a decision on a tool call through the citadel, once
+// the world exists: an approver must have signed it, and the signature
+// must be over the decision as the daemon itself records it, with the
+// host, session, request, option, and input hash it knows. It returns the
+// approver and signature to record, or none for a decision that needs no
+// signature.
 func (m *Manager) checkSigned(ctx context.Context, sessionID, requestID, by, optionID, option string, sig *v1.DecisionSignature, pending *Permission, allow bool) (string, string, error) {
-	if by != "citadel" || m.cfg.World == nil {
-		return "", "", nil
+	if allow && by == "citadel" && m.world() != "" && (optionID == "" || option != optionID) {
+		// The option signed is the option chosen, which must be one of the
+		// agent's "once" options.
+		return "", "", fmt.Errorf("%w: a signed approval must name the agent's \"allow once\" option", ErrUnsigned)
 	}
-	world := m.cfg.World()
-	if world == "" {
+	return m.signed(ctx, by, sig, "request "+requestID, func(world string) approval.Decision {
+		d := approval.ToolCall{V: approval.DecisionVersion, Kind: approval.KindToolCall, World: world, Host: m.cfg.Host, Session: sessionID, Request: requestID, Decision: "deny", Input: pending.InputHash}
+		if allow {
+			d.Decision, d.Option = "allow", optionID
+		}
+		return d
+	})
+}
+
+// world is the owner key of the world the host belongs to, or "" before
+// it is known.
+func (m *Manager) world() string {
+	if m.cfg.World == nil {
+		return ""
+	}
+	return m.cfg.World()
+}
+
+// signed checks a decision through the citadel once the world exists: an
+// approver must have signed the decision build makes from the daemon's own
+// record, and must approve for the world. It returns the approver and
+// signature to record, or none for a decision that needs no signature:
+// one on the host, or one before the world exists.
+func (m *Manager) signed(ctx context.Context, by string, sig *v1.DecisionSignature, what string, build func(world string) approval.Decision) (string, string, error) {
+	world := m.world()
+	if by != "citadel" || world == "" {
 		return "", "", nil
 	}
 	if sig == nil {
 		return "", "", ErrUnsigned
 	}
-	d := approval.Decision{V: approval.DecisionVersion, World: world, Host: m.cfg.Host, Session: sessionID, Request: requestID, Decision: "deny", Input: pending.InputHash}
-	if allow {
-		// The option signed is the option chosen, which the agent must
-		// offer.
-		if optionID == "" || option != optionID {
-			return "", "", fmt.Errorf("%w: a signed approval must name one of the options the agent offers", ErrUnsigned)
-		}
-		d.Decision, d.Option = "allow", optionID
-	}
 	if m.cfg.VerifyDecision == nil {
 		return "", "", errors.New("this daemon can't check signatures")
 	}
-	if err := m.cfg.VerifyDecision(ctx, d, *sig); err != nil {
-		slog.Warn("session: a decision's signature was refused", "session", sessionID, "request", requestID, "approver", sig.Approver, "err", err)
+	if err := m.cfg.VerifyDecision(ctx, build(world), *sig); err != nil {
+		slog.Warn("session: a decision's signature was refused", "what", what, "approver", sig.Approver, "err", err)
 		return "", "", err
 	}
 	return sig.Approver, sig.Sig, nil
 }
+
+// stands reports whether trust or a rule list still stands on who set it:
+// the host always does, nothing needs an approver before the world exists,
+// and otherwise the approver who signed it must still approve.
+func (m *Manager) stands(ctx context.Context, by, approver string, lapsed bool) bool {
+	switch {
+	case lapsed:
+		return false
+	case by == "local", m.world() == "":
+		return true
+	case approver == "" || m.cfg.Valid == nil:
+		return false
+	}
+	return m.cfg.Valid(ctx, approver)
+}
+
+// ErrStale is a change to trust or rules made against an older revision
+// than the daemon's: something else changed them since.
+var ErrStale = approval.ErrStale
 
 // RequestInput is the whole input of a request that is waiting.
 func (m *Manager) RequestInput(sessionID, requestID string) (v1.RequestInput, error) {
@@ -487,7 +544,7 @@ func (m *Manager) Deny(ctx context.Context, cmd v1.DenyToolCall, by string) (Ses
 }
 
 // ErrUnsigned is a decision through the citadel that no approver signed.
-var ErrUnsigned = errors.New("an answer through the citadel must be signed by one of the world's approvers")
+var ErrUnsigned = approval.ErrUnsigned
 
 // ErrInputMismatch is an approval through the citadel that names no input,
 // or another input than the one the agent proposed.
@@ -538,7 +595,10 @@ func (m *Manager) decide(ctx context.Context, commandID, sessionID, requestID, b
 	}
 	if option == "" {
 		if allow {
-			return *s, errors.New("the agent offers no allow option for this request")
+			if optionID != "" {
+				return *s, errors.New("an approval must choose the agent's \"allow once\" option")
+			}
+			return *s, errors.New("the agent offers no \"allow once\" option for this request")
 		}
 		// No reject option: cancelling the request is the refusal.
 		if err := m.record(ctx, sessionID, commandID, v1.EventPermissionDenied, v1.PermissionDenied{SessionID: sessionID, RequestID: requestID, By: by, Approver: approver, Signature: signature}); err != nil {
@@ -596,13 +656,25 @@ func (m *Manager) Answer(ctx context.Context, cmd v1.AnswerQuestion, by string) 
 	if waiting == nil || answer == nil {
 		return *s, fmt.Errorf("%w: %s", ErrUnknownQuestion, cmd.QuestionID)
 	}
-	answers := cmd.Answers
-	if cmd.Decline {
-		answers = nil
-	} else if len(answers) == 0 || !json.Valid(answers) {
-		return *s, errors.New("answers must be a JSON object of values by field")
+	var answers json.RawMessage
+	if !cmd.Decline {
+		var err error
+		if answers, err = CheckAnswers(waiting.Fields, cmd.Answers); err != nil {
+			return *s, err
+		}
 	}
-	if err := m.record(ctx, cmd.SessionID, cmd.ID, v1.EventQuestionAnswered, v1.QuestionAnswered{SessionID: cmd.SessionID, QuestionID: cmd.QuestionID, Answers: answers, Declined: cmd.Decline, By: by}); err != nil {
+	approver, signature, err := m.signed(ctx, by, cmd.Signature, "question "+cmd.QuestionID, func(world string) approval.Decision {
+		d := approval.Answer{V: approval.DecisionVersion, Kind: approval.KindAnswer, World: world, Host: m.cfg.Host, Session: cmd.SessionID, Question: cmd.QuestionID, Declined: cmd.Decline}
+		d.Form, _ = approval.FormHash(waiting.Message, waiting.Fields)
+		if !cmd.Decline {
+			d.Answers, _ = approval.AnswersHash(answers)
+		}
+		return d
+	})
+	if err != nil {
+		return *s, err
+	}
+	if err := m.record(ctx, cmd.SessionID, cmd.ID, v1.EventQuestionAnswered, v1.QuestionAnswered{SessionID: cmd.SessionID, QuestionID: cmd.QuestionID, Answers: answers, Declined: cmd.Decline, By: by, Approver: approver, Signature: signature}); err != nil {
 		return Session{}, err
 	}
 	if cmd.Decline {
@@ -680,34 +752,30 @@ func (m *Manager) FindQuestion(questionID string) (Session, bool) {
 }
 
 // pickOption chooses the option to answer with: the one asked for, else
-// the first allow option (once before always) or the first reject option.
+// the agent's first "allow once" or "reject once" option. An "always"
+// option is never chosen: it would settle later calls inside the agent,
+// where neither a deny rule nor a revocation reaches them, and the daemon
+// would never see them.
 func pickOption(options []v1.PermissionOption, allow bool, wanted string) string {
-	if wanted != "" {
-		for _, o := range options {
-			if o.ID == wanted && (strings.HasPrefix(o.Kind, "allow") == allow) {
-				return o.ID
-			}
-		}
-		return ""
-	}
-	first, second := "allow_once", "allow_always"
+	kind := "allow_once"
 	if !allow {
-		first, second = "reject_once", "reject_always"
+		kind = "reject_once"
 	}
-	for _, want := range []string{first, second} {
-		for _, o := range options {
-			if o.Kind == want {
-				return o.ID
-			}
+	for _, o := range options {
+		if o.Kind == kind && (wanted == "" || o.ID == wanted) {
+			return o.ID
 		}
 	}
 	return ""
 }
 
 // Trust handles TrustSession: from now on the session's tool calls are
-// allowed without asking, or asked about again. Trusting a session answers
-// whatever is waiting.
-func (m *Manager) Trust(ctx context.Context, cmd v1.TrustSession) (Session, error) {
+// allowed without asking, unless a deny rule denies them, or asked about
+// again. Trusting a session answers whatever is waiting. By is "citadel"
+// or "local"; a change through the citadel names the revision of the
+// session's trust it replaces, and once the world exists it must be
+// signed.
+func (m *Manager) Trust(ctx context.Context, cmd v1.TrustSession, by string) (Session, error) {
 	m.cmdMu.Lock()
 	defer m.cmdMu.Unlock()
 	m.mu.Lock()
@@ -725,8 +793,18 @@ func (m *Manager) Trust(ctx context.Context, cmd v1.TrustSession) (Session, erro
 		m.mu.Unlock()
 		return *s, ErrOver
 	}
+	revision := s.TrustRevision
 	m.mu.Unlock()
-	if err := m.record(ctx, cmd.SessionID, cmd.ID, v1.EventSessionTrusted, v1.SessionTrusted{SessionID: cmd.SessionID, Trusted: cmd.Trusted}); err != nil {
+	if by == "citadel" && cmd.Revision != revision {
+		return *s, fmt.Errorf("%w: the session's trust is at revision %d, not %d", ErrStale, revision, cmd.Revision)
+	}
+	approver, signature, err := m.signed(ctx, by, cmd.Signature, "trust in "+cmd.SessionID, func(world string) approval.Decision {
+		return approval.Trust{V: approval.DecisionVersion, Kind: approval.KindTrust, World: world, Host: m.cfg.Host, Session: cmd.SessionID, Trusted: cmd.Trusted, Revision: revision}
+	})
+	if err != nil {
+		return *s, err
+	}
+	if err := m.record(ctx, cmd.SessionID, cmd.ID, v1.EventSessionTrusted, v1.SessionTrusted{SessionID: cmd.SessionID, Trusted: cmd.Trusted, By: by, Approver: approver, Signature: signature, Revision: revision}); err != nil {
 		return Session{}, err
 	}
 	if cmd.Trusted {
@@ -743,8 +821,10 @@ func (m *Manager) Trust(ctx context.Context, cmd v1.TrustSession) (Session, erro
 
 // SetRules handles SetSessionRules: the session's rules become the given
 // list. Rules copied from the repository keep their source when sent
-// back unchanged; an edited one is the session's own.
-func (m *Manager) SetRules(ctx context.Context, cmd v1.SetSessionRules) (Session, error) {
+// back unchanged; an edited one is the session's own. Whoever sets the
+// list stands behind all of it, copied rules included. By and the
+// revision and signature are as in Trust.
+func (m *Manager) SetRules(ctx context.Context, cmd v1.SetSessionRules, by string) (Session, error) {
 	m.cmdMu.Lock()
 	defer m.cmdMu.Unlock()
 	m.mu.Lock()
@@ -762,17 +842,60 @@ func (m *Manager) SetRules(ctx context.Context, cmd v1.SetSessionRules) (Session
 		m.mu.Unlock()
 		return *s, ErrOver
 	}
+	revision := s.RulesRevision
 	m.mu.Unlock()
 	list, err := rules.Validate(cmd.Rules)
 	if err != nil {
 		return *s, err
 	}
-	if err := m.record(ctx, cmd.SessionID, cmd.ID, v1.EventSessionRulesSet, v1.SessionRulesSet{SessionID: cmd.SessionID, Rules: list}); err != nil {
+	if by == "citadel" && cmd.Revision != revision {
+		return *s, fmt.Errorf("%w: the session's rules are at revision %d, not %d", ErrStale, revision, cmd.Revision)
+	}
+	approver, signature, err := m.signed(ctx, by, cmd.Signature, "rules of "+cmd.SessionID, func(world string) approval.Decision {
+		hash, _ := approval.RulesHash(list)
+		return approval.SessionRules{V: approval.DecisionVersion, Kind: approval.KindSessionRules, World: world, Host: m.cfg.Host, Session: cmd.SessionID, Rules: hash, Revision: revision}
+	})
+	if err != nil {
+		return *s, err
+	}
+	if err := m.record(ctx, cmd.SessionID, cmd.ID, v1.EventSessionRulesSet, v1.SessionRulesSet{SessionID: cmd.SessionID, Rules: list, By: by, Approver: approver, Signature: signature, Revision: revision}); err != nil {
 		return Session{}, err
 	}
 	slog.Info("session: rules set", "session", cmd.SessionID, "rules", len(list))
 	out, _ := m.Get(cmd.SessionID)
 	return out, nil
+}
+
+// Lapse ends what approvers approved in advance once they no longer
+// approve: an open session's trust that one of them turned on is turned
+// off, and a rule list one of them stands behind lapses, so its allow
+// rules ask until an approver sets the list again. valid reports whether
+// an approver approves now. Trust and rules set on the host never lapse.
+func (m *Manager) Lapse(ctx context.Context, valid func(approver string) bool) {
+	if m.world() == "" {
+		return
+	}
+	m.cmdMu.Lock()
+	defer m.cmdMu.Unlock()
+	for _, s := range m.List() {
+		if s.Status == StatusEnded || s.Status == StatusFailed {
+			continue
+		}
+		if s.Trusted && s.TrustedBy != "local" && !valid(s.TrustApprover) {
+			if err := m.record(ctx, s.ID, "", v1.EventSessionTrusted, v1.SessionTrusted{SessionID: s.ID, By: "revocation", Approver: s.TrustApprover, Revision: s.TrustRevision}); err != nil {
+				slog.Warn("session: end the trust of a revoked approver", "session", s.ID, "err", err)
+			} else {
+				slog.Info("session: trust ended, its approver no longer approves", "session", s.ID, "approver", s.TrustApprover)
+			}
+		}
+		if !s.RulesLapsed && s.RulesBy != "local" && rules.HasAllow(s.Rules) && !valid(s.RulesApprover) {
+			if err := m.record(ctx, s.ID, "", v1.EventSessionRulesLapsed, v1.SessionRulesLapsed{SessionID: s.ID, Approver: s.RulesApprover}); err != nil {
+				slog.Warn("session: lapse the rules of a revoked approver", "session", s.ID, "err", err)
+			} else {
+				slog.Info("session: rules lapsed, their approver no longer approves", "session", s.ID, "approver", s.RulesApprover)
+			}
+		}
+	}
 }
 
 // Requests lists every tool call waiting on a person, across sessions.
@@ -1085,7 +1208,11 @@ func (m *Manager) Start(ctx context.Context, cmd v1.StartSession) (Session, erro
 		return Session{}, err
 	}
 
-	if err := m.record(ctx, id, cmd.ID, v1.EventSessionStarted, v1.SessionStarted{SessionID: id, RepoID: repo.ID, Agent: cmd.Agent, Model: cmd.Model, Worktree: worktree, Branch: branch, Base: base, InCheckout: cmd.InCheckout, Rules: rules.Inherit(repo.Rules)}); err != nil {
+	// The copy of the repository's rules stands on the signature of the
+	// list it copies.
+	started := v1.SessionStarted{SessionID: id, RepoID: repo.ID, Agent: cmd.Agent, Model: cmd.Model, Worktree: worktree, Branch: branch, Base: base, InCheckout: cmd.InCheckout, Rules: rules.Inherit(repo.Rules),
+		RulesBy: repo.RulesBy, RulesApprover: repo.RulesApprover, RulesSignature: repo.RulesSignature, RulesRevision: max(repo.RulesRevision-1, 0), RulesLapsed: repo.RulesLapsed}
+	if err := m.record(ctx, id, cmd.ID, v1.EventSessionStarted, started); err != nil {
 		return Session{}, err
 	}
 	if err := m.record(ctx, id, cmd.ID, v1.EventPromptSent, v1.PromptSent{SessionID: id, Text: cmd.Prompt}); err != nil {
@@ -1294,7 +1421,7 @@ func (m *Manager) apply(ev v1.Event) {
 		if ev.Decode(&d) != nil {
 			return
 		}
-		m.sessions[d.SessionID] = &Session{ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Worktree: d.Worktree, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Rules: d.Rules, Status: StatusRunning, StartedAt: ev.Time, UpdatedAt: ev.Time}
+		m.sessions[d.SessionID] = &Session{ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Worktree: d.Worktree, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Rules: d.Rules, RulesBy: d.RulesBy, RulesApprover: d.RulesApprover, RulesSignature: d.RulesSignature, RulesLapsed: d.RulesLapsed, Status: StatusRunning, StartedAt: ev.Time, UpdatedAt: ev.Time}
 		if ev.CommandID != "" {
 			m.handled[ev.CommandID] = d.SessionID
 		}
@@ -1343,17 +1470,29 @@ func (m *Manager) apply(ev v1.Event) {
 		var d v1.SessionTrusted
 		if ev.Decode(&d) == nil {
 			if s := touch(d.SessionID); s != nil {
-				s.Trusted = d.Trusted
+				s.Trusted, s.TrustedBy, s.TrustApprover = d.Trusted, d.By, d.Approver
+				s.TrustRevision++
+				if ev.CommandID != "" {
+					m.handled[ev.CommandID] = d.SessionID
+				}
 			}
 		}
 	case v1.EventSessionRulesSet:
 		var d v1.SessionRulesSet
 		if ev.Decode(&d) == nil {
 			if s := touch(d.SessionID); s != nil {
-				s.Rules = d.Rules
+				s.Rules, s.RulesBy, s.RulesApprover, s.RulesSignature, s.RulesLapsed = d.Rules, d.By, d.Approver, d.Signature, false
+				s.RulesRevision++
 				if ev.CommandID != "" {
 					m.handled[ev.CommandID] = d.SessionID
 				}
+			}
+		}
+	case v1.EventSessionRulesLapsed:
+		var d v1.SessionRulesLapsed
+		if ev.Decode(&d) == nil {
+			if s := touch(d.SessionID); s != nil {
+				s.RulesLapsed = true
 			}
 		}
 	case v1.EventPermissionRequested:
@@ -1678,9 +1817,16 @@ func (o *observer) Permission(ctx context.Context, req agents.PermissionRequest)
 	tc := req.ToolCall
 	o.started(tc, req.Input)
 	s, _ := m.Get(o.id)
-	decision := v1.RuleAllow
-	if !s.Trusted {
-		decision = rules.Decide(append(append([]v1.Rule{}, s.Rules...), m.hostRules()...), rules.Call{Kind: tc.Kind, Title: tc.Title, Locations: tc.Locations, Input: req.Input})
+	// A list stands on the approver who signed it: once that approver no
+	// longer approves, its allow rules ask. A deny is final, so trust only
+	// settles what the rules would ask about.
+	list := s.Rules
+	if rules.HasAllow(list) && !m.stands(m.ctx, s.RulesBy, s.RulesApprover, s.RulesLapsed) {
+		list = rules.WithoutAllows(list)
+	}
+	decision := rules.Decide(append(append([]v1.Rule{}, list...), m.hostRules()...), rules.Call{Kind: tc.Kind, Title: tc.Title, Locations: tc.Locations, Input: req.Input})
+	if decision == v1.RuleAsk && s.Trusted && m.stands(m.ctx, s.TrustedBy, s.TrustApprover, false) {
+		decision = v1.RuleAllow
 	}
 	switch decision {
 	case v1.RuleAllow:

@@ -44,6 +44,12 @@ type SessionInfo struct {
 	// Cancelling means the turn was interrupted and the agent has not
 	// stopped yet.
 	Cancelling bool `json:"cancelling,omitempty"`
+	// Trusted means the session's tool calls are allowed without asking,
+	// unless a deny rule denies them. RulesLapsed means the approver
+	// behind the session's rules no longer approves, so their allow rules
+	// ask.
+	Trusted     bool `json:"trusted,omitempty"`
+	RulesLapsed bool `json:"rulesLapsed,omitempty"`
 	// Worktree is where the agent works, and Branch what it works on. A
 	// session in the checkout has InCheckout set and no base.
 	Worktree   string `json:"worktree,omitempty"`
@@ -144,6 +150,13 @@ type RepoRulesInfo struct {
 	RepoID string    `json:"repoId"`
 	Repo   string    `json:"repo"`
 	Rules  []v1.Rule `json:"rules"`
+	// By is who set the rules, "local" or "citadel", and Approver the
+	// approver key that signed them through the citadel. Lapsed means that
+	// approver no longer approves, so the rules' allow rules ask until
+	// they are set again.
+	By       string `json:"by,omitempty"`
+	Approver string `json:"approver,omitempty"`
+	Lapsed   bool   `json:"lapsed,omitempty"`
 }
 
 // SetRulesRequest is the body of PUT /v1/repos/{id}/rules.

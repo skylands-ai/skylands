@@ -180,11 +180,20 @@ func Run(ctx context.Context, cfg Config) error {
 		Publish:        nc.Publish,
 		World:          pin.get,
 		VerifyDecision: appr.verify,
+		Valid:          appr.valid,
 	})
 	if err != nil {
 		return err
 	}
 	defer sessions.Wait()
+	agg.RequireSignatures(pin.get, appr.verify)
+	// What a revoked approver approved in advance lapses as soon as the
+	// daemon reads the revocation: trust it turned on, and rule lists it
+	// signed.
+	appr.changed = func(reg *approval.Registry) {
+		sessions.Lapse(ctx, reg.Valid)
+		agg.LapseRules(ctx, reg.Valid)
+	}
 
 	// On-demand reads of transcripts and diffs leave the host only when asked.
 	responder := fetch.New(hostName, sessions, transcriptsDir)
@@ -333,7 +342,7 @@ func (c *commands) handleRepo(ctx context.Context, msg *nats.Msg) {
 			return
 		}
 		cmd.RepoID = repoID
-		r, err := c.agg.SetRules(ctx, cmd)
+		r, err := c.agg.SetRules(ctx, cmd, "citadel")
 		if err != nil {
 			c.reply(msg, v1.Reply{Error: err.Error()})
 			return
@@ -458,7 +467,7 @@ func (c *commands) handle(ctx context.Context, msg *nats.Msg) {
 			return
 		}
 		cmd.SessionID = sessionID
-		s, err := c.sessions.Trust(ctx, cmd)
+		s, err := c.sessions.Trust(ctx, cmd, "citadel")
 		if err != nil {
 			c.reply(msg, v1.Reply{Error: err.Error()})
 			return
@@ -471,7 +480,7 @@ func (c *commands) handle(ctx context.Context, msg *nats.Msg) {
 			return
 		}
 		cmd.SessionID = sessionID
-		s, err := c.sessions.SetRules(ctx, cmd)
+		s, err := c.sessions.SetRules(ctx, cmd, "citadel")
 		if err != nil {
 			c.reply(msg, v1.Reply{Error: err.Error()})
 			return
@@ -586,6 +595,7 @@ func (a *localAPI) sessionInfo(s session.Session) socket.SessionInfo {
 	}
 	return socket.SessionInfo{
 		ID: s.ID, Repo: name, Agent: s.Agent, Status: string(s.Status), Turns: s.Turns, Title: s.Title, Prompt: s.Prompt, Pending: len(s.Pending), Questions: len(s.Questions), Cancelling: s.Cancelling,
+		Trusted: s.Trusted, RulesLapsed: s.RulesLapsed,
 		Worktree: s.Worktree, Branch: s.Branch, Base: s.Base, InCheckout: s.InCheckout,
 		Commit: s.Commit, MergedInto: s.MergedInto, PullRequest: s.PullRequest, WorktreeRemoved: s.WorktreeRemoved,
 		StartedAt: s.StartedAt, EndedAt: s.EndedAt,
@@ -701,7 +711,7 @@ func (a *localAPI) signatureStatus(world string, reg *approval.Registry, session
 	case world == "" || reg == nil:
 		return "not checked"
 	}
-	dec := approval.Decision{V: approval.DecisionVersion, World: world, Host: a.host, Session: sessionID, Request: d.Permission.RequestID, Decision: "deny", Input: d.Permission.InputHash}
+	dec := approval.ToolCall{V: approval.DecisionVersion, Kind: approval.KindToolCall, World: world, Host: a.host, Session: sessionID, Request: d.Permission.RequestID, Decision: "deny", Input: d.Permission.InputHash}
 	if d.Answer == "allowed" {
 		dec.Decision, dec.Option = "allow", d.OptionID
 	}
@@ -787,7 +797,7 @@ func (a *localAPI) Rules(context.Context) []socket.RepoRulesInfo {
 }
 
 func (a *localAPI) SetRepoRules(ctx context.Context, repoID, commandID string, list []v1.Rule) (socket.RepoRulesInfo, error) {
-	r, err := a.agg.SetRules(ctx, v1.SetRepoRules{ID: commandID, RepoID: repoID, Rules: list})
+	r, err := a.agg.SetRules(ctx, v1.SetRepoRules{ID: commandID, RepoID: repoID, Rules: list}, "local")
 	return repoRules(r), err
 }
 
@@ -796,7 +806,7 @@ func repoRules(r host.Repo) socket.RepoRulesInfo {
 	if list == nil {
 		list = []v1.Rule{}
 	}
-	return socket.RepoRulesInfo{RepoID: r.ID, Repo: r.Name, Rules: list}
+	return socket.RepoRulesInfo{RepoID: r.ID, Repo: r.Name, Rules: list, By: r.RulesBy, Approver: r.RulesApprover, Lapsed: r.RulesLapsed}
 }
 
 func (a *localAPI) RegisterRepo(ctx context.Context, path, commandID string) (socket.RepoInfo, error) {

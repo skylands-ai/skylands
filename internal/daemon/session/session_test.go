@@ -165,7 +165,7 @@ func TestPermissionExpiresAndStopCancels(t *testing.T) {
 	if s, err := m2.Stop(f.ctx, v1.StopAgent{ID: "c3", SessionID: "s2"}); err != nil || s.Status != StatusEnded || len(s.Pending) != 0 {
 		t.Fatalf("Stop = %+v, %v", s, err)
 	}
-	if _, err := m2.Trust(f.ctx, v1.TrustSession{ID: "c4", SessionID: "s2", Trusted: true}); !errors.Is(err, ErrOver) {
+	if _, err := m2.Trust(f.ctx, v1.TrustSession{ID: "c4", SessionID: "s2", Trusted: true}, "citadel"); !errors.Is(err, ErrOver) {
 		t.Errorf("trust after the end: err = %v", err)
 	}
 }
@@ -313,7 +313,7 @@ func TestStartRunsAnAgentAndRecordsItsEvents(t *testing.T) {
 	}
 
 	// A trusted session asks no one.
-	if s, err := m.Trust(f.ctx, v1.TrustSession{ID: "cmd-t1", SessionID: "s1", Trusted: true}); err != nil || !s.Trusted {
+	if s, err := m.Trust(f.ctx, v1.TrustSession{ID: "cmd-t1", SessionID: "s1", Trusted: true}, "citadel"); err != nil || !s.Trusted {
 		t.Fatalf("Trust = %+v, %v", s, err)
 	}
 	if _, err := m.Prompt(f.ctx, v1.SendPrompt{ID: "cmd-p3", SessionID: "s1", Text: "once more"}); err != nil {
@@ -890,10 +890,10 @@ func TestRulesSettleToolCallsBeforeAnyoneIsAsked(t *testing.T) {
 	f := setup(t)
 	// The repository allows edits inside the worktree, so a session that
 	// starts on it copies that rule and its edit never waits.
-	if _, err := f.agg.SetRules(f.ctx, v1.SetRepoRules{ID: "r1", RepoID: f.repo.ID, Rules: []v1.Rule{{Decision: "allow", Kind: "edit", Pattern: "worktree"}}}); err != nil {
+	if _, err := f.agg.SetRules(f.ctx, v1.SetRepoRules{ID: "r1", RepoID: f.repo.ID, Rules: []v1.Rule{{Decision: "allow", Kind: "edit", Pattern: "worktree"}}}, "local"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.agg.SetRules(f.ctx, v1.SetRepoRules{ID: "r2", RepoID: f.repo.ID, Rules: []v1.Rule{{Decision: "maybe", Kind: "edit"}}}); err == nil {
+	if _, err := f.agg.SetRules(f.ctx, v1.SetRepoRules{ID: "r2", RepoID: f.repo.ID, Rules: []v1.Rule{{Decision: "maybe", Kind: "edit"}}}, "local"); err == nil {
 		t.Error("a bad decision was accepted")
 	}
 	m, err := Load(f.ctx, f.store, f.cfg)
@@ -914,10 +914,10 @@ func TestRulesSettleToolCallsBeforeAnyoneIsAsked(t *testing.T) {
 
 	// A rule set on the session itself beats the copied one: the edit is
 	// refused by the rule, recorded, and never waits on anyone.
-	if _, err := m.SetRules(f.ctx, v1.SetSessionRules{ID: "c2", SessionID: "s1", Rules: append(idle.Rules, v1.Rule{Decision: "deny", Kind: "edit", Pattern: "worktree"})}); err != nil {
+	if _, err := m.SetRules(f.ctx, v1.SetSessionRules{ID: "c2", SessionID: "s1", Rules: append(idle.Rules, v1.Rule{Decision: "deny", Kind: "edit", Pattern: "worktree"})}, "citadel"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.SetRules(f.ctx, v1.SetSessionRules{ID: "c3", SessionID: "s1", Rules: []v1.Rule{{Decision: "allow", Kind: "shout"}}}); err == nil {
+	if _, err := m.SetRules(f.ctx, v1.SetSessionRules{ID: "c3", SessionID: "s1", Rules: []v1.Rule{{Decision: "allow", Kind: "shout"}}}, "citadel"); err == nil {
 		t.Error("a bad kind was accepted")
 	}
 	if _, err := m.Prompt(f.ctx, v1.SendPrompt{ID: "c4", SessionID: "s1", Text: "and again"}); err != nil {
@@ -951,8 +951,9 @@ func TestRulesSettleToolCallsBeforeAnyoneIsAsked(t *testing.T) {
 		t.Errorf("transcript lacks the refusal: %q", b)
 	}
 
-	// Trust still allows everything, rules or not.
-	if _, err := m.Trust(f.ctx, v1.TrustSession{ID: "c5", SessionID: "s1", Trusted: true}); err != nil {
+	// Trust only skips asking: a deny is final, so the edit is still
+	// refused.
+	if _, err := m.Trust(f.ctx, v1.TrustSession{ID: "c5", SessionID: "s1", Trusted: true}, "citadel"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.Prompt(f.ctx, v1.SendPrompt{ID: "c6", SessionID: "s1", Text: "once more"}); err != nil {
@@ -963,26 +964,46 @@ func TestRulesSettleToolCallsBeforeAnyoneIsAsked(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		third = waitStatus(t, m, "s1", StatusIdle)
 	}
-	if third.ToolCalls[8].Status != "completed" {
-		t.Errorf("trusted turn = %+v", third.ToolCalls[6:])
+	if third.ToolCalls[8].Status != "failed" || len(third.Pending) != 0 {
+		t.Errorf("trusted turn under a deny = pending %d, %+v", len(third.Pending), third.ToolCalls[6:])
+	}
+
+	// A change against the rules as they were before c2 is stale. Once the
+	// rule only asks, trust lets the edit through without asking.
+	if _, err := m.SetRules(f.ctx, v1.SetSessionRules{ID: "c6a", SessionID: "s1", Rules: nil}, "citadel"); !errors.Is(err, ErrStale) {
+		t.Errorf("a change against an old revision: err = %v, want ErrStale", err)
+	}
+	if _, err := m.SetRules(f.ctx, v1.SetSessionRules{ID: "c6b", SessionID: "s1", Revision: 1, Rules: []v1.Rule{{Decision: "ask", Kind: "edit", Pattern: "worktree"}}}, "citadel"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Prompt(f.ctx, v1.SendPrompt{ID: "c6c", SessionID: "s1", Text: "and once more"}); err != nil {
+		t.Fatal(err)
+	}
+	fourth := waitStatus(t, m, "s1", StatusIdle)
+	for fourth.Turns < 4 {
+		time.Sleep(20 * time.Millisecond)
+		fourth = waitStatus(t, m, "s1", StatusIdle)
+	}
+	if fourth.ToolCalls[11].Status != "completed" || len(fourth.Pending) != 0 || fourth.RulesRevision != 2 {
+		t.Errorf("trusted turn under an ask = pending %d, revision %d, %+v", len(fourth.Pending), fourth.RulesRevision, fourth.ToolCalls[9:])
 	}
 
 	// Rules survive a reload, and a changed repository rule reaches only
 	// new sessions.
-	if _, err := f.agg.SetRules(f.ctx, v1.SetRepoRules{ID: "r3", RepoID: f.repo.ID, Rules: nil}); err != nil {
+	if _, err := f.agg.SetRules(f.ctx, v1.SetRepoRules{ID: "r3", RepoID: f.repo.ID, Rules: nil}, "local"); err != nil {
 		t.Fatal(err)
 	}
 	m2, err := Load(f.ctx, f.store, f.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s2, _ := m2.Get("s1"); len(s2.Rules) != 2 {
-		t.Errorf("reloaded rules = %+v", s2.Rules)
+	if s2, _ := m2.Get("s1"); len(s2.Rules) != 1 || s2.Rules[0].Decision != "ask" || s2.RulesRevision != 2 || s2.TrustRevision != 1 || s2.RulesBy != "citadel" {
+		t.Errorf("reloaded rules = %+v, revision %d, trust revision %d, by %q", s2.Rules, s2.RulesRevision, s2.TrustRevision, s2.RulesBy)
 	}
 	if _, err := m2.Stop(f.ctx, v1.StopAgent{ID: "c7", SessionID: "s1"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m2.SetRules(f.ctx, v1.SetSessionRules{ID: "c8", SessionID: "s1", Rules: nil}); !errors.Is(err, ErrOver) {
+	if _, err := m2.SetRules(f.ctx, v1.SetSessionRules{ID: "c8", SessionID: "s1", Rules: nil}, "citadel"); !errors.Is(err, ErrOver) {
 		t.Errorf("rules after the end: err = %v", err)
 	}
 	fresh, err := m2.Start(f.ctx, v1.StartSession{ID: "c9", SessionID: "s2", RepoID: f.repo.ID, Agent: "fake", Prompt: "later"})

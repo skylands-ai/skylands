@@ -113,17 +113,41 @@ type Rule struct {
 // started on it from then on copies.
 const EventRepoRulesSet = "RepoRulesSet"
 
-// RepoRulesSet carries the whole list, so the event is order-free.
+// RepoRulesSet carries the whole list, so the event is order-free. By is
+// "local" for the host's CLI and "citadel" for a browser through a
+// citadel, whose approver key and signature over the list are kept with
+// it. Revision is the revision of the repository's rules the change
+// replaced: how many times they had been set before.
 type RepoRulesSet struct {
-	RepoID string `json:"repoId"`
-	Rules  []Rule `json:"rules"`
+	RepoID    string `json:"repoId"`
+	Rules     []Rule `json:"rules"`
+	By        string `json:"by,omitempty"`
+	Approver  string `json:"approver,omitempty"`
+	Signature string `json:"signature,omitempty"`
+	Revision  int    `json:"revision"`
 }
 
-// SetRepoRules replaces a repository's rules.
+// SetRepoRules replaces a repository's rules. Revision names the
+// revision it replaces, and the change is refused once the rules have
+// been set since. Once the world exists, a change through the citadel
+// must carry an approver's signature over it.
 type SetRepoRules struct {
-	ID     string `json:"id"`
-	RepoID string `json:"repoId"`
-	Rules  []Rule `json:"rules"`
+	ID        string             `json:"id"`
+	RepoID    string             `json:"repoId"`
+	Rules     []Rule             `json:"rules"`
+	Revision  int                `json:"revision"`
+	Signature *DecisionSignature `json:"signature,omitempty"`
+}
+
+// EventRepoRulesLapsed records that the approver who signed a
+// repository's rules no longer approves. The list's deny and ask rules
+// still apply; its allow rules ask until an approver sets the list again.
+const EventRepoRulesLapsed = "RepoRulesLapsed"
+
+// RepoRulesLapsed names the approver whose signature the list stood on.
+type RepoRulesLapsed struct {
+	RepoID   string `json:"repoId"`
+	Approver string `json:"approver,omitempty"`
 }
 
 // EventAdapterAvailabilityChanged records which agents the host can
@@ -205,7 +229,7 @@ func IsSessionEvent(eventType string) bool {
 		EventPlanUpdated, EventUsageReported, EventAgentFailed, EventSessionEnded, EventTurnEnded, EventSessionTitled,
 		EventPermissionRequested, EventPermissionGranted, EventPermissionDenied, EventPermissionExpired, EventSessionTrusted,
 		EventSessionResumed, EventChangesCommitted, EventChangesMerged, EventPullRequestOpened, EventWorktreeRemoved,
-		EventSessionRulesSet, EventQuestionAsked, EventQuestionAnswered, EventQuestionExpired, EventTurnCancelled,
+		EventSessionRulesSet, EventSessionRulesLapsed, EventQuestionAsked, EventQuestionAnswered, EventQuestionExpired, EventTurnCancelled,
 		EventTokensUsed:
 		return true
 	}
@@ -232,8 +256,17 @@ type SessionStarted struct {
 	// is what the checkout was on when the session started.
 	Base       string `json:"base,omitempty"`
 	InCheckout bool   `json:"inCheckout,omitempty"`
-	// Rules are the repository's rules as the session copied them.
-	Rules []Rule `json:"rules,omitempty"`
+	// Rules are the repository's rules as the session copied them. The
+	// copy stands on the repository list's signature: RulesBy,
+	// RulesApprover, and RulesSignature are as in RepoRulesSet, and
+	// RulesRevision is the revision that signature named. RulesLapsed
+	// means the list had lapsed when the session copied it.
+	Rules          []Rule `json:"rules,omitempty"`
+	RulesBy        string `json:"rulesBy,omitempty"`
+	RulesApprover  string `json:"rulesApprover,omitempty"`
+	RulesSignature string `json:"rulesSignature,omitempty"`
+	RulesRevision  int    `json:"rulesRevision,omitempty"`
+	RulesLapsed    bool   `json:"rulesLapsed,omitempty"`
 }
 
 // PromptSent records what a person asked the session to do.
@@ -614,10 +647,18 @@ type PermissionExpired struct {
 }
 
 // SessionTrusted records whether the session's tool calls are allowed
-// without asking from now on.
+// without asking from now on. By is "citadel" for a browser through a
+// citadel, whose approver key and signature are kept with it, "local" for
+// the host, or "revocation" when the approver who turned trust on was
+// revoked, which Approver then names. Revision is the revision of the
+// session's trust the change replaced: how many times it had been set.
 type SessionTrusted struct {
 	SessionID string `json:"sessionId"`
 	Trusted   bool   `json:"trusted"`
+	By        string `json:"by,omitempty"`
+	Approver  string `json:"approver,omitempty"`
+	Signature string `json:"signature,omitempty"`
+	Revision  int    `json:"revision"`
 }
 
 // EventSessionResumed records that the daemon restarted while the session
@@ -687,11 +728,15 @@ type DenyToolCall struct {
 }
 
 // TrustSession allows every tool call in a session without asking, or
-// stops doing so.
+// stops doing so; a deny rule still denies. Revision names the revision
+// of the session's trust it replaces, and Signature is as in
+// SetRepoRules.
 type TrustSession struct {
-	ID        string `json:"id"`
-	SessionID string `json:"sessionId"`
-	Trusted   bool   `json:"trusted"`
+	ID        string             `json:"id"`
+	SessionID string             `json:"sessionId"`
+	Trusted   bool               `json:"trusted"`
+	Revision  int                `json:"revision"`
+	Signature *DecisionSignature `json:"signature,omitempty"`
 }
 
 // SendPrompt continues an idle session with another prompt.
@@ -787,17 +832,37 @@ type OpenPullRequest struct {
 // conversation or the host.
 const EventSessionRulesSet = "SessionRulesSet"
 
-// SessionRulesSet carries the whole list.
+// SessionRulesSet carries the whole list. By, Approver, Signature, and
+// Revision are as in RepoRulesSet, for the session's own rules, whose
+// revision is 0 for the copy it started with.
 type SessionRulesSet struct {
 	SessionID string `json:"sessionId"`
 	Rules     []Rule `json:"rules"`
+	By        string `json:"by,omitempty"`
+	Approver  string `json:"approver,omitempty"`
+	Signature string `json:"signature,omitempty"`
+	Revision  int    `json:"revision"`
 }
 
-// SetSessionRules replaces a session's rules.
+// SetSessionRules replaces a session's rules. Revision and Signature are
+// as in SetRepoRules.
 type SetSessionRules struct {
-	ID        string `json:"id"`
+	ID        string             `json:"id"`
+	SessionID string             `json:"sessionId"`
+	Rules     []Rule             `json:"rules"`
+	Revision  int                `json:"revision"`
+	Signature *DecisionSignature `json:"signature,omitempty"`
+}
+
+// EventSessionRulesLapsed records that the approver whose signature a
+// session's rules stood on no longer approves, as RepoRulesLapsed does
+// for a repository.
+const EventSessionRulesLapsed = "SessionRulesLapsed"
+
+// SessionRulesLapsed names the approver the list stood on.
+type SessionRulesLapsed struct {
 	SessionID string `json:"sessionId"`
-	Rules     []Rule `json:"rules"`
+	Approver  string `json:"approver,omitempty"`
 }
 
 // CommandSetSessionRules is sent to a session by request-reply.
@@ -842,14 +907,17 @@ type QuestionAsked struct {
 	Fields     []QuestionField `json:"fields"`
 }
 
-// QuestionAnswered records the answers, by field key, or that the person
-// declined to answer. By is "local" or "citadel".
+// QuestionAnswered records the answers, by field key in canonical JSON,
+// or that the person declined to answer. By is "local" or "citadel";
+// Approver and Signature are as in PermissionGranted.
 type QuestionAnswered struct {
 	SessionID  string          `json:"sessionId"`
 	QuestionID string          `json:"questionId"`
 	Answers    json.RawMessage `json:"answers,omitempty"`
 	Declined   bool            `json:"declined,omitempty"`
 	By         string          `json:"by"`
+	Approver   string          `json:"approver,omitempty"`
+	Signature  string          `json:"signature,omitempty"`
 }
 
 // QuestionExpired records a question nobody answered: Reason is
@@ -871,6 +939,8 @@ type AnswerQuestion struct {
 	QuestionID string          `json:"questionId"`
 	Answers    json.RawMessage `json:"answers,omitempty"`
 	Decline    bool            `json:"decline,omitempty"`
+	// Signature is as in ApproveToolCall.
+	Signature *DecisionSignature `json:"signature,omitempty"`
 }
 
 // EventTurnCancelled records that a person interrupted the turn in

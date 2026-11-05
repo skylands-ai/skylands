@@ -34,6 +34,9 @@ type approvers struct {
 	lastSeq uint64
 	// js reaches the world's JetStream domain.
 	js jetstream.JetStream
+	// changed, if set, gets the registry each time the daemon has read
+	// more of it, so what a revoked approver approved in advance lapses.
+	changed func(*approval.Registry)
 }
 
 // follow reads the registry in domain until ctx ends, reading again if
@@ -59,6 +62,9 @@ func (a *approvers) follow(ctx context.Context, nc *nats.Conn, domain string) {
 			if n, ok := a.count(); ok && n != logged {
 				logged = n
 				slog.Info("daemon: approvers", "count", n, "domain", domain)
+			}
+			if reg := a.registry(); reg != nil && a.changed != nil {
+				a.changed(reg)
 			}
 		})
 		select {
@@ -114,6 +120,25 @@ func (a *approvers) verify(ctx context.Context, d approval.Decision, s v1.Decisi
 		return fmt.Errorf("%s no longer approves for this world", ap.Name)
 	}
 	return approval.VerifyDecision(d, s)
+}
+
+// valid reports whether key approves for the world now, as the registry
+// stands. Until the daemon has read the registry it waits a few seconds
+// for it, and says no if it still hasn't, so nothing stands on an
+// approver it can't check.
+func (a *approvers) valid(ctx context.Context, key string) bool {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	for {
+		if reg := a.registry(); reg != nil {
+			return reg.Valid(key)
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }
 
 // catchUp waits until the daemon has read the registry stream as far as

@@ -1,19 +1,22 @@
 import type { KeyPair } from '@nats-io/nkeys'
 import { sha256 } from '@noble/hashes/sha2.js'
+import { bytesToHex } from '@noble/hashes/utils.js'
 import { toBase64url } from './approver'
 import { canonicalize } from './canonical'
+import type { QuestionField, Rule } from './protocol'
 
-/** The version of the decision format, which a daemon checks. */
+/** The version of the decision formats, which a daemon checks. */
 export const DECISION_VERSION = 1
 
 /**
  * What an approver signs to allow or deny one tool call, as
- * internal/approval's Decision. The signature covers the SHA-256 of its
+ * internal/approval's ToolCall. The signature covers the SHA-256 of its
  * canonical JSON; the daemon builds the same decision from its own record
  * of the request, so the signature verifies only if they agree.
  */
-export interface Decision {
+export interface ToolCallDecision {
   v: number
+  kind: 'toolcall'
   /** The world's owner key. */
   world: string
   host: string
@@ -26,7 +29,57 @@ export interface Decision {
   input: string
 }
 
-/** An approver's signature over a decision, which the approval or denial carries. */
+/** An answer to a question, or a decline, as internal/approval's Answer. */
+export interface AnswerDecision {
+  v: number
+  kind: 'answer'
+  world: string
+  host: string
+  session: string
+  question: string
+  /** formHash of the question as shown. */
+  form: string
+  declined: boolean
+  /** answersHash of the answers, and "" for a decline. */
+  answers: string
+}
+
+/** Turning a session's trust on or off, over the revision it replaces. */
+export interface TrustDecision {
+  v: number
+  kind: 'trust'
+  world: string
+  host: string
+  session: string
+  trusted: boolean
+  revision: number
+}
+
+/** Setting a session's rules: rulesHash of the whole list, over the revision it replaces. */
+export interface SessionRulesDecision {
+  v: number
+  kind: 'session-rules'
+  world: string
+  host: string
+  session: string
+  rules: string
+  revision: number
+}
+
+/** Setting a repository's rules, as SessionRulesDecision. */
+export interface RepoRulesDecision {
+  v: number
+  kind: 'repo-rules'
+  world: string
+  host: string
+  repo: string
+  rules: string
+  revision: number
+}
+
+export type Decision = ToolCallDecision | AnswerDecision | TrustDecision | SessionRulesDecision | RepoRulesDecision
+
+/** An approver's signature over a decision, which the command through the citadel carries. */
 export interface DecisionSignature {
   approver: string
   sig: string
@@ -39,4 +92,56 @@ export function decisionDigest(d: Decision): Uint8Array {
 
 export function signDecision(kp: KeyPair, d: Decision): DecisionSignature {
   return { approver: kp.getPublicKey(), sig: toBase64url(kp.sign(decisionDigest(d))) }
+}
+
+/** The SHA-256 of a value's canonical JSON, in lowercase hex. */
+export function hashJSON(v: unknown): string {
+  return bytesToHex(sha256(new TextEncoder().encode(canonicalize(v))))
+}
+
+/**
+ * The SHA-256 of a question's canonical JSON: its message and its fields,
+ * each with every property and an absent one empty, as the daemon hashes
+ * the question it recorded.
+ */
+export function formHash(message: string, fields: QuestionField[]): string {
+  return hashJSON({
+    message,
+    fields: fields.map((f) => ({
+      key: f.key,
+      title: f.title ?? '',
+      description: f.description ?? '',
+      type: f.type,
+      options: (f.options ?? []).map((o) => ({ value: o.value, title: o.title ?? '', description: o.description ?? '' })),
+      required: !!f.required,
+    })),
+  })
+}
+
+/** The SHA-256 of answers' canonical JSON. */
+export function answersHash(answers: Record<string, unknown>): string {
+  return hashJSON(answers)
+}
+
+/**
+ * A rule list as the daemon keeps it: decisions and kinds lowercased and
+ * trimmed, an empty kind or "any" meaning any kind, patterns trimmed, and
+ * no source on a repository's own rules. The browser sends and signs the
+ * list in this form, so the signature is over what the daemon applies.
+ */
+export function normalizeRules(rules: Rule[], forRepo: boolean): Rule[] {
+  return rules.map((r) => {
+    let kind = r.kind.trim().toLowerCase()
+    if (kind === '' || kind === 'any') kind = '*'
+    const out: Rule = { decision: r.decision.trim().toLowerCase() as Rule['decision'], kind }
+    const pattern = r.pattern?.trim()
+    if (pattern) out.pattern = pattern
+    if (!forRepo && r.source) out.source = r.source
+    return out
+  })
+}
+
+/** The SHA-256 of a rule list's canonical JSON, each rule with every property and an absent one empty. */
+export function rulesHash(rules: Rule[]): string {
+  return hashJSON(rules.map((r) => ({ decision: r.decision, kind: r.kind, pattern: r.pattern ?? '', source: r.source ?? '' })))
 }

@@ -92,15 +92,30 @@ type Session struct {
 	Turns      int    `json:"turns"`
 	// Title is what the agent named the conversation, if it has yet.
 	Title string `json:"title,omitempty"`
-	// Trusted means the session's tool calls are allowed without asking. It
-	// is always sent, so a browser sees it turn back off.
-	Trusted bool `json:"trusted"`
+	// Trusted means the session's tool calls are allowed without asking,
+	// unless a deny rule denies them. It is always sent, so a browser sees
+	// it turn back off. TrustedBy is who last set it ("citadel", "local",
+	// or "revocation" when the approver who turned it on was revoked),
+	// TrustApprover the approver key behind that, and TrustRevision how
+	// many times it has been set, which a change names.
+	Trusted       bool   `json:"trusted"`
+	TrustedBy     string `json:"trustedBy,omitempty"`
+	TrustApprover string `json:"trustApprover,omitempty"`
+	TrustRevision int    `json:"trustRevision"`
 	// Cancelling means a person interrupted the turn and the agent has not
 	// stopped yet.
 	Cancelling bool `json:"cancelling,omitempty"`
 	// Rules settle tool calls before they reach a person: the repository's
-	// as copied at the start, and any set on the session since.
-	Rules []v1.Rule `json:"rules"`
+	// as copied at the start, and any set on the session since. RulesBy and
+	// RulesApprover are who stands behind the list, RulesRevision how many
+	// times the session's rules were set, which a change names, and
+	// RulesLapsed that the approver behind them no longer approves, so
+	// their allow rules ask.
+	Rules         []v1.Rule `json:"rules"`
+	RulesBy       string    `json:"rulesBy,omitempty"`
+	RulesApprover string    `json:"rulesApprover,omitempty"`
+	RulesRevision int       `json:"rulesRevision"`
+	RulesLapsed   bool      `json:"rulesLapsed,omitempty"`
 	// Pending holds the tool calls waiting on a person, oldest first, and
 	// Questions the questions waiting on an answer.
 	Pending   []Permission `json:"pending"`
@@ -163,7 +178,7 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 	case v1.EventSessionStarted:
 		var d v1.SessionStarted
 		if ev.Decode(&d) == nil {
-			s := &Session{Host: host, ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Rules: append([]v1.Rule{}, d.Rules...), Status: "running", StartedAt: ev.Time, ActiveAt: ev.Time, Recent: []ToolCall{}, Files: map[string]string{}, Pending: []Permission{}, Questions: []Question{}}
+			s := &Session{Host: host, ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Rules: append([]v1.Rule{}, d.Rules...), RulesBy: d.RulesBy, RulesApprover: d.RulesApprover, RulesLapsed: d.RulesLapsed, Status: "running", StartedAt: ev.Time, ActiveAt: ev.Time, Recent: []ToolCall{}, Files: map[string]string{}, Pending: []Permission{}, Questions: []Question{}}
 			p.byID[d.SessionID] = s
 			changed = s
 		}
@@ -208,7 +223,8 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 		var d v1.SessionTrusted
 		if ev.Decode(&d) == nil {
 			if s, ok := p.byID[d.SessionID]; ok {
-				s.Trusted = d.Trusted
+				s.Trusted, s.TrustedBy, s.TrustApprover = d.Trusted, d.By, d.Approver
+				s.TrustRevision++
 				changed = s
 			}
 		}
@@ -217,6 +233,16 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 		if ev.Decode(&d) == nil {
 			if s, ok := p.byID[d.SessionID]; ok {
 				s.Rules = append([]v1.Rule{}, d.Rules...)
+				s.RulesBy, s.RulesApprover, s.RulesLapsed = d.By, d.Approver, false
+				s.RulesRevision++
+				changed = s
+			}
+		}
+	case v1.EventSessionRulesLapsed:
+		var d v1.SessionRulesLapsed
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.RulesLapsed = true
 				changed = s
 			}
 		}

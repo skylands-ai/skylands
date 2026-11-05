@@ -140,19 +140,19 @@ func TestSetRulesRecordsAndReloads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.SetRules(ctx, v1.SetRepoRules{ID: "c2", RepoID: "nope", Rules: nil}); !errors.Is(err, ErrUnknownRepo) {
+	if _, err := h.SetRules(ctx, v1.SetRepoRules{ID: "c2", RepoID: "nope", Rules: nil}, "local"); !errors.Is(err, ErrUnknownRepo) {
 		t.Errorf("rules for an unknown repo: err = %v", err)
 	}
-	if _, err := h.SetRules(ctx, v1.SetRepoRules{ID: "c3", RepoID: repo.ID, Rules: []v1.Rule{{Decision: "allow", Kind: "nope"}}}); err == nil {
+	if _, err := h.SetRules(ctx, v1.SetRepoRules{ID: "c3", RepoID: repo.ID, Rules: []v1.Rule{{Decision: "allow", Kind: "nope"}}}, "local"); err == nil {
 		t.Error("a bad kind was accepted")
 	}
 	// Rules are normalized and lose any source: the repository is the source.
-	set, err := h.SetRules(ctx, v1.SetRepoRules{ID: "c4", RepoID: repo.ID, Rules: []v1.Rule{{Decision: "Allow", Kind: "", Pattern: " go test * ", Source: "repo"}}})
+	set, err := h.SetRules(ctx, v1.SetRepoRules{ID: "c4", RepoID: repo.ID, Rules: []v1.Rule{{Decision: "Allow", Kind: "", Pattern: " go test * ", Source: "repo"}}}, "local")
 	if err != nil || len(set.Rules) != 1 || set.Rules[0].Decision != "allow" || set.Rules[0].Kind != "*" || set.Rules[0].Pattern != "go test *" || set.Rules[0].Source != "" {
 		t.Fatalf("SetRules = %+v, %v", set.Rules, err)
 	}
 	// The same command id changes nothing more.
-	if again, err := h.SetRules(ctx, v1.SetRepoRules{ID: "c4", RepoID: repo.ID, Rules: nil}); err != nil || len(again.Rules) != 1 {
+	if again, err := h.SetRules(ctx, v1.SetRepoRules{ID: "c4", RepoID: repo.ID, Rules: nil}, "local"); err != nil || len(again.Rules) != 1 {
 		t.Errorf("repeated SetRules = %+v, %v", again.Rules, err)
 	}
 	h2, err := Load(ctx, store, "ws")

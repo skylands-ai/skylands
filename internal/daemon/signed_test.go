@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"github.com/skylands-ai/skylands/internal/daemon/socket"
 	"github.com/skylands-ai/skylands/internal/fakeagent"
 	"github.com/skylands-ai/skylands/internal/natsembed"
+	"github.com/skylands-ai/skylands/internal/rules"
 )
 
 // signedWorld is a world with a registry of approvers, a daemon in it
@@ -80,23 +82,21 @@ func (w *signedWorld) waiting(session, repoID string) socket.RequestInfo {
 	}
 }
 
-// TestDecisionsMustBeSigned refuses decisions through the citadel that
-// aren't signed by one of the world's approvers over the decision as the
-// daemon records it, and keeps the approver and signature of the one it
-// accepts.
-func TestDecisionsMustBeSigned(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
+// startSignedWorld starts a hub holding the world's approver stream, an
+// owner key, and a daemon in the world running the fake agent, with one
+// repository registered. Everything stops when the test ends.
+func startSignedWorld(t *testing.T, ctx context.Context) (*signedWorld, socket.RepoInfo) {
+	t.Helper()
 	hub, err := natsembed.Start(ctx, natsembed.Config{Name: "hub", ClientAddr: "127.0.0.1:0", LeafAddr: freePort(t), StoreDir: t.TempDir(), Domain: "world"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer hub.Shutdown()
+	t.Cleanup(hub.Shutdown)
 	nc, err := nats.Connect(hub.ClientURL())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer nc.Close()
+	t.Cleanup(nc.Close)
 	js, err := jetstream.New(nc)
 	if err != nil {
 		t.Fatal(err)
@@ -109,10 +109,8 @@ func TestDecisionsMustBeSigned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = os.RemoveAll(sockDir) }()
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 	w := &signedWorld{t: t, ctx: ctx, nc: nc, js: js, cli: socket.Dial(filepath.Join(sockDir, "d.sock")), owner: owner, ownerPub: ownerPub}
-	laptop, laptopPub := w.approver("laptop")
-	phone, phonePub := w.approver("phone")
 
 	fakeCmd, fakeEnv := fakeagent.TestCommand()
 	runCtx, stop := context.WithCancel(ctx)
@@ -123,12 +121,12 @@ func TestDecisionsMustBeSigned(t *testing.T) {
 			Adapters: agents.Registry{"fake": {Name: "fake", Provider: "local", Command: fakeCmd, Env: fakeEnv}},
 		})
 	}()
-	defer func() {
+	t.Cleanup(func() {
 		stop()
 		if err := <-done; err != nil {
 			t.Errorf("daemon.Run returned %v", err)
 		}
-	}()
+	})
 	var repo socket.RepoInfo
 	for deadline := time.Now().Add(10 * time.Second); ; {
 		if repo, err = w.cli.RegisterRepo(ctx, gitRepo(t, "main.go")); err == nil {
@@ -139,22 +137,49 @@ func TestDecisionsMustBeSigned(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+	return w, repo
+}
+
+// sign signs a decision with an approver key.
+func (w *signedWorld) sign(kp nkeys.KeyPair, d approval.Decision) *v1.DecisionSignature {
+	w.t.Helper()
+	s, err := approval.SignDecision(kp, d)
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	return &s
+}
+
+// revoke revokes an approver with the owner key.
+func (w *signedWorld) revoke(pub string) {
+	w.t.Helper()
+	revocation, _ := approval.Sign(w.owner, v1.Revocation{Type: "revocation", World: w.ownerPub, Key: pub, Created: approval.Now()})
+	if _, err := approval.Append(w.ctx, w.js, v1.ApproverSubject("revoked", pub), revocation); err != nil {
+		w.t.Fatal(err)
+	}
+}
+
+// TestDecisionsMustBeSigned refuses decisions through the citadel that
+// aren't signed by one of the world's approvers over the decision as the
+// daemon records it, and keeps the approver and signature of the one it
+// accepts.
+func TestDecisionsMustBeSigned(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	w, repo := startSignedWorld(t, ctx)
+	owner, ownerPub, js := w.owner, w.ownerPub, w.js
+	laptop, laptopPub := w.approver("laptop")
+	phone, phonePub := w.approver("phone")
 
 	req := w.waiting("sess-1", repo.ID)
 	sum := sha256.Sum256(req.Input)
 	input := hex.EncodeToString(sum[:])
-	allow := approval.Decision{V: approval.DecisionVersion, World: ownerPub, Host: "ws", Session: "sess-1", Request: req.ID, Decision: "allow", Option: "allow", Input: input}
+	allow := approval.ToolCall{V: approval.DecisionVersion, Kind: approval.KindToolCall, World: ownerPub, Host: "ws", Session: "sess-1", Request: req.ID, Decision: "allow", Option: "allow", Input: input}
 	approve := func(id string, sig *v1.DecisionSignature, option string) string {
 		t.Helper()
 		return w.command("sess-1", v1.CommandApproveToolCall, v1.ApproveToolCall{ID: id, RequestID: req.ID, OptionID: option, InputHash: input, Signature: sig}).Error
 	}
-	sign := func(kp nkeys.KeyPair, d approval.Decision) *v1.DecisionSignature {
-		s, err := approval.SignDecision(kp, d)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return &s
-	}
+	sign := w.sign
 
 	if err := approve("a1", nil, "allow"); !strings.Contains(err, "signed") {
 		t.Errorf("an unsigned approval = %q, want a refusal", err)
@@ -172,6 +197,11 @@ func TestDecisionsMustBeSigned(t *testing.T) {
 	always.Option = "always"
 	if err := approve("a4", sign(laptop, always), "allow"); !strings.Contains(err, "doesn't verify") {
 		t.Errorf("a signature over another option = %q, want a refusal", err)
+	}
+	// An "always" option would settle later calls inside the agent, out of
+	// reach of rules and revocation, so it is refused even when signed.
+	if err := approve("a4b", sign(laptop, always), "always"); !strings.Contains(err, "allow once") {
+		t.Errorf("a signed approval of the always option = %q, want a refusal", err)
 	}
 	// The phone is revoked just before it approves: the daemon reads the
 	// registry up to the revocation before it checks the signature.
@@ -192,7 +222,7 @@ func TestDecisionsMustBeSigned(t *testing.T) {
 	// A denial is signed too, with no option.
 	req2 := w.waiting("sess-2", repo.ID)
 	sum2 := sha256.Sum256(req2.Input)
-	deny := approval.Decision{V: approval.DecisionVersion, World: ownerPub, Host: "ws", Session: "sess-2", Request: req2.ID, Decision: "deny", Input: hex.EncodeToString(sum2[:])}
+	deny := approval.ToolCall{V: approval.DecisionVersion, Kind: approval.KindToolCall, World: ownerPub, Host: "ws", Session: "sess-2", Request: req2.ID, Decision: "deny", Input: hex.EncodeToString(sum2[:])}
 	if r := w.command("sess-2", v1.CommandDenyToolCall, v1.DenyToolCall{ID: "d1", RequestID: req2.ID}); !strings.Contains(r.Error, "signed") {
 		t.Errorf("an unsigned denial = %+v, want a refusal", r)
 	}
@@ -238,5 +268,224 @@ func TestDecisionsMustBeSigned(t *testing.T) {
 			t.Fatalf("after revoking the laptop, the history says %+v", history()["sess-1"])
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// session is one session as the host's CLI sees it.
+func (w *signedWorld) session(id string) socket.SessionInfo {
+	w.t.Helper()
+	list, err := w.cli.Sessions(w.ctx)
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	for _, s := range list {
+		if s.ID == id {
+			return s
+		}
+	}
+	return socket.SessionInfo{}
+}
+
+// waitFor polls until ok holds, and fails the test after a while.
+func (w *signedWorld) waitFor(what string, ok func() bool) {
+	w.t.Helper()
+	for deadline := time.Now().Add(20 * time.Second); !ok(); {
+		if time.Now().After(deadline) {
+			w.t.Fatalf("waited too long for %s", what)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// start starts a session on the fake agent.
+func (w *signedWorld) start(id, repoID, prompt string) {
+	w.t.Helper()
+	if r := w.command(id, v1.CommandStartSession, v1.StartSession{ID: "start-" + id, SessionID: id, RepoID: repoID, Agent: "fake", Prompt: prompt}); r.Error != "" {
+		w.t.Fatalf("StartSession: %s", r.Error)
+	}
+}
+
+// repoRules is a repository's rules as the host's CLI sees them.
+func (w *signedWorld) repoRules(repoID string) socket.RepoRulesInfo {
+	w.t.Helper()
+	list, err := w.cli.Rules(w.ctx)
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	for _, r := range list {
+		if r.RepoID == repoID {
+			return r
+		}
+	}
+	return socket.RepoRulesInfo{}
+}
+
+// TestAnswersTrustAndRulesMustBeSigned refuses answers, trust, and rule
+// changes through the citadel that no approver signed over what the daemon
+// records, refuses a change made against an older revision, and ends what
+// an approver approved in advance once it is revoked.
+func TestAnswersTrustAndRulesMustBeSigned(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
+	defer cancel()
+	w, repo := startSignedWorld(t, ctx)
+	laptop, laptopPub := w.approver("laptop")
+	phone, phonePub := w.approver("phone")
+	world := w.ownerPub
+
+	// An answer is signed over the question as the daemon recorded it and
+	// over the answers' canonical JSON, which must fit the form.
+	w.start("ask", repo.ID, "ask me which file")
+	var q socket.QuestionInfo
+	w.waitFor("the question", func() bool {
+		list, _ := w.cli.Questions(ctx)
+		for _, x := range list {
+			if x.Session == "ask" {
+				q = x
+				return true
+			}
+		}
+		return false
+	})
+	form, _ := approval.FormHash(q.Message, q.Fields)
+	reworded, _ := approval.FormHash(q.Message+"?", q.Fields)
+	answerOver := func(form, answers string, declined bool) approval.Answer {
+		d := approval.Answer{V: approval.DecisionVersion, Kind: approval.KindAnswer, World: world, Host: "ws", Session: "ask", Question: q.ID, Form: form, Declined: declined}
+		if !declined {
+			d.Answers, _ = approval.AnswersHash(json.RawMessage(answers))
+		}
+		return d
+	}
+	answer := func(id, answers string, decline bool, sig *v1.DecisionSignature) string {
+		t.Helper()
+		return w.command("ask", v1.CommandAnswerQuestion, v1.AnswerQuestion{ID: id, QuestionID: q.ID, Answers: json.RawMessage(answers), Decline: decline, Signature: sig}).Error
+	}
+	good := `{"question_0":"main.go"}`
+	refusals := []struct {
+		name, answers string
+		decline       bool
+		sig           *v1.DecisionSignature
+		want          string
+	}{
+		{"unsigned", good, false, nil, "signed"},
+		{"not on the form", `{"question_0":"other.go"}`, false, w.sign(laptop, answerOver(form, `{"question_0":"other.go"}`, false)), "isn't one of the options"},
+		{"over a reworded question", good, false, w.sign(laptop, answerOver(reworded, good, false)), "doesn't verify"},
+		{"over other answers", good, false, w.sign(laptop, answerOver(form, `{"question_0_custom":"x"}`, false)), "doesn't verify"},
+		{"a decline signed as an answer", "", true, w.sign(laptop, answerOver(form, good, false)), "doesn't verify"},
+		{"an unsigned decline", "", true, nil, "signed"},
+	}
+	for i, r := range refusals {
+		if err := answer(fmt.Sprintf("q%d", i), r.answers, r.decline, r.sig); !strings.Contains(err, r.want) {
+			t.Errorf("an answer %s = %q, want %q", r.name, err, r.want)
+		}
+	}
+	// The same answer written differently is the same canonical JSON.
+	if err := answer("q-ok", `{ "question_0" : "main.go" }`, false, w.sign(laptop, answerOver(form, good, false))); err != "" {
+		t.Fatalf("the laptop's signed answer = %q", err)
+	}
+
+	// Trust is signed over the revision it replaces, so an old trust
+	// can't be sent again. The answer led to an edit, which waits.
+	w.waitFor("the edit after the answer", func() bool { return w.session("ask").Pending == 1 })
+	trustOver := func(trusted bool, revision int) approval.Trust {
+		return approval.Trust{V: approval.DecisionVersion, Kind: approval.KindTrust, World: world, Host: "ws", Session: "ask", Trusted: trusted, Revision: revision}
+	}
+	trust := func(id string, revision int, sig *v1.DecisionSignature) string {
+		t.Helper()
+		return w.command("ask", v1.CommandTrustSession, v1.TrustSession{ID: id, Trusted: true, Revision: revision, Signature: sig}).Error
+	}
+	if err := trust("t1", 0, nil); !strings.Contains(err, "signed") {
+		t.Errorf("unsigned trust = %q", err)
+	}
+	if err := trust("t2", 1, w.sign(phone, trustOver(true, 1))); !strings.Contains(err, "changed since") {
+		t.Errorf("trust against a revision ahead = %q", err)
+	}
+	if err := trust("t3", 0, w.sign(phone, trustOver(true, 1))); !strings.Contains(err, "doesn't verify") {
+		t.Errorf("trust signed over another revision = %q", err)
+	}
+	phoneTrust := w.sign(phone, trustOver(true, 0))
+	if err := trust("t4", 0, phoneTrust); err != "" {
+		t.Fatalf("the phone's signed trust = %q", err)
+	}
+	w.waitFor("trust to answer the edit", func() bool { s := w.session("ask"); return s.Trusted && s.Pending == 0 })
+	if err := trust("t5", 0, phoneTrust); !strings.Contains(err, "changed since") {
+		t.Errorf("the same trust sent again = %q", err)
+	}
+
+	// A repository's rules are signed over the whole list and the revision
+	// they replace. Sessions copy them, standing on the same signature.
+	allowEdits := []v1.Rule{{Decision: "allow", Kind: "edit", Pattern: "worktree"}}
+	rulesOver := func(list []v1.Rule, revision int) approval.RepoRules {
+		h, _ := approval.RulesHash(list)
+		return approval.RepoRules{V: approval.DecisionVersion, Kind: approval.KindRepoRules, World: world, Host: "ws", Repo: repo.ID, Rules: h, Revision: revision}
+	}
+	setRepoRules := func(id string, list []v1.Rule, revision int, sig *v1.DecisionSignature) string {
+		t.Helper()
+		data, _ := json.Marshal(v1.SetRepoRules{ID: id, RepoID: repo.ID, Rules: list, Revision: revision, Signature: sig})
+		msg, err := w.nc.Request(v1.RepoCommandSubject("ws", repo.ID, v1.CommandSetRepoRules), data, 10*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var r v1.Reply
+		_ = json.Unmarshal(msg.Data, &r)
+		return r.Error
+	}
+	if err := setRepoRules("r1", allowEdits, 0, nil); !strings.Contains(err, "signed") {
+		t.Errorf("unsigned repo rules = %q", err)
+	}
+	if err := setRepoRules("r2", allowEdits, 0, w.sign(laptop, rulesOver([]v1.Rule{{Decision: "allow", Kind: "*"}}, 0))); !strings.Contains(err, "doesn't verify") {
+		t.Errorf("repo rules signed over another list = %q", err)
+	}
+	if err := setRepoRules("r3", allowEdits, 0, w.sign(phone, rulesOver(allowEdits, 0))); err != "" {
+		t.Fatalf("the phone's signed repo rules = %q", err)
+	}
+	if r := w.repoRules(repo.ID); r.By != "citadel" || r.Approver != phonePub || r.Lapsed {
+		t.Errorf("repo rules = %+v", r)
+	}
+	w.start("copy", repo.ID, "fix it")
+	w.start("own", repo.ID, "fix it")
+	for _, id := range []string{"copy", "own"} {
+		w.waitFor(id+"'s edit to pass by the copied rule", func() bool { s := w.session(id); return s.Status == "idle" && s.Pending == 0 })
+	}
+	// A session's own rules are signed too; "own" now stands on the laptop.
+	h, _ := approval.RulesHash(rules.Inherit(allowEdits))
+	ownRules := approval.SessionRules{V: approval.DecisionVersion, Kind: approval.KindSessionRules, World: world, Host: "ws", Session: "own", Rules: h}
+	if r := w.command("own", v1.CommandSetSessionRules, v1.SetSessionRules{ID: "s1", Rules: rules.Inherit(allowEdits)}); !strings.Contains(r.Error, "signed") {
+		t.Errorf("unsigned session rules = %+v", r)
+	}
+	if r := w.command("own", v1.CommandSetSessionRules, v1.SetSessionRules{ID: "s2", Rules: rules.Inherit(allowEdits), Signature: w.sign(laptop, ownRules)}); r.Error != "" {
+		t.Fatalf("the laptop's signed session rules = %q", r.Error)
+	}
+
+	// Revoking the phone ends what it approved in advance: the trust it
+	// turned on, its repository rules, and the copy a session stands on.
+	// The laptop's list stands.
+	w.revoke(phonePub)
+	w.waitFor("the phone's trust and rules to lapse", func() bool {
+		return !w.session("ask").Trusted && w.session("copy").RulesLapsed && w.repoRules(repo.ID).Lapsed
+	})
+	if w.session("own").RulesLapsed {
+		t.Error("the laptop's session rules lapsed with the phone")
+	}
+	prompt := func(id string) {
+		t.Helper()
+		if r := w.command(id, v1.CommandSendPrompt, v1.SendPrompt{ID: "again-" + id, Text: "fix it again"}); r.Error != "" {
+			t.Fatalf("prompt %s: %s", id, r.Error)
+		}
+	}
+	prompt("copy")
+	prompt("own")
+	prompt("ask")
+	w.waitFor("the lapsed copy's edit to wait", func() bool { return w.session("copy").Pending == 1 })
+	w.waitFor("the untrusted session's edit to wait", func() bool { return w.session("ask").Pending == 1 })
+	w.waitFor("the laptop's rules to pass the edit", func() bool { s := w.session("own"); return s.Turns == 2 && s.Status == "idle" && s.Pending == 0 })
+	w.start("after", repo.ID, "fix it")
+	w.waitFor("a new session's edit to wait on the lapsed list", func() bool { return w.session("after").Pending == 1 })
+
+	// The laptop approves the list again as it stands.
+	if err := setRepoRules("r4", allowEdits, 1, w.sign(laptop, rulesOver(allowEdits, 1))); err != "" {
+		t.Fatalf("approving the rules again = %q", err)
+	}
+	if r := w.repoRules(repo.ID); r.Lapsed || r.Approver != laptopPub {
+		t.Errorf("repo rules approved again = %+v", r)
 	}
 }

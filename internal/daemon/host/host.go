@@ -17,6 +17,7 @@ import (
 	"time"
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
+	"github.com/skylands-ai/skylands/internal/approval"
 	"github.com/skylands-ai/skylands/internal/daemon/terrain"
 	"github.com/skylands-ai/skylands/internal/es"
 	"github.com/skylands-ai/skylands/internal/rules"
@@ -31,10 +32,19 @@ type Repo struct {
 	TotalFiles int
 	Files      []v1.TerrainFile
 	// Rules settle tool calls in sessions on this repository; a new
-	// session copies them when it starts.
-	Rules         []v1.Rule
-	RegisteredAt  time.Time
-	SnapshottedAt time.Time
+	// session copies them when it starts. RulesBy, RulesApprover, and
+	// RulesSignature are who set them, as RepoRulesSet records it,
+	// RulesRevision counts the times they were set, and RulesLapsed means
+	// the approver who signed them no longer approves, so their allow
+	// rules ask.
+	Rules          []v1.Rule
+	RulesBy        string
+	RulesApprover  string
+	RulesSignature string
+	RulesRevision  int
+	RulesLapsed    bool
+	RegisteredAt   time.Time
+	SnapshottedAt  time.Time
 }
 
 var (
@@ -58,6 +68,31 @@ type Host struct {
 	handled map[string]string
 	// agents is what the host last recorded about the agents it can launch.
 	agents []v1.AgentAvailability
+	// world and verify check decisions through the citadel, as
+	// RequireSignatures sets them.
+	world  func() string
+	verify func(ctx context.Context, d approval.Decision, s v1.DecisionSignature) error
+}
+
+// RequireSignatures makes a change to a repository's rules through the
+// citadel need an approver's signature once the world exists: world is
+// the world's owner key, or "" before it is known, and verify checks a
+// signature against the world's approvers.
+func (h *Host) RequireSignatures(world func() string, verify func(ctx context.Context, d approval.Decision, s v1.DecisionSignature) error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.world, h.verify = world, verify
+}
+
+// signer is the world's owner key, or "" before signatures are needed,
+// and the check for them.
+func (h *Host) signer() (string, func(ctx context.Context, d approval.Decision, s v1.DecisionSignature) error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.world == nil {
+		return "", nil
+	}
+	return h.world(), h.verify
 }
 
 // Load rebuilds the aggregate from the host's stream.
@@ -147,8 +182,11 @@ func (h *Host) RegisterRepo(ctx context.Context, cmd v1.RegisterRepo) (Repo, err
 
 // SetRules handles SetRepoRules: the repository's rules become the given
 // list, which sessions started on it from now on copy. A command id
-// already in the history gets the repo back and changes nothing.
-func (h *Host) SetRules(ctx context.Context, cmd v1.SetRepoRules) (Repo, error) {
+// already in the history gets the repo back and changes nothing. By is
+// "local" for the host's CLI or "citadel"; a change through the citadel
+// names the revision of the rules it replaces, and once the world exists
+// it must be signed by one of the world's approvers.
+func (h *Host) SetRules(ctx context.Context, cmd v1.SetRepoRules, by string) (Repo, error) {
 	h.cmdMu.Lock()
 	defer h.cmdMu.Unlock()
 	h.mu.Lock()
@@ -162,6 +200,7 @@ func (h *Host) SetRules(ctx context.Context, cmd v1.SetRepoRules) (Repo, error) 
 		h.mu.Unlock()
 		return Repo{}, fmt.Errorf("%w: %s", ErrUnknownRepo, cmd.RepoID)
 	}
+	revision := r.RulesRevision
 	h.mu.Unlock()
 	list, err := rules.Validate(cmd.Rules)
 	if err != nil {
@@ -171,7 +210,26 @@ func (h *Host) SetRules(ctx context.Context, cmd v1.SetRepoRules) (Repo, error) 
 	for i := range list {
 		list[i].Source = ""
 	}
-	ev, err := v1.NewEvent(v1.EventRepoRulesSet, cmd.ID, v1.RepoRulesSet{RepoID: r.ID, Rules: list})
+	if by == "citadel" && cmd.Revision != revision {
+		return *r, fmt.Errorf("%w: the repository's rules are at revision %d, not %d", approval.ErrStale, revision, cmd.Revision)
+	}
+	var approver, signature string
+	if world, verify := h.signer(); by == "citadel" && world != "" {
+		if cmd.Signature == nil {
+			return *r, approval.ErrUnsigned
+		}
+		hash, err := approval.RulesHash(list)
+		if err != nil {
+			return *r, err
+		}
+		d := approval.RepoRules{V: approval.DecisionVersion, Kind: approval.KindRepoRules, World: world, Host: h.name, Repo: r.ID, Rules: hash, Revision: revision}
+		if err := verify(ctx, d, *cmd.Signature); err != nil {
+			slog.Warn("host: a rule change's signature was refused", "repo", r.Name, "approver", cmd.Signature.Approver, "err", err)
+			return *r, err
+		}
+		approver, signature = cmd.Signature.Approver, cmd.Signature.Sig
+	}
+	ev, err := v1.NewEvent(v1.EventRepoRulesSet, cmd.ID, v1.RepoRulesSet{RepoID: r.ID, Rules: list, By: by, Approver: approver, Signature: signature, Revision: revision})
 	if err != nil {
 		return Repo{}, err
 	}
@@ -182,6 +240,33 @@ func (h *Host) SetRules(ctx context.Context, cmd v1.SetRepoRules) (Repo, error) 
 	slog.Info("host: rules set", "host", h.name, "repo", r.Name, "rules", len(list))
 	out, _ := h.Repo(r.ID)
 	return out, nil
+}
+
+// LapseRules lapses every repository's rules whose signer no longer
+// approves, so their allow rules ask until an approver sets them again.
+// valid reports whether an approver approves now. Rules set on the host
+// never lapse, and nothing does before the world exists.
+func (h *Host) LapseRules(ctx context.Context, valid func(approver string) bool) {
+	if world, _ := h.signer(); world == "" {
+		return
+	}
+	h.cmdMu.Lock()
+	defer h.cmdMu.Unlock()
+	for _, r := range h.Repos() {
+		if r.RulesLapsed || r.RulesBy == "local" || !rules.HasAllow(r.Rules) || valid(r.RulesApprover) {
+			continue
+		}
+		ev, err := v1.NewEvent(v1.EventRepoRulesLapsed, "", v1.RepoRulesLapsed{RepoID: r.ID, Approver: r.RulesApprover})
+		if err != nil {
+			continue
+		}
+		if _, err := h.store.Append(ctx, v1.IslandEventSubject(h.name, ev.Type), ev); err != nil {
+			slog.Warn("host: lapse the rules of a revoked approver", "repo", r.Name, "err", err)
+			continue
+		}
+		h.apply(ev)
+		slog.Info("host: rules lapsed, their approver no longer approves", "repo", r.Name, "approver", r.RulesApprover)
+	}
 }
 
 // Agents is what the host last recorded about the agents it can launch,
@@ -240,10 +325,19 @@ func (h *Host) apply(ev v1.Event) {
 			return
 		}
 		if r, ok := h.repos[d.RepoID]; ok {
-			r.Rules = d.Rules
+			r.Rules, r.RulesBy, r.RulesApprover, r.RulesSignature, r.RulesLapsed = d.Rules, d.By, d.Approver, d.Signature, false
+			r.RulesRevision++
 			if ev.CommandID != "" {
 				h.handled[ev.CommandID] = d.RepoID
 			}
+		}
+	case v1.EventRepoRulesLapsed:
+		var d v1.RepoRulesLapsed
+		if ev.Decode(&d) != nil {
+			return
+		}
+		if r, ok := h.repos[d.RepoID]; ok {
+			r.RulesLapsed = true
 		}
 	case v1.EventRepoRegistered:
 		var d v1.RepoRegistered

@@ -72,8 +72,14 @@ func TestDecide(t *testing.T) {
 		{"fetch asks", append(repo, v1.Rule{Decision: "allow", Kind: "*"}), Call{Kind: "fetch", Input: input("url", "https://x")}, "ask"},
 		{"session allow beats nothing", all, Call{Kind: "execute", Input: input("command", "go build")}, "allow"},
 		{"repo deny with a pattern beats a session allow without", all, Call{Kind: "execute", Input: input("command", "rm -rf /")}, "deny"},
-		{"session rule beats a repo rule among equals", append([]v1.Rule{{Decision: "deny", Kind: "edit", Pattern: "worktree"}}, repo...), Call{Kind: "edit", Locations: []string{"a.go"}}, "deny"},
+		{"session rule beats a repo rule among equals", append([]v1.Rule{{Decision: "ask", Kind: "edit", Pattern: "worktree"}}, repo...), Call{Kind: "edit", Locations: []string{"a.go"}}, "ask"},
+		{"a session deny beats a copied allow", append([]v1.Rule{{Decision: "deny", Kind: "edit", Pattern: "worktree"}}, repo...), Call{Kind: "edit", Locations: []string{"a.go"}}, "deny"},
 		{"deny beats allow among equals", []v1.Rule{{Decision: "allow", Kind: "read"}, {Decision: "deny", Kind: "read"}}, Call{Kind: "read", Locations: []string{"a"}}, "deny"},
+		{"ask beats allow among equals", []v1.Rule{{Decision: "allow", Kind: "read"}, {Decision: "ask", Kind: "read"}}, Call{Kind: "read", Locations: []string{"a"}}, "ask"},
+		{"a deny is final over a more specific allow", []v1.Rule{{Decision: "deny", Kind: "execute"}, {Decision: "allow", Kind: "execute", Pattern: "go test *"}}, Call{Kind: "execute", Input: input("command", "go test ./...")}, "deny"},
+		{"a copied deny is final over the session's own allow", append([]v1.Rule{{Decision: "allow", Kind: "execute", Pattern: "rm -rf /tmp/*"}}, repo...), Call{Kind: "execute", Input: input("command", "rm -rf /tmp/x")}, "deny"},
+		{"a deny of any kind is final", append([]v1.Rule{{Decision: "deny", Kind: "*"}}, defaults...), Call{Kind: "read", Locations: []string{"a"}}, "deny"},
+		{"a more specific ask beats an allow", []v1.Rule{{Decision: "allow", Kind: "execute"}, {Decision: "ask", Kind: "execute", Pattern: "git push *"}}, Call{Kind: "execute", Input: input("command", "git push origin")}, "ask"},
 		{"a deny on any location", []v1.Rule{{Decision: "deny", Kind: "edit", Pattern: "web/*"}}, Call{Kind: "edit", Locations: []string{"a.go", "web/x.ts"}}, "deny"},
 		{"any kind with a pattern reads the call's kind", []v1.Rule{{Decision: "deny", Kind: "*", Pattern: "worktree"}}, Call{Kind: "delete", Locations: []string{"a.go"}}, "deny"},
 		{"unknown kind only matches any", defaults, Call{Kind: ""}, "ask"},
@@ -82,6 +88,23 @@ func TestDecide(t *testing.T) {
 		if got := Decide(c.rules, c.call); got != c.want {
 			t.Errorf("%s: Decide = %q, want %q", c.name, got, c.want)
 		}
+	}
+}
+
+func TestWithoutAllows(t *testing.T) {
+	list := []v1.Rule{{Decision: "allow", Kind: "edit", Pattern: "worktree"}, {Decision: "deny", Kind: "execute", Pattern: "rm *"}, {Decision: "ask", Kind: "fetch"}}
+	if !HasAllow(list) || HasAllow(list[1:]) {
+		t.Errorf("HasAllow is wrong about %+v", list)
+	}
+	left := WithoutAllows(list)
+	if len(left) != 2 || left[0].Decision != "deny" || left[1].Decision != "ask" {
+		t.Errorf("WithoutAllows = %+v", left)
+	}
+	if got := Decide(append(left, Defaults([]string{"read"})...), Call{Kind: "edit", Locations: []string{"a.go"}}); got != "ask" {
+		t.Errorf("an edit the lapsed list allowed = %q, want ask", got)
+	}
+	if got := Decide(append(left, Defaults([]string{"read"})...), Call{Kind: "read", Locations: []string{"a.go"}}); got != "allow" {
+		t.Errorf("a read the host allows = %q, want allow", got)
 	}
 }
 

@@ -85,9 +85,11 @@ specifies. No events, streams, or aggregates are needed for it.
 - Rules are done. A rule is a decision (allow, ask, deny), a tool call
   kind or any, and an optional pattern: a command pattern for execute, a
   URL pattern for fetch, a path pattern for the rest, where "worktree"
-  means everything inside the session's worktree. The most specific
-  matching rule wins, a deny beats an allow among equals, a session's own
-  rule beats one copied from its repository, and no match asks. A
+  means everything inside the session's worktree. A deny is final: any
+  matching deny rule refuses the call, and neither an allow rule nor
+  trust overrides it. Otherwise the most specific matching rule wins, an
+  ask beats an allow among equals, a session's own rule beats one copied
+  from its repository, and no match asks. A
   repository's rules (RepoRulesSet) are copied into each session it
   starts (SessionStarted carries them) and the session can change its
   copy (SessionRulesSet). The approval card proposes a rule from the

@@ -1,20 +1,169 @@
 {
-  "canonical": "{\"decision\":\"allow\",\"host\":\"workstation\",\"input\":\"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\",\"option\":\"allow_once\",\"request\":\"Req1\",\"session\":\"Ses5ion-éh\",\"v\":1,\"world\":\"ODE7BE5F3RFG7BT4DDDPM4IEADOOTWSZ7ONDYHZJHW6OO6DO6BXOOR2L\"}",
-  "comment": "A test key and a decision it signed, which Go and the browser must reproduce byte for byte. The seed is for tests only.",
-  "decision": {
-    "v": 1,
-    "world": "ODE7BE5F3RFG7BT4DDDPM4IEADOOTWSZ7ONDYHZJHW6OO6DO6BXOOR2L",
-    "host": "workstation",
-    "session": "Ses5ion-éh",
-    "request": "Req1",
-    "decision": "allow",
-    "option": "allow_once",
-    "input": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+  "comment": "A test key and decisions it signed, and the hashes they name, which Go and the browser must reproduce byte for byte. The seed is for tests only.",
+  "seed": "SUAM5ZIATI7O6L4H3IZCYYEP2KOB4YMLQHCAPRHYWATZWN3KWNZMOGZGBI",
+  "decisions": [
+    {
+      "decision": {
+        "v": 1,
+        "kind": "toolcall",
+        "world": "ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O",
+        "host": "workstation",
+        "session": "Ses5ion-éh",
+        "request": "Req1",
+        "decision": "allow",
+        "option": "allow_once",
+        "input": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+      },
+      "canonical": "{\"decision\":\"allow\",\"host\":\"workstation\",\"input\":\"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\",\"kind\":\"toolcall\",\"option\":\"allow_once\",\"request\":\"Req1\",\"session\":\"Ses5ion-éh\",\"v\":1,\"world\":\"ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O\"}",
+      "digest": "0fe5feba1e5812ac6af4ab446a0057038ed965e16d02b2383ae53da539da5854",
+      "signature": {
+        "approver": "UASVQ5GGLE7MCRC3RD6ZWNTBKVQT2T4MM72OTFAASHYZJBB5VZWFJQNI",
+        "sig": "_nzI2v__hjwTOVnnRey4DOWpAbGRdWfoyNuOCScICzFFB6lFRm4NEJZ0ryRt7XUjziy13bAW51oqyQNQFiQaCw"
+      }
+    },
+    {
+      "decision": {
+        "v": 1,
+        "kind": "answer",
+        "world": "ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O",
+        "host": "workstation",
+        "session": "Ses5ion-éh",
+        "question": "Q1",
+        "form": "478b7015708d20a04d5a2df1bafedcaf4f9577332cad5f8d23ed0337a17b153f",
+        "declined": false,
+        "answers": "9eb3b34a3d550f0c51a60d0201edef4f9ceff92101dd2c8232dad1a79f7e675c"
+      },
+      "canonical": "{\"answers\":\"9eb3b34a3d550f0c51a60d0201edef4f9ceff92101dd2c8232dad1a79f7e675c\",\"declined\":false,\"form\":\"478b7015708d20a04d5a2df1bafedcaf4f9577332cad5f8d23ed0337a17b153f\",\"host\":\"workstation\",\"kind\":\"answer\",\"question\":\"Q1\",\"session\":\"Ses5ion-éh\",\"v\":1,\"world\":\"ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O\"}",
+      "digest": "b53816e5fe2b450b8dbfceb229451f0828fa92e2e814b701cbc3c8b571da4ff8",
+      "signature": {
+        "approver": "UASVQ5GGLE7MCRC3RD6ZWNTBKVQT2T4MM72OTFAASHYZJBB5VZWFJQNI",
+        "sig": "OQfxDslgTtBNylsEQWBDBl-gzp260qVvf2aIQBYeDLZvVAvk9FeOjJldaT2t2ob9AV5kF6UhFGiedB9i7dbpCQ"
+      }
+    },
+    {
+      "decision": {
+        "v": 1,
+        "kind": "answer",
+        "world": "ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O",
+        "host": "workstation",
+        "session": "Ses5ion-éh",
+        "question": "Q1",
+        "form": "478b7015708d20a04d5a2df1bafedcaf4f9577332cad5f8d23ed0337a17b153f",
+        "declined": true,
+        "answers": ""
+      },
+      "canonical": "{\"answers\":\"\",\"declined\":true,\"form\":\"478b7015708d20a04d5a2df1bafedcaf4f9577332cad5f8d23ed0337a17b153f\",\"host\":\"workstation\",\"kind\":\"answer\",\"question\":\"Q1\",\"session\":\"Ses5ion-éh\",\"v\":1,\"world\":\"ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O\"}",
+      "digest": "08ac76f2c41a951b3ee29d316dd00f2927f9d81073ef207de1ae750b63cc9474",
+      "signature": {
+        "approver": "UASVQ5GGLE7MCRC3RD6ZWNTBKVQT2T4MM72OTFAASHYZJBB5VZWFJQNI",
+        "sig": "BGI5700FYaB4kV-xzk3QEjY06_5wx7Oelr_id9ffpkywSgX5NfEbCPNsPSw93c-xrufZi1homEZ4FY-zgtALDg"
+      }
+    },
+    {
+      "decision": {
+        "v": 1,
+        "kind": "trust",
+        "world": "ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O",
+        "host": "workstation",
+        "session": "Ses5ion-éh",
+        "trusted": true,
+        "revision": 2
+      },
+      "canonical": "{\"host\":\"workstation\",\"kind\":\"trust\",\"revision\":2,\"session\":\"Ses5ion-éh\",\"trusted\":true,\"v\":1,\"world\":\"ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O\"}",
+      "digest": "c840286bc9526d51fa0a8b93262c9a4e28032cfc3c911a8914f866a751e1b2a5",
+      "signature": {
+        "approver": "UASVQ5GGLE7MCRC3RD6ZWNTBKVQT2T4MM72OTFAASHYZJBB5VZWFJQNI",
+        "sig": "8fWdcH8hSfU7-nAb223yzt4iu8eSOpnFlplCoByIHWeS-17Lm0HcvylyCFqK_VczuqejcWRjL_2p5jiARyPOBQ"
+      }
+    },
+    {
+      "decision": {
+        "v": 1,
+        "kind": "session-rules",
+        "world": "ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O",
+        "host": "workstation",
+        "session": "Ses5ion-éh",
+        "rules": "12c12d60193763bd4a8899d9d399933f1941cf8db08fe8c32738e30bf3bd3e8f",
+        "revision": 1
+      },
+      "canonical": "{\"host\":\"workstation\",\"kind\":\"session-rules\",\"revision\":1,\"rules\":\"12c12d60193763bd4a8899d9d399933f1941cf8db08fe8c32738e30bf3bd3e8f\",\"session\":\"Ses5ion-éh\",\"v\":1,\"world\":\"ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O\"}",
+      "digest": "1b937ac4e0af3d2860fe4fd7dc6a5bcf9e9f98d78fdd7c10ab1f04587c38862d",
+      "signature": {
+        "approver": "UASVQ5GGLE7MCRC3RD6ZWNTBKVQT2T4MM72OTFAASHYZJBB5VZWFJQNI",
+        "sig": "NEobcyNNO09xExX68xPFsNDikx5zYnTqbKktrhsyGHlGkLHGS6TfqbfNi3F3QPJbq3RCJt5-2EODOuNAHd0_CA"
+      }
+    },
+    {
+      "decision": {
+        "v": 1,
+        "kind": "repo-rules",
+        "world": "ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O",
+        "host": "workstation",
+        "repo": "R3po",
+        "rules": "12c12d60193763bd4a8899d9d399933f1941cf8db08fe8c32738e30bf3bd3e8f",
+        "revision": 0
+      },
+      "canonical": "{\"host\":\"workstation\",\"kind\":\"repo-rules\",\"repo\":\"R3po\",\"revision\":0,\"rules\":\"12c12d60193763bd4a8899d9d399933f1941cf8db08fe8c32738e30bf3bd3e8f\",\"v\":1,\"world\":\"ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O\"}",
+      "digest": "444de4c957617a9113551c851369797d9766736e8bbf137bc3a746ff53246ec6",
+      "signature": {
+        "approver": "UASVQ5GGLE7MCRC3RD6ZWNTBKVQT2T4MM72OTFAASHYZJBB5VZWFJQNI",
+        "sig": "-eBDgwBOyDeBWs1jHf0H5fd-1VjN1FvsDNuvgTkOxskTSR9Qf2e6XVPM9uDVM9tBcO22oslU0AwIq9aRGXcADA"
+      }
+    }
+  ],
+  "form": {
+    "message": "Which file should I edit? é😀",
+    "fields": [
+      {
+        "key": "file",
+        "title": "File",
+        "type": "string",
+        "options": [
+          {
+            "value": "main.go",
+            "title": "main.go"
+          },
+          {
+            "value": "util.go",
+            "description": "the helpers"
+          }
+        ],
+        "required": true
+      },
+      {
+        "key": "note",
+        "type": "string"
+      },
+      {
+        "key": "count",
+        "title": "How many",
+        "type": "integer"
+      }
+    ],
+    "hash": "478b7015708d20a04d5a2df1bafedcaf4f9577332cad5f8d23ed0337a17b153f"
   },
-  "digest": "eec5964fb90495c77e83d11276da250a346ec2236502d466c5076603e6721a46",
-  "seed": "SUACQSE5J5SK2CEK6XQK5JC3UUSFKHCCK6EFDJAX3KIKINAFWYWPJWPV2A",
-  "signature": {
-    "approver": "UDQYWRNGZABJOUSCVVISFHT5WGZNB2DRRWKLJX7KJHIGXJYOAKEBWYXX",
-    "sig": "tfy4bD2VgbJeWrlEpujTh568mn2ZjAUNHk_uPbuXnvgKD8C0S8LPXtXrNegjOg8muuj_AySCqzbRTcMBzW-0DA"
+  "answers": {
+    "answers": {
+      "note": "line one\nline two",
+      "file": "util.go",
+      "count": 3
+    },
+    "hash": "9eb3b34a3d550f0c51a60d0201edef4f9ceff92101dd2c8232dad1a79f7e675c"
+  },
+  "rules": {
+    "rules": [
+      {
+        "decision": "allow",
+        "kind": "execute",
+        "pattern": "go test *"
+      },
+      {
+        "decision": "deny",
+        "kind": "*",
+        "pattern": "worktree",
+        "source": "repo"
+      }
+    ],
+    "hash": "12c12d60193763bd4a8899d9d399933f1941cf8db08fe8c32738e30bf3bd3e8f"
   }
 }
