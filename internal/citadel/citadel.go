@@ -1,9 +1,8 @@
 // Package citadel implements the citadel role: the world's web application
 // and observer. A citadel serves the 3D client and the phone inbox,
-// authenticates people with passkeys, builds projections from the world's
-// streams, relays signed approvals to the daemon that owns each session,
-// and sends push notifications. It connects to NATS as an ordinary client
-// and embeds no server. Any number of
+// builds projections from the world's streams, relays signed approvals to
+// the daemon that owns each session, and sends push notifications. It
+// connects to NATS as an ordinary client and embeds no server. Any number of
 // citadels can run against one world, and they are interchangeable.
 package citadel
 

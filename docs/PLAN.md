@@ -286,8 +286,8 @@ user's side one feature: a conversation with an agent that lasts.
 The daemon records PermissionRequested instead of auto-allowing, rules settle
 what they can, the citadel's beacon lights, and `request list`, `approve`,
 and `deny` work locally over the socket. A per-session "trust this session"
-switch is the stopgap. Signed approvals from a browser follow once passkeys
-exist.
+switch is the stopgap. Signed approvals from a browser follow once approver
+keys exist.
 
 Done: a tool call the host's rules do not allow (anything but read, search,
 and think) blocks the agent until a person answers. The daemon records
@@ -487,8 +487,8 @@ Demo: the MVP.
 
 ## Deferred past the MVP
 
-World init, accounts, credentials, and auth callout. Passkeys, user sessions,
-and signed approvals. World-wide rules mirrored to every host; rules live
+World init, accounts, credentials, and auth callout. User sessions and
+signed approvals. World-wide rules mirrored to every host; rules live
 on each host's repositories for now. Push notifications and the phone inbox. Work
 orders and dynamic dispatch. Compaction puffs and subagent leashes, which
 wait for their events. Claude Code hooks, so terminal sessions appear on the
