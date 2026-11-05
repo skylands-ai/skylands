@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"io"
 	"path/filepath"
 	"sync/atomic"
 
@@ -44,10 +45,11 @@ machine an island and the citadel serves the web application. Daemons on
 other machines can join the world through the embedded server's leaf node
 listener, which needs --leaf-listen on an address they can reach.
 
-Nothing is authenticated yet, so every listener defaults to 127.0.0.1.`,
+The embedded NATS server asks for no credentials, so every listener defaults
+to 127.0.0.1.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDevworld(cmd.Context(), o)
+			return runDevworld(cmd.Context(), o, cmd.ErrOrStderr())
 		},
 	}
 	devworldUpFlags(cmd.Flags(), &o)
@@ -78,8 +80,9 @@ func newDevworldInstallCmd() *cobra.Command {
 
 // runDevworld starts the embedded server, then runs the citadel and the
 // daemon against it, the same code paths "citadel up" and "daemon up" run,
-// until one of them stops or ctx is cancelled.
-func runDevworld(ctx context.Context, o devworldOptions) error {
+// until one of them stops or ctx is cancelled. The setup link, while there
+// is no world, goes to stderr apart from the log.
+func runDevworld(ctx context.Context, o devworldOptions, stderr io.Writer) error {
 	srv, err := natsembed.Start(ctx, natsembed.Config{
 		Name:       "skylands-devworld",
 		ClientAddr: o.natsListen,
@@ -101,10 +104,13 @@ func runDevworld(ctx context.Context, o devworldOptions) error {
 	errc := make(chan error, 2)
 	go func() {
 		errc <- citadel.Run(ctx, citadel.Config{
-			NATSURL:     srv.ClientURL(),
-			HTTPAddr:    o.httpAddr,
-			LeafURL:     srv.LeafURL(),
-			OnSetupLink: func(link string) { setupLink.Store(link) },
+			NATSURL:  srv.ClientURL(),
+			HTTPAddr: o.httpAddr,
+			LeafURL:  srv.LeafURL(),
+			OnSetupLink: func(link string) {
+				setupLink.Store(link)
+				showSetupLink(stderr, link)
+			},
 		})
 	}()
 	go func() {

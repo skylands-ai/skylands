@@ -174,9 +174,12 @@ func (c *citadel) offerSetup() {
 	if link == "" {
 		return
 	}
-	slog.Info("citadel: this world isn't set up yet; open this link to set it up", "url", link)
+	// Whoever set OnSetupLink shows the link, apart from the log.
 	if c.cfg.OnSetupLink != nil {
+		slog.Info("citadel: this world isn't set up yet")
 		c.cfg.OnSetupLink(link)
+	} else {
+		slog.Info("citadel: this world isn't set up yet; open this link to set it up", "url", link)
 	}
 	c.web.Broadcast(web.Message{Type: "world", World: c.worldInfo()})
 }
@@ -566,9 +569,11 @@ func (c *citadel) addRecords(records []approval.Record) {
 }
 
 // approversChanged rebuilds the registry, once the world's owner is known,
-// and tells browsers.
+// closes the WebSocket of every browser whose sign-in no longer counts,
+// and tells the rest.
 func (c *citadel) approversChanged() {
 	var skipped []string
+	var reg *approval.Registry
 	built := false
 	c.setWorld(func(w *worldView) {
 		if w.signed == nil {
@@ -579,7 +584,7 @@ func (c *citadel) approversChanged() {
 			records = append(records, r)
 		}
 		w.registry = approval.NewRegistry(w.record.Owner, records)
-		built = true
+		reg, built = w.registry, true
 		if w.skipped == nil {
 			w.skipped = map[string]bool{}
 		}
@@ -596,6 +601,10 @@ func (c *citadel) approversChanged() {
 	for _, s := range skipped {
 		slog.Warn("citadel: an approver registry record doesn't count", "why", s)
 	}
+	// A browser that connected before the world existed signed in as
+	// nobody, and one whose approver was revoked signed in as a key that no
+	// longer counts.
+	c.web.Drop(func(who string) bool { return who != "" && reg.Valid(who) })
 	c.web.Broadcast(web.Message{Type: "approvers", Approvers: c.approverInfo()})
 }
 

@@ -175,7 +175,7 @@ Every participant is a NATS user with permissions scoped to the subjects its rol
 | Citadel web app | Commands to any session, and rule events | Every event in the world |
 | Integration, such as a chat bot or CI runner | Only the commands its role grants | Only the events its role grants |
 
-Browsers and phones never connect to NATS. They talk to the citadel web app, which holds their session and their permissions.
+Browsers and phones never connect to NATS. They talk to the citadel web app, which lets them in once they sign in with their approver key.
 
 ### Subject namespace
 
@@ -333,8 +333,8 @@ The citadel is the world's web application and observer. It never writes session
 
 ### Web application
 
-- Serves the 3D client and the phone inbox, and authenticates people.
-- Holds each browser's session and permissions; browsers never connect to NATS.
+- Serves the 3D client and the phone inbox, and lets a browser in once it signs in with its approver key, as [Signing in](#signing-in) describes.
+- Keeps no sessions: a browser's sign-in is a statement it signed, which any citadel checks on every request. Browsers never connect to NATS.
 - Streams projections to browsers over WebSocket and sends push notifications for waiting items.
 - Routes each session command to its owning daemon by request-reply, and returns the daemon's answer.
 
@@ -373,7 +373,7 @@ Rules settle most tool calls on the host, so only what no rule covers reaches a 
 - Trust and rule lists can be set back and forth, and the citadel names the commands, so their decisions name the revision they replace: how many times that session's trust, that session's rules, or that repository's rules were set. The daemon refuses a change against any other revision, so an old signed change can't be sent again, and two browsers changing the same list conflict rather than overwrite each other.
 - The daemon checks answers against the question's form before the signature: only its fields, a choice among its options, numbers as numbers and integers whole within ±2^53, booleans as booleans, an unanswered field left out rather than empty, and every required field answered. It records the answers, and gives them to the agent, as the canonical JSON that was signed.
 - The daemon builds the same decision from its own record and verifies the signature over it, after reading the approver registry up to its latest record, so a revocation stored before a decision arrived counts against it. Only then does it record the decision (PermissionGranted or PermissionDenied, QuestionAnswered, SessionTrusted, SessionRulesSet, or RepoRulesSet) with the approver's key and the signature.
-- Once the world exists, a decision through the citadel without a valid signature is refused. Declining, turning trust off, and rule changes that only make things stricter are signed too. Interrupting, stopping, and prompting aren't, so anyone who can open a conversation can still stop an agent.
+- Once the world exists, a decision through the citadel without a valid signature is refused. Declining, turning trust off, and rule changes that only make things stricter are signed too. Interrupting, stopping, and prompting aren't signed, but only a signed-in approver reaches them through the citadel, and `skylands session stop` stops an agent on its host.
 - Decisions an approver signed before it was revoked stand; `skylands request history` shows them as signed by an approver that no longer approves. What it approved in advance doesn't: trust it turned on ends (SessionTrusted, by "revocation"), and a rule list it signed lapses (SessionRulesLapsed, RepoRulesLapsed), keeping its deny and ask rules while its allow rules ask, until an approver sets the list again. A session's copy of its repository's rules stands on the repository list's signature, which SessionStarted records. The daemon records a lapse as soon as it reads the revocation, and checks the signer again before trust or an allow rule lets any call through. Trust and rules set on the host never lapse.
 - A deny rule is final: no allow rule, however specific, and no trust lets through a call a deny rule matches.
 - The daemon answers an agent's permission request only with its "allow once" or "reject once" option. An "always" option would settle later calls inside the agent, where neither a deny rule nor a revocation reaches them, so a signed approval naming one is refused.
@@ -392,6 +392,16 @@ Rules settle most tool calls on the host, so only what no rule covers reaches a 
 - NATS decides which daemons and citadels join the world. The owner gives each one credentials for the world's NATS account, however they run NATS, and Skylands adds no enrollment of its own: whatever NATS admits to that account is trusted as a daemon.
 - The citadel holds only a scoped signing key, which can mint credentials for limited roles such as integrations.
 - A compromised citadel therefore can't enroll an approver, move a daemon into another world, or forge an approval.
+
+### Signing in
+
+- Once the world exists, a browser gets in through the citadel only by signing in with its approver key. The citadel names the world, the address the browser reached it at, and twelve hours from now by its own clock, and the browser signs them unchanged. The signed sign-in comes back as an HTTP-only, same-site cookie, named for the citadel's port, since a browser sends a host's cookies to every port on it.
+- Every API call and WebSocket checks the cookie: signed by an approver that still approves, for this world and this address, and not expired. No citadel keeps a session, so any citadel of the world accepts the cookie, and a restart signs nobody out.
+- Revoking an approver ends its sign-in: each citadel closes its WebSocket and refuses its cookie, and does the same for every approver added through it.
+- Without signing in, a browser can do only what becoming an approver needs: set the world up with the setup link's token, read the world, its approvers, and a voucher whose claim key it holds, and enroll with an entry the owner key or a voucher's claim key signed.
+- A request that changes something must come from the citadel's own page. One whose Origin names another site or port is refused, since the cookie alone can't tell them apart, and the WebSocket takes only the citadel's own origin.
+- The page signs in whenever it opens the world or reconnects, and again when a request says its sign-in lapsed, so nobody signs in by hand. Setup, the recovery file, and an invite link each end by signing in with the new key. A browser that can't sign in is sent to the setup page, which says why and offers an invite link or the recovery file.
+- Before the world exists there's no approver to sign in as, and the citadel lets every request through, as daemons take unsigned decisions until then. While a citadel can't tell whether the world exists, it lets no browser in.
 
 ### Waiting and cancelling
 

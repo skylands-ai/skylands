@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/cookiejar"
 	"strings"
 	"sync"
 	"testing"
@@ -223,6 +224,69 @@ func userKey(t *testing.T) (nkeys.KeyPair, string) {
 	return kp, pub
 }
 
+// signIn signs in to the citadel at base with kp, as the world's page does,
+// and returns a client that sends the sign-in cookie, or fails the test.
+func signIn(t *testing.T, base string, kp nkeys.KeyPair) *http.Client {
+	t.Helper()
+	client, code, out := trySignIn(t, base, kp, nil)
+	if code != http.StatusOK {
+		t.Fatalf("sign in = %d %s", code, out)
+	}
+	return client
+}
+
+// trySignIn asks for a sign-in, lets change alter it, signs it with kp, and
+// sends it back. It returns a client with whatever cookie came back.
+func trySignIn(t *testing.T, base string, kp nkeys.KeyPair, change func(*v1.SignIn)) (*http.Client, int, string) {
+	t.Helper()
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	resp, err := client.Get(base + "/api/signin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ch signInChallenge
+	err = json.NewDecoder(resp.Body).Decode(&ch)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || err != nil {
+		t.Fatalf("GET /api/signin = %d, %v", resp.StatusCode, err)
+	}
+	in := v1.SignIn{Type: "signin", World: ch.World, Citadel: ch.Citadel, Issued: ch.Issued, Expires: ch.Expires}
+	if change != nil {
+		change(&in)
+	}
+	signed, err := approval.Sign(kp, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, out := postWith(t, client, base+"/api/signin", map[string]any{"signin": signed}, nil)
+	return client, code, out
+}
+
+// postWith posts body as JSON with client and any extra headers.
+func postWith(t *testing.T, client *http.Client, url string, body any, header map[string]string) (int, string) {
+	t.Helper()
+	data, _ := json.Marshal(body)
+	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range header {
+		req.Header.Set(k, v)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var out bytes.Buffer
+	_, _ = out.ReadFrom(resp.Body)
+	return resp.StatusCode, out.String()
+}
+
+// dialWith opens the world's WebSocket with client's cookies.
+func dialWith(ctx context.Context, base string, client *http.Client) (*websocket.Conn, *http.Response, error) {
+	return websocket.Dial(ctx, strings.Replace(base, "http", "ws", 1)+"/ws", &websocket.DialOptions{HTTPClient: client})
+}
+
 // TestApproversThroughTheCitadel adds an approver with a voucher, refuses
 // a second use of it, and revokes, taking along what was enrolled through
 // the revoked approver.
@@ -239,11 +303,19 @@ func TestApproversThroughTheCitadel(t *testing.T) {
 	if code, out := postJSON(t, base+"/api/world/setup", setupRequest{Token: token, World: world, Approver: first}); code != http.StatusOK {
 		t.Fatalf("setup = %d %s", code, out)
 	}
+	// A desk computer is enrolled with the recovery file, apart from the
+	// laptop, so it stays an approver when the laptop is revoked.
+	desk, deskPub := userKey(t)
+	deskEntry, _ := approval.Sign(owner, v1.ApproverEntry{Type: "approver", World: ownerPub, Key: deskPub, Name: "desk", Created: approval.Now()})
+	if code, out := postJSON(t, base+"/api/world/approvers", map[string]any{"approver": deskEntry}); code != http.StatusOK {
+		t.Fatalf("recovery = %d %s", code, out)
+	}
+	asLaptop, asDesk := signIn(t, base, laptop), signIn(t, base, desk)
 
 	// The laptop makes a link; the phone uses it.
 	claim, claimPub := userKey(t)
 	voucher, _ := approval.Sign(laptop, v1.Voucher{Type: "voucher", World: ownerPub, Claim: claimPub, Created: approval.Now()})
-	code, out := postJSON(t, base+"/api/world/vouchers", map[string]any{"voucher": voucher})
+	code, out := postWith(t, asLaptop, base+"/api/world/vouchers", map[string]any{"voucher": voucher}, nil)
 	var vi struct {
 		By, ByName, Expires string
 		Valid               bool
@@ -272,7 +344,7 @@ func TestApproversThroughTheCitadel(t *testing.T) {
 	stranger, _ := userKey(t)
 	_, otherClaim := userKey(t)
 	forged, _ := approval.Sign(stranger, v1.Voucher{Type: "voucher", World: ownerPub, Claim: otherClaim, Created: approval.Now()})
-	if code, out := postJSON(t, base+"/api/world/vouchers", map[string]any{"voucher": forged}); code != http.StatusForbidden {
+	if code, out := postWith(t, asLaptop, base+"/api/world/vouchers", map[string]any{"voucher": forged}, nil); code != http.StatusForbidden {
 		t.Errorf("a voucher from a stranger = %d %s, want 403", code, out)
 	}
 
@@ -298,33 +370,37 @@ func TestApproversThroughTheCitadel(t *testing.T) {
 
 	// The owner key revokes the laptop, and the phone it enrolled goes too.
 	revocation, _ := approval.Sign(owner, v1.Revocation{Type: "revocation", World: ownerPub, Key: laptopPub, Created: approval.Now()})
-	if code, out := postJSON(t, base+"/api/world/revocations", map[string]any{"revocation": revocation}); code != http.StatusOK {
+	if code, out := postWith(t, asDesk, base+"/api/world/revocations", map[string]any{"revocation": revocation}, nil); code != http.StatusOK {
 		t.Fatalf("revoke = %d %s", code, out)
 	}
 	got = approvers()
 	if l, p := got[laptopPub], got[phonePub]; l.Valid || l.RevokedBy != "owner" || l.Revoked == "" || p.Valid || p.Revoked != "" {
 		t.Errorf("after revoking the laptop: %+v", got)
 	}
-	// A revoked approver can't revoke or make links.
+	// The revoked laptop's sign-in no longer counts.
+	if code, out := postWith(t, asLaptop, base+"/api/world/vouchers", map[string]any{"voucher": voucher}, nil); code != http.StatusUnauthorized {
+		t.Errorf("the revoked laptop's sign-in = %d %s, want 401", code, out)
+	}
+	// Nor does what the revoked laptop signs, sent by an approver.
 	byLaptop, _ := approval.Sign(laptop, v1.Revocation{Type: "revocation", World: ownerPub, Key: phonePub, Created: approval.Now()})
-	if code, out := postJSON(t, base+"/api/world/revocations", map[string]any{"revocation": byLaptop}); code != http.StatusForbidden {
+	if code, out := postWith(t, asDesk, base+"/api/world/revocations", map[string]any{"revocation": byLaptop}, nil); code != http.StatusForbidden {
 		t.Errorf("a revoked approver revoking = %d %s, want 403", code, out)
 	}
 	_, lateClaim := userKey(t)
 	late, _ := approval.Sign(laptop, v1.Voucher{Type: "voucher", World: ownerPub, Claim: lateClaim, Created: approval.Now()})
-	if code, out := postJSON(t, base+"/api/world/vouchers", map[string]any{"voucher": late}); code != http.StatusForbidden {
+	if code, out := postWith(t, asDesk, base+"/api/world/vouchers", map[string]any{"voucher": late}, nil); code != http.StatusForbidden {
 		t.Errorf("a revoked approver making a link = %d %s, want 403", code, out)
 	}
 
 	// A browser connecting now gets the registry in its snapshot.
-	c, _, err := websocket.Dial(context.Background(), strings.Replace(base, "http", "ws", 1)+"/ws", nil)
+	c, _, err := dialWith(context.Background(), base, asDesk)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = c.CloseNow() }()
 	_, data, err := c.Read(context.Background())
 	var snap web.Message
-	if err != nil || json.Unmarshal(data, &snap) != nil || snap.Type != "snapshot" || len(snap.Approvers) != 2 {
-		t.Errorf("snapshot = %s, %v; want two approvers", data, err)
+	if err != nil || json.Unmarshal(data, &snap) != nil || snap.Type != "snapshot" || len(snap.Approvers) != 3 {
+		t.Errorf("snapshot = %s, %v; want three approvers", data, err)
 	}
 }

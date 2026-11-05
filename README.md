@@ -86,14 +86,17 @@ skylands devworld up
 
 `devworld up` runs an embedded NATS server, a citadel, and a daemon for this
 machine in one process, so you get the castle and one island. The first time,
-it prints a link to set the world up:
+it prints a link to set the world up, apart from its log and in color in a
+terminal:
 
 ```
-citadel: this world isn't set up yet; open this link to set it up url=http://127.0.0.1:8080/setup#...
+ Set up this world  Open this link in a browser:
+
+    http://127.0.0.1:8080/setup#...
 ```
 
 Open it and set the world up, as the next section describes. After that, the
-world is at <http://127.0.0.1:8080>.
+world is at <http://127.0.0.1:8080>, and that browser opens it signed in.
 
 The world has two themes, switched from the citadel's panel: Default, a
 castle and floating islands in a daytime sky, and Sci-fi, a space station
@@ -141,6 +144,15 @@ removes anything the thief added with it. A revoked browser becomes an
 approver again only with a new link or the recovery file, which on the
 setup page, `/setup`, adds the browser it is opened in. The recovery file
 is also how you get back in if no approver is left.
+
+Once the world is set up, only approvers get in. A browser signs in to the
+citadel with its approver key by itself, whenever it opens the world or
+reconnects, so there's nothing to type and nothing to do after a restart.
+A browser without a key, or whose key was revoked, gets the setup page
+instead of the world, and revoking an approver closes the world in its
+browser at once. Until the world is set up there's no approver to sign in
+as, and the citadel lets anyone who reaches it in, so set it up before you
+let others reach it.
 
 ### Keep it running
 
@@ -323,8 +335,8 @@ checks the signature, against the world's approvers and against its own
 record, before it acts, so a citadel can pass decisions along but can't
 make one. Trust and rule changes are signed over the version of them the
 browser showed, so one made since is refused rather than overwritten, and
-an old one can't be sent again. A browser that isn't an approver sees
-requests, questions, and rules but can't answer or change them.
+an old one can't be sent again. Only an approver's browser gets into the
+world at all, as [Approvers](#approvers) describes.
 `skylands request history` lists every decision on tool calls on the
 host, with who made it and whether its signature still verifies, and
 `skylands request history --show <id>` prints one decision whole: its
@@ -441,7 +453,10 @@ people open the citadel at, and `--leaf-url` the one daemons dial.
 | `make snapshot` | Builds every release archive into `dist/` with goreleaser, publishing nothing |
 
 For client work, `cd web && npm run dev` serves the client with live reload
-and proxies the WebSocket to a citadel running on port 8080.
+and proxies the WebSocket and the API to a citadel running on port 8080.
+The dev server is an address of its own, so once that world is set up, a
+browser signs in there only after an invite link, with its host changed to
+the dev server's, or the recovery file makes it an approver there too.
 
 ### Releasing
 

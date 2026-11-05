@@ -30,34 +30,45 @@ type startSessionRequest struct {
 // api is the citadel's HTTP API for browsers: the commands the world view
 // can send. Each one is relayed to the daemon that owns the target by
 // request-reply, and the daemon's answer comes back.
+//
+// Once the world exists, every call needs a signed-in approver, except
+// what a browser without a key needs to become an approver and sign in:
+// setting the world up, which the one-time token guards; reading the
+// world, its approvers, and a voucher, which only someone holding the link
+// can name; and enrolling with an entry the owner key or a voucher's claim
+// key signed.
 func (c *citadel) api() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/world", c.getWorld)
 	mux.HandleFunc("POST /api/world/setup", c.setupWorld)
 	mux.HandleFunc("GET /api/world/approvers", c.getApprovers)
 	mux.HandleFunc("POST /api/world/approvers", c.addApprover)
-	mux.HandleFunc("POST /api/world/vouchers", c.addVoucher)
 	mux.HandleFunc("GET /api/world/vouchers/{claim}", c.getVoucher)
-	mux.HandleFunc("POST /api/world/revocations", c.revokeApprover)
-	mux.HandleFunc("POST /api/sessions", c.startSession)
-	mux.HandleFunc("POST /api/sessions/{host}/{id}/prompt", c.sendPrompt)
-	mux.HandleFunc("POST /api/sessions/{host}/{id}/cancel", c.cancelTurn)
-	mux.HandleFunc("POST /api/sessions/{host}/{id}/stop", c.stopAgent)
-	mux.HandleFunc("POST /api/sessions/{host}/{id}/requests/{rid}/approve", c.approve)
-	mux.HandleFunc("POST /api/sessions/{host}/{id}/requests/{rid}/deny", c.deny)
-	mux.HandleFunc("POST /api/sessions/{host}/{id}/questions/{qid}/answer", c.answer)
-	mux.HandleFunc("POST /api/sessions/{host}/{id}/trust", c.trust)
-	mux.HandleFunc("POST /api/sessions/{host}/{id}/rules", c.sessionRules)
-	mux.HandleFunc("POST /api/repos/{host}/{id}/rules", c.repoRules)
-	mux.HandleFunc("POST /api/sessions/{host}/{id}/commit", c.commit)
-	mux.HandleFunc("POST /api/sessions/{host}/{id}/merge", c.merge)
-	mux.HandleFunc("POST /api/sessions/{host}/{id}/pull-request", c.pullRequest)
-	mux.HandleFunc("GET /api/sessions/{host}/{id}/transcript", c.fetchFromHost(v1.FetchTranscript))
-	mux.HandleFunc("GET /api/sessions/{host}/{id}/diff", c.fetchFromHost(v1.FetchDiff))
-	mux.HandleFunc("GET /api/sessions/{host}/{id}/changes", c.fetchFromHost(v1.FetchChanges))
-	mux.HandleFunc("GET /api/sessions/{host}/{id}/tools/{tid}", c.fetchFromHost(v1.FetchToolCall))
-	mux.HandleFunc("GET /api/sessions/{host}/{id}/requests/{rid}/input", c.fetchFromHost(v1.FetchRequestInput))
-	return mux
+	mux.HandleFunc("GET /api/signin", c.getSignIn)
+	mux.HandleFunc("POST /api/signin", c.postSignIn)
+
+	signedIn := func(pattern string, h http.HandlerFunc) { mux.Handle(pattern, c.requireSignIn(h)) }
+	signedIn("POST /api/world/vouchers", c.addVoucher)
+	signedIn("POST /api/world/revocations", c.revokeApprover)
+	signedIn("POST /api/sessions", c.startSession)
+	signedIn("POST /api/sessions/{host}/{id}/prompt", c.sendPrompt)
+	signedIn("POST /api/sessions/{host}/{id}/cancel", c.cancelTurn)
+	signedIn("POST /api/sessions/{host}/{id}/stop", c.stopAgent)
+	signedIn("POST /api/sessions/{host}/{id}/requests/{rid}/approve", c.approve)
+	signedIn("POST /api/sessions/{host}/{id}/requests/{rid}/deny", c.deny)
+	signedIn("POST /api/sessions/{host}/{id}/questions/{qid}/answer", c.answer)
+	signedIn("POST /api/sessions/{host}/{id}/trust", c.trust)
+	signedIn("POST /api/sessions/{host}/{id}/rules", c.sessionRules)
+	signedIn("POST /api/repos/{host}/{id}/rules", c.repoRules)
+	signedIn("POST /api/sessions/{host}/{id}/commit", c.commit)
+	signedIn("POST /api/sessions/{host}/{id}/merge", c.merge)
+	signedIn("POST /api/sessions/{host}/{id}/pull-request", c.pullRequest)
+	signedIn("GET /api/sessions/{host}/{id}/transcript", c.fetchFromHost(v1.FetchTranscript))
+	signedIn("GET /api/sessions/{host}/{id}/diff", c.fetchFromHost(v1.FetchDiff))
+	signedIn("GET /api/sessions/{host}/{id}/changes", c.fetchFromHost(v1.FetchChanges))
+	signedIn("GET /api/sessions/{host}/{id}/tools/{tid}", c.fetchFromHost(v1.FetchToolCall))
+	signedIn("GET /api/sessions/{host}/{id}/requests/{rid}/input", c.fetchFromHost(v1.FetchRequestInput))
+	return sameOrigin(mux)
 }
 
 // rulesBody is the body of the rule endpoints: the whole list, the

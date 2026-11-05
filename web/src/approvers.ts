@@ -1,6 +1,7 @@
 import { keepStorage, keyFromSeed, loadApprover, newApproverKey, seedOf, sign, type Signed } from './approver'
 import { answersHash, DECISION_VERSION, formHash, normalizeRules, rulesHash, signDecision, type Decision, type DecisionSignature } from './decision'
 import type { ApproverInfo, Permission, Question, Repo, Rule, Session, VoucherInfo } from './protocol'
+import { api } from './signin'
 import type { State, Store } from './store'
 
 /** What the Approvers section can do: show an "Add an approver" link, and revoke an approver once confirmed. */
@@ -36,7 +37,7 @@ export function myApprover(s: State): ApproverInfo | null {
 }
 
 async function post(path: string, body: unknown): Promise<unknown> {
-  const resp = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  const resp = await api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   const data = (await resp.json().catch(() => ({}))) as { error?: string }
   if (!resp.ok) throw new Error(data.error ?? `The citadel answered ${resp.status}.`)
   return data

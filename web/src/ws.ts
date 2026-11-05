@@ -1,4 +1,5 @@
 import type { Island, Live, Message, Repo, Session, WorldInfo } from './protocol'
+import { signedOut, signIn } from './signin'
 import type { Store } from './store'
 
 /** The browser's side of the socket, beyond listening. */
@@ -24,7 +25,19 @@ export function connectToCitadel(store: Store, onLive: (host: string, id: string
     ws.send(JSON.stringify(watched ? { type: 'watch', ...watched } : { type: 'unwatch' }))
   }
 
-  const connect = (): void => {
+  const retry = (): void => {
+    store.update({ link: 'lost' })
+    setTimeout(() => void connect(), retryDelay)
+    retryDelay = Math.min(retryDelay * 2, 10000)
+  }
+
+  // Every connection signs in first, when the page opens and on each
+  // reconnect, which is also how a browser whose approver was revoked, and
+  // whose socket the citadel closed, finds out.
+  const connect = async (): Promise<void> => {
+    const r = await signIn()
+    if (r === 'no-key' || r === 'refused') return signedOut()
+    if (r === 'unavailable') return retry()
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
     ws = new WebSocket(`${scheme}://${location.host}/ws`)
     ws.addEventListener('open', () => {
@@ -72,14 +85,10 @@ export function connectToCitadel(store: Store, onLive: (host: string, id: string
           break
       }
     })
-    ws.addEventListener('close', () => {
-      store.update({ link: 'lost' })
-      setTimeout(connect, retryDelay)
-      retryDelay = Math.min(retryDelay * 2, 10000)
-    })
+    ws.addEventListener('close', retry)
   }
 
-  connect()
+  void connect()
   return {
     watch(host, id) {
       const next = host && id ? { host, id } : null

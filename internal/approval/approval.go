@@ -171,6 +171,26 @@ func OpenRevocation(s v1.Signed, owner string) (v1.Revocation, error) {
 	return r, nil
 }
 
+// OpenSignIn verifies a sign-in signed by an approver key, for the world
+// owner names. Whether its signer is an approver, and whether it is current
+// and for this citadel, are the citadel's to decide.
+func OpenSignIn(s v1.Signed, owner string) (v1.SignIn, error) {
+	var in v1.SignIn
+	if err := open(s, &in); err != nil {
+		return in, err
+	}
+	if in.Type != "signin" {
+		return in, fmt.Errorf("a sign-in has type %q", in.Type)
+	}
+	if in.World != owner {
+		return in, errors.New("the sign-in is for another world")
+	}
+	if !nkeys.IsValidPublicUserKey(s.Signer) {
+		return in, errors.New("the sign-in is not signed by an approver key")
+	}
+	return in, nil
+}
+
 // open verifies s and decodes its payload into v.
 func open(s v1.Signed, v any) error {
 	if err := Verify(s); err != nil {

@@ -22,6 +22,7 @@ import {
   type Signed,
 } from './approver'
 import { byId, el } from './dom'
+import { signIn } from './signin'
 import type { ApproverInfo, VoucherInfo, WorldInfo } from './protocol'
 
 /**
@@ -267,7 +268,7 @@ async function renderReady(w: WorldInfo): Promise<void> {
     nameInput,
     privateNote(),
     error,
-    el('div', { class: 'actions' }, [recover, el('a', { class: 'btn ghost', href: '/', text: 'Open the world' })]),
+    el('div', { class: 'actions' }, [recover]),
   )
 }
 
@@ -346,9 +347,13 @@ async function renderClaim(w: WorldInfo, seed: string): Promise<void> {
   )
 }
 
-/** The end of setup or recovery: asks the browser to keep this origin's storage, and says whether it will. */
+/**
+ * The end of setup, recovery, or an invite link: signs in with the new key,
+ * so the world opens signed in, and asks the browser to keep this origin's
+ * storage, and says whether it will.
+ */
 async function done(title: string, message: string): Promise<void> {
-  const kept = await keepStorage()
+  const [, kept] = await Promise.all([signIn(), keepStorage()])
   show(
     el('h1', { text: title }),
     el('p', { text: message }),

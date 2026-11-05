@@ -44,7 +44,14 @@ type Config struct {
 	// through another loopback name, such as localhost for 127.0.0.1, is
 	// sent there, so a browser always finds what it keeps for this origin.
 	Canonical string
+	// SignedIn, if set, says who a WebSocket request signed in as, which
+	// Drop is later asked about, or the status and reason to refuse it with.
+	SignedIn func(r *http.Request) (who string, status int, why string)
 }
+
+// StatusSignIn closes a browser's WebSocket when what it signed in as no
+// longer lets it see the world, so it signs in again and finds out why.
+const StatusSignIn websocket.StatusCode = 4401
 
 // Server serves the web client and the WebSocket browsers subscribe to.
 type Server struct {
@@ -75,6 +82,10 @@ func (s *Server) Handler() http.Handler { return s.mux }
 
 // Broadcast sends m to every connected browser.
 func (s *Server) Broadcast(m Message) { s.hub.broadcast(m) }
+
+// Drop closes, with StatusSignIn, every browser's WebSocket whose sign-in
+// keep refuses, such as an approver just revoked.
+func (s *Server) Drop(keep func(who string) bool) { s.hub.drop(keep) }
 
 // Run listens on the configured address and serves until ctx is cancelled.
 func (s *Server) Run(ctx context.Context) error {
@@ -109,15 +120,25 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
-	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		OriginPatterns: []string{"localhost:*", "127.0.0.1:*"},
-	})
+	var who string
+	if s.cfg.SignedIn != nil {
+		var status int
+		var why string
+		if who, status, why = s.cfg.SignedIn(r); status != 0 {
+			http.Error(w, why, status)
+			return
+		}
+	}
+	// Only this citadel's own pages may connect. A browser sends the
+	// sign-in cookie with a socket opened from any page on the same site,
+	// such as another port on 127.0.0.1, so the origin has to match too.
+	c, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		slog.Debug("web: websocket accept", "remote", r.RemoteAddr, "err", err)
 		return
 	}
 	defer func() { _ = c.CloseNow() }()
-	s.hub.add(c)
+	s.hub.add(c, who)
 	defer s.hub.remove(c)
 
 	ctx, cancel := context.WithCancel(r.Context())

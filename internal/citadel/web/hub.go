@@ -14,20 +14,20 @@ import (
 const writeTimeout = 5 * time.Second
 
 // hub tracks the open WebSocket connections so a message can go to all of
-// them.
+// them, with who each one signed in as.
 type hub struct {
 	mu    sync.Mutex
-	conns map[*websocket.Conn]struct{}
+	conns map[*websocket.Conn]string
 }
 
 func newHub() *hub {
-	return &hub{conns: make(map[*websocket.Conn]struct{})}
+	return &hub{conns: make(map[*websocket.Conn]string)}
 }
 
-func (h *hub) add(c *websocket.Conn) {
+func (h *hub) add(c *websocket.Conn, who string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.conns[c] = struct{}{}
+	h.conns[c] = who
 }
 
 func (h *hub) remove(c *websocket.Conn) {
@@ -58,6 +58,24 @@ func (h *hub) broadcast(m Message) {
 		if err := writeWithTimeout(c, data); err != nil {
 			_ = c.CloseNow()
 		}
+	}
+}
+
+// drop closes every connection whose sign-in keep refuses. It stops
+// sending to them at once, and closes them in the background, since a
+// close waits for the browser to answer.
+func (h *hub) drop(keep func(who string) bool) {
+	h.mu.Lock()
+	var gone []*websocket.Conn
+	for c, who := range h.conns {
+		if !keep(who) {
+			gone = append(gone, c)
+			delete(h.conns, c)
+		}
+	}
+	h.mu.Unlock()
+	for _, c := range gone {
+		go func() { _ = c.Close(StatusSignIn, "sign in again") }()
 	}
 }
 

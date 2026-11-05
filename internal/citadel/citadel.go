@@ -1,7 +1,8 @@
 // Package citadel implements the citadel role: the world's web application
-// and observer. A citadel serves the 3D client and the phone inbox,
-// builds projections from the world's streams, relays signed approvals to
-// the daemon that owns each session, and sends push notifications. It
+// and observer. A citadel serves the 3D client and the phone inbox to
+// browsers that sign in with an approver key, builds projections from the
+// world's streams, relays signed approvals to the daemon that owns each
+// session, and sends push notifications. It
 // connects to NATS as an ordinary client and embeds no server. Any number of
 // citadels can run against one world, and they are interchangeable.
 package citadel
@@ -41,7 +42,8 @@ type Config struct {
 	// world, shown where the citadel tells a person how to add a host.
 	LeafURL string
 	// OnSetupLink, if set, is told the link to set the world up while
-	// there is no world, and "" once there is one.
+	// there is no world, and "" once there is one, and shows it to whoever
+	// started the citadel. Without it, the citadel logs the link.
 	OnSetupLink func(link string)
 	// PollInterval is how often the citadel pings daemons, and PollWindow
 	// how long it collects replies. Zero means the defaults of two seconds
@@ -94,7 +96,7 @@ func Run(ctx context.Context, cfg Config) error {
 		slog.Warn("web: this binary has no web client, so the browser gets a placeholder page; " +
 			"use a release binary from " + web.ReleasesURL + ", or build with make web && make build")
 	}
-	c.web = web.New(web.Config{Addr: cfg.HTTPAddr, Snapshot: c.snapshot, Dist: dist, API: c.api(), Live: c.live, NeedsSetup: c.needsSetup, Canonical: c.publicURL()})
+	c.web = web.New(web.Config{Addr: cfg.HTTPAddr, Snapshot: c.snapshot, Dist: dist, API: c.api(), Live: c.live, NeedsSetup: c.needsSetup, Canonical: c.publicURL(), SignedIn: c.signedInAs})
 
 	opts := []nats.Option{
 		nats.Name("skylands-citadel"),

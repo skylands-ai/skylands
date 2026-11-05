@@ -1,5 +1,6 @@
 import { byteLength } from './live'
 import type { Changes, ToolCallDetail } from './protocol'
+import { api } from './signin'
 
 /** What can be fetched from a host about one session. A tool call is named by its id. */
 export type FetchKind = 'transcript' | 'diff' | 'changes' | 'toolcall'
@@ -60,7 +61,7 @@ export class FetchCache {
   private async load(kind: FetchKind, host: string, id: string, sub: string, e: Fetched): Promise<void> {
     try {
       const base = `/api/sessions/${encodeURIComponent(host)}/${encodeURIComponent(id)}`
-      const resp = await fetch(kind === 'toolcall' ? `${base}/tools/${encodeURIComponent(sub)}` : `${base}/${kind}`)
+      const resp = await api(kind === 'toolcall' ? `${base}/tools/${encodeURIComponent(sub)}` : `${base}/${kind}`)
       const body = (await resp.json().catch(() => ({}))) as { text?: string; truncated?: boolean; length?: number; error?: string }
       if (!resp.ok) {
         e.error = body.error ?? `The citadel answered ${resp.status}.`
