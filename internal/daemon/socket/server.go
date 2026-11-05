@@ -26,6 +26,9 @@ type API interface {
 	// History lists every request answered or expired, oldest first, in
 	// one session or, with "", in all of them.
 	History(ctx context.Context, session string) []DecisionInfo
+	// Decision is one answered or expired request with the input it named
+	// and what its tool call produced, as the host kept them.
+	Decision(ctx context.Context, requestID string) (DecisionDetail, error)
 	Approve(ctx context.Context, requestID, commandID string) (RequestInfo, error)
 	Deny(ctx context.Context, requestID, commandID string) (RequestInfo, error)
 	// Sessions lists every session on this host, newest first.
@@ -79,6 +82,17 @@ func Serve(ctx context.Context, ln net.Listener, api API) error {
 
 	mux.HandleFunc("GET /v1/requests/history", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, api.History(r.Context(), r.URL.Query().Get("session")))
+	})
+	mux.HandleFunc("GET /v1/requests/{id}/decision", func(w http.ResponseWriter, r *http.Request) {
+		d, err := api.Decision(r.Context(), r.PathValue("id"))
+		switch {
+		case errors.Is(err, session.ErrUnknownRequest):
+			reply(w, http.StatusNotFound, ErrorResponse{Error: err.Error()})
+		case err != nil:
+			reply(w, http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		default:
+			reply(w, http.StatusOK, d)
+		}
 	})
 	mux.HandleFunc("GET /v1/requests", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, api.Requests(r.Context()))

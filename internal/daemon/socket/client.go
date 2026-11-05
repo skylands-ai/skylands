@@ -68,6 +68,14 @@ func (c *Client) History(ctx context.Context, session string) ([]DecisionInfo, e
 	return out, err
 }
 
+// Decision is one answered or expired request with the input it named and
+// what its tool call produced, as the host kept them, unchecked.
+func (c *Client) Decision(ctx context.Context, requestID string) (DecisionDetail, error) {
+	var out DecisionDetail
+	err := c.call(ctx, http.MethodGet, "/v1/requests/"+url.PathEscape(requestID)+"/decision", nil, &out)
+	return out, err
+}
+
 // Approve answers a waiting request with the agent's first allow option.
 func (c *Client) Approve(ctx context.Context, requestID string) (RequestInfo, error) {
 	var out RequestInfo

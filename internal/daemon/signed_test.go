@@ -254,6 +254,39 @@ func TestDecisionsMustBeSigned(t *testing.T) {
 	if only, err := w.cli.History(ctx, "sess-2"); err != nil || len(only) != 1 || only[0].Session != "sess-2" {
 		t.Errorf("the history of one session = %+v, %v", only, err)
 	}
+
+	// Each decision shows whole: its signature, the exact input it covers,
+	// and what the tool call produced, kept on the host under their hashes.
+	var shown socket.DecisionDetail
+	var err error
+	w.waitFor("the approved edit's output", func() bool {
+		shown, err = w.cli.Decision(ctx, req.ID)
+		return err == nil && shown.CallStatus != ""
+	})
+	if !shown.InputKept || hex.EncodeToString(func() []byte { s := sha256.Sum256(shown.Input); return s[:] }()) != shown.InputHash || shown.InputHash != input {
+		t.Errorf("the approved input = kept %v, %d bytes, hash %s", shown.InputKept, len(shown.Input), shown.InputHash)
+	}
+	outSum := sha256.Sum256(shown.Output)
+	if shown.CallStatus != "completed" || !shown.OutputKept || hex.EncodeToString(outSum[:]) != shown.OutputHash || len(shown.Output) != shown.OutputSize {
+		t.Errorf("the approved edit's output = %s, kept %v, %d of %d bytes", shown.CallStatus, shown.OutputKept, len(shown.Output), shown.OutputSize)
+	}
+	if shown.Sig == "" || shown.World != ownerPub || shown.Approver != laptopPub || shown.Signature != "verified" || shown.ToolCall == "" {
+		t.Errorf("the approval shown = %+v", shown.DecisionInfo)
+	}
+	verdict := approval.ToolCall{V: approval.DecisionVersion, Kind: approval.KindToolCall, World: shown.World, Host: "ws", Session: shown.Session, Request: shown.Request, Decision: "allow", Option: shown.Option, Input: shown.InputHash}
+	if err := approval.VerifyDecision(verdict, v1.DecisionSignature{Approver: shown.Approver, Sig: shown.Sig}); err != nil {
+		t.Errorf("the signature shown doesn't verify over the decision shown: %v", err)
+	}
+	w.waitFor("the denied edit to fail", func() bool {
+		shown, err = w.cli.Decision(ctx, req2.ID)
+		return err == nil && shown.CallStatus != ""
+	})
+	if shown.Answer != "denied" || !shown.InputKept || shown.CallStatus != "failed" || !shown.OutputKept {
+		t.Errorf("the denial shown = %s, input kept %v, call %s, output kept %v", shown.Answer, shown.InputKept, shown.CallStatus, shown.OutputKept)
+	}
+	if _, err := w.cli.Decision(ctx, "no-such-request"); err == nil {
+		t.Error("a decision on no request was shown")
+	}
 	// Revoking the laptop leaves what it decided standing, and the history
 	// says it no longer approves.
 	revokeLaptop, _ := approval.Sign(owner, v1.Revocation{Type: "revocation", World: ownerPub, Key: laptopPub, Created: approval.Now()})

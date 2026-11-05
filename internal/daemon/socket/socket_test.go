@@ -100,6 +100,12 @@ func (f *fakeAPI) Requests(context.Context) []RequestInfo { return []RequestInfo
 func (f *fakeAPI) History(context.Context, string) []DecisionInfo {
 	return []DecisionInfo{}
 }
+func (f *fakeAPI) Decision(_ context.Context, requestID string) (DecisionDetail, error) {
+	if requestID != "r1" {
+		return DecisionDetail{}, session.ErrUnknownRequest
+	}
+	return DecisionDetail{DecisionInfo: DecisionInfo{Request: "r1", Answer: "allowed"}, InputHash: "h", InputSize: 2, Input: []byte("{}"), InputKept: true}, nil
+}
 func (f *fakeAPI) Approve(_ context.Context, requestID, _ string) (RequestInfo, error) {
 	return RequestInfo{ID: requestID}, nil
 }
