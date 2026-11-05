@@ -333,7 +333,7 @@ The citadel is the world's web application and observer. It never writes session
 
 ### Web application
 
-- Serves the 3D client and the phone inbox, and authenticates people with passkeys.
+- Serves the 3D client and the phone inbox, and authenticates people.
 - Holds each browser's session and permissions; browsers never connect to NATS.
 - Streams projections to browsers over WebSocket and sends push notifications for waiting items.
 - Routes each session command to its owning daemon by request-reply, and returns the daemon's answer.
@@ -466,7 +466,6 @@ skylands/
 │   │   ├── workorder/         WorkOrder aggregate
 │   │   ├── projections/       in-memory projections, KV snapshots
 │   │   ├── service/           skylands-citadel micro endpoints, commands and queries
-│   │   ├── passkeys/          WebAuthn ceremonies
 │   │   ├── push/              phone notifications
 │   │   └── web/               HTTP and WebSocket server for browsers
 │   ├── daemon/
