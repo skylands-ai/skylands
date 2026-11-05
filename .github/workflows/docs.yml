@@ -1,0 +1,53 @@
+# Builds the documentation site in docsite/ and publishes it to GitHub Pages
+# at docs.skylands.ai. A release tag publishes, so the site describes the
+# binaries people download; so does running the workflow by hand. A pull
+# request that changes the site only builds it.
+name: Docs
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths: ["docsite/**", ".github/workflows/docs.yml", "Makefile"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One publish at a time, and a newer one doesn't cancel one in progress.
+concurrency:
+  group: pages-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          # Astro needs 22.23.4 or newer.
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docsite/package-lock.json
+      - run: make docs
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: docsite/dist
+
+  publish:
+    name: Publish
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
