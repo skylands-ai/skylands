@@ -1,0 +1,113 @@
+/*
+ * The citadel's design language on Starlight. The colors are the web
+ * client's tokens (web/src/style.css): its surface, line, text, muted, and
+ * accent in light and dark, and its yellow flare for primary buttons. The
+ * fonts are its own: Barlow for text, Sora for the name and page titles,
+ * and JetBrains Mono for code.
+ */
+
+/* Dark, which Starlight defines on :root. */
+:root {
+	--sl-font: Barlow, 'Helvetica Neue', Arial, sans-serif;
+	--sl-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+	--sl-color-white: #ffffff;
+	--sl-color-gray-1: #e7eef4; /* text */
+	--sl-color-gray-2: #cbd7e2;
+	--sl-color-gray-3: #9db0c2; /* muted */
+	--sl-color-gray-4: #5b7289;
+	--sl-color-gray-5: #2e4459; /* line */
+	--sl-color-gray-6: #172636; /* surface */
+	--sl-color-black: #101b27; /* bg */
+
+	--sl-color-accent-low: #22385a; /* accent-bg */
+	--sl-color-accent: #8da9ff;
+	--sl-color-accent-high: #c9d7ff;
+	--sl-color-text-accent: var(--sl-color-accent);
+
+	--sl-color-hairline: #2e4459;
+	--sl-color-hairline-light: #2e4459;
+	--sl-color-bg-inline-code: #1d3043; /* surface-2 */
+
+	/* Notes, cautions, dangers, and tips in the app's info, warn, bad, and ok. */
+	--sl-color-blue-low: #22385a;
+	--sl-color-blue: #8da9ff;
+	--sl-color-blue-high: #c9d7ff;
+	--sl-color-orange-low: #40402e;
+	--sl-color-orange: #ffd54a;
+	--sl-color-orange-high: #ffe9a3;
+	--sl-color-red-low: #402e35;
+	--sl-color-red: #ff7a6e;
+	--sl-color-red-high: #ffc4bd;
+	--sl-color-green-low: #233f3b;
+	--sl-color-green: #6fd08c;
+	--sl-color-green-high: #bdebcb;
+
+	--skylands-flare: #ffd54a;
+	--skylands-flare-ink: #1a1708;
+}
+
+:root[data-theme='light'] {
+	--sl-color-white: #0b141d;
+	--sl-color-gray-1: #13202e; /* text */
+	--sl-color-gray-2: #2a3b4d;
+	--sl-color-gray-3: #4d6276; /* muted */
+	--sl-color-gray-4: #8597a9;
+	--sl-color-gray-5: #d2dce6; /* line */
+	--sl-color-gray-6: #e6edf4; /* bg */
+	--sl-color-gray-7: #f0f4f8; /* surface-2 */
+	--sl-color-black: #ffffff; /* surface */
+
+	--sl-color-accent-low: #e3ebfb; /* accent-bg */
+	--sl-color-accent: #2d5bc7;
+	--sl-color-accent-high: #1e3f8f;
+	--sl-color-text-accent: var(--sl-color-accent);
+
+	/* The bar across the top is a surface, as the app's is, and the sidebar
+	   takes the app's blue-grey. */
+	--sl-color-bg-nav: #ffffff;
+	--sl-color-bg-sidebar: #f0f4f8;
+	--sl-color-hairline: #d2dce6;
+	--sl-color-hairline-light: #d2dce6;
+	--sl-color-hairline-shade: #d2dce6;
+	--sl-color-bg-inline-code: #e6edf4;
+
+	--sl-color-blue-low: #e3ebfb;
+	--sl-color-blue: #2d5bc7;
+	--sl-color-blue-high: #1e3f8f;
+	--sl-color-orange-low: #fff4cc;
+	--sl-color-orange: #e0b000;
+	--sl-color-orange-high: #8a6400;
+	--sl-color-red-low: #fbe4e2;
+	--sl-color-red: #d9483b;
+	--sl-color-red-high: #9e2f25;
+	--sl-color-green-low: #dff3e6;
+	--sl-color-green: #2e9e57;
+	--sl-color-green-high: #1d6b3a;
+}
+
+/* The name beside the mark, as in the app's header. */
+.site-title {
+	font-family: Sora, 'Helvetica Neue', Arial, sans-serif;
+	font-weight: 700;
+	letter-spacing: -0.01em;
+	color: var(--sl-color-white);
+}
+
+/* Page titles and section headings in Sora, as the app's setup page titles are. */
+h1#_top,
+.sl-markdown-content h2 {
+	font-family: Sora, Barlow, sans-serif;
+	letter-spacing: -0.01em;
+}
+
+/* Primary buttons are the flare, as the app's are. */
+.sl-link-button.primary {
+	background: var(--skylands-flare);
+	border-color: var(--skylands-flare);
+	color: var(--skylands-flare-ink);
+}
+.sl-link-button.primary:hover {
+	color: var(--skylands-flare-ink);
+	filter: brightness(1.05);
+}

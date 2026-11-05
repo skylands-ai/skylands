@@ -446,6 +446,7 @@ people open the citadel at, and `--leaf-url` the one daemons dial.
 | Command | What it does |
 | --- | --- |
 | `make web` | Builds the web client into `web/dist` |
+| `make docs` | Builds the documentation site in `docsite/` into `docsite/dist`; it needs Node 22.23.4 or newer |
 | `make build` | Builds `bin/skylands` with the embedded client |
 | `make test` | Runs every Go test, including a whole-world test under `test/e2e` |
 | `make lint` | Runs `go vet` and golangci-lint |

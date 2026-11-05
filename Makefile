@@ -2,13 +2,17 @@ MODULE  := github.com/skylands-ai/skylands
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -ldflags "-X $(MODULE)/internal/cli.version=$(VERSION)"
 
-.PHONY: all build web test lint install snapshot
+.PHONY: all build web docs test lint install snapshot
 
 all: build
 
 ## web: build the browser client into web/dist, which the Go build embeds
 web:
 	cd web && npm ci && npm run build
+
+## docs: build the documentation site into docsite/dist, which GitHub Pages publishes
+docs:
+	cd docsite && npm ci && npm run build
 
 ## build: compile the skylands binary into bin/
 build:
