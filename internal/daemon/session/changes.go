@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
+	"github.com/skylands-ai/skylands/internal/approval"
 )
 
 // Changes reports where a session's changes stand on disk.
@@ -55,6 +56,10 @@ func (m *Manager) Commit(ctx context.Context, cmd v1.CommitChanges) (Session, er
 	if err != nil || s.Commit != "" && m.wasHandled(cmd.ID) {
 		return s, err
 	}
+	approver, signature, err := m.signedChange(ctx, s, cmd.Revision, cmd.Signature, approval.ChangeCommit, approval.TextHash(cmd.Message))
+	if err != nil {
+		return s, err
+	}
 	message := strings.TrimSpace(cmd.Message)
 	if message == "" {
 		message = s.Title
@@ -83,7 +88,7 @@ func (m *Manager) Commit(ctx context.Context, cmd v1.CommitChanges) (Session, er
 		return s, err
 	}
 	files, _ := git(ctx, s.Worktree, "show", "--name-only", "--format=", "HEAD")
-	if err := m.record(ctx, s.ID, cmd.ID, v1.EventChangesCommitted, v1.ChangesCommitted{SessionID: s.ID, Commit: commit, Message: message, Files: lines(files)}); err != nil {
+	if err := m.record(ctx, s.ID, cmd.ID, v1.EventChangesCommitted, v1.ChangesCommitted{SessionID: s.ID, Commit: commit, Message: message, Files: lines(files), Approver: approver, Signature: signature}); err != nil {
 		return Session{}, err
 	}
 	m.note(s.ID, "Committed "+short(commit)+": "+firstLine(message)+".")
@@ -100,6 +105,10 @@ func (m *Manager) Merge(ctx context.Context, cmd v1.MergeChanges) (Session, erro
 	defer m.cmdMu.Unlock()
 	s, err := m.forChanges(cmd.ID, cmd.SessionID)
 	if err != nil || s.MergedInto != "" && m.wasHandled(cmd.ID) {
+		return s, err
+	}
+	approver, signature, err := m.signedChange(ctx, s, cmd.Revision, cmd.Signature, approval.ChangeMerge, "")
+	if err != nil {
 		return s, err
 	}
 	if s.InCheckout {
@@ -130,7 +139,7 @@ func (m *Manager) Merge(ctx context.Context, cmd v1.MergeChanges) (Session, erro
 	if err != nil {
 		return s, err
 	}
-	if err := m.record(ctx, s.ID, cmd.ID, v1.EventChangesMerged, v1.ChangesMerged{SessionID: s.ID, Into: s.Base, Commit: commit}); err != nil {
+	if err := m.record(ctx, s.ID, cmd.ID, v1.EventChangesMerged, v1.ChangesMerged{SessionID: s.ID, Into: s.Base, Commit: commit, Approver: approver, Signature: signature}); err != nil {
 		return Session{}, err
 	}
 	m.note(s.ID, "Merged into "+s.Base+" as "+short(commit)+".")
@@ -147,6 +156,14 @@ func (m *Manager) OpenPullRequest(ctx context.Context, cmd v1.OpenPullRequest) (
 	defer m.cmdMu.Unlock()
 	s, err := m.forChanges(cmd.ID, cmd.SessionID)
 	if err != nil || s.PullRequest != "" && m.wasHandled(cmd.ID) {
+		return s, err
+	}
+	text, err := approval.PullRequestHash(cmd.Title, cmd.Body)
+	if err != nil {
+		return s, err
+	}
+	approver, signature, err := m.signedChange(ctx, s, cmd.Revision, cmd.Signature, approval.ChangePullRequest, text)
+	if err != nil {
 		return s, err
 	}
 	if s.InCheckout {
@@ -194,7 +211,7 @@ func (m *Manager) OpenPullRequest(ctx context.Context, cmd v1.OpenPullRequest) (
 	if url == "" {
 		url = strings.TrimSpace(stdout.String())
 	}
-	if err := m.record(ctx, s.ID, cmd.ID, v1.EventPullRequestOpened, v1.PullRequestOpened{SessionID: s.ID, URL: url, Branch: s.Branch}); err != nil {
+	if err := m.record(ctx, s.ID, cmd.ID, v1.EventPullRequestOpened, v1.PullRequestOpened{SessionID: s.ID, URL: url, Branch: s.Branch, Approver: approver, Signature: signature}); err != nil {
 		return Session{}, err
 	}
 	m.note(s.ID, "Opened pull request "+url+".")
@@ -292,6 +309,15 @@ func (m *Manager) Prune(ctx context.Context) []Pruned {
 		out = append(out, Pruned{Session: after, Removed: true, BranchDeleted: branchDeleted})
 	}
 	return out
+}
+
+// signedChange checks a signed commit, merge, or pull request: its
+// signature over the action, the session's revision, and text, which is
+// as approval.Change describes.
+func (m *Manager) signedChange(ctx context.Context, s Session, revision int, sig *v1.DecisionSignature, action, text string) (string, string, error) {
+	return m.signedAt(ctx, s, revision, sig, action+" in "+s.ID, func(world string) approval.Decision {
+		return approval.Change{V: approval.DecisionVersion, Kind: approval.KindChange, World: world, Host: m.cfg.Host, Session: s.ID, Revision: s.Revision, Action: action, Text: text}
+	})
 }
 
 // forChanges finds the session a changes command is for and checks that

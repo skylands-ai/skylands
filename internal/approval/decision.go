@@ -26,6 +26,16 @@ const (
 	KindTrust        = "trust"
 	KindSessionRules = "session-rules"
 	KindRepoRules    = "repo-rules"
+	KindStart        = "start"
+	KindPrompt       = "prompt"
+	KindChange       = "change"
+)
+
+// The actions a Change decision names.
+const (
+	ChangeCommit      = "commit"
+	ChangeMerge       = "merge"
+	ChangePullRequest = "pull-request"
 )
 
 // Decision is what an approver signs: one of the decisions below. Its
@@ -122,6 +132,74 @@ type RepoRules struct {
 
 func (d RepoRules) header() (int, string, string) { return d.V, d.Kind, KindRepoRules }
 
+// Start starts a session with its first prompt. The browser picks the
+// session's id, so a signed start starts one session only.
+type Start struct {
+	V       int    `json:"v"`
+	Kind    string `json:"kind"`
+	World   string `json:"world"`
+	Host    string `json:"host"`
+	Session string `json:"session"`
+	Repo    string `json:"repo"`
+	Agent   string `json:"agent"`
+	// Mode and Model are as the command names them: empty for the
+	// adapter's first mode and the agent's own model.
+	Mode       string `json:"mode"`
+	Model      string `json:"model"`
+	InCheckout bool   `json:"inCheckout"`
+	// Prompt is TextHash of the prompt.
+	Prompt string `json:"prompt"`
+}
+
+func (d Start) header() (int, string, string) { return d.V, d.Kind, KindStart }
+
+// Prompt sends a session another prompt.
+type Prompt struct {
+	V       int    `json:"v"`
+	Kind    string `json:"kind"`
+	World   string `json:"world"`
+	Host    string `json:"host"`
+	Session string `json:"session"`
+	// Revision is the session's revision the prompt was sent at, which
+	// the prompt moves on, so the signature can't be used again.
+	Revision int `json:"revision"`
+	// Prompt is TextHash of the prompt.
+	Prompt string `json:"prompt"`
+}
+
+func (d Prompt) header() (int, string, string) { return d.V, d.Kind, KindPrompt }
+
+// Change commits a session's worktree, merges its branch, or opens a pull
+// request from it.
+type Change struct {
+	V       int    `json:"v"`
+	Kind    string `json:"kind"`
+	World   string `json:"world"`
+	Host    string `json:"host"`
+	Session string `json:"session"`
+	// Revision is as in Prompt.
+	Revision int `json:"revision"`
+	// Action is ChangeCommit, ChangeMerge, or ChangePullRequest.
+	Action string `json:"action"`
+	// Text is TextHash of a commit's message, PullRequestHash of a pull
+	// request's title and body, and "" for a merge.
+	Text string `json:"text"`
+}
+
+func (d Change) header() (int, string, string) { return d.V, d.Kind, KindChange }
+
+// TextHash is the SHA-256 of a text's UTF-8 bytes, in lowercase hex.
+func TextHash(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
+}
+
+// PullRequestHash is the SHA-256 of a pull request's title and body as
+// canonical JSON, in lowercase hex.
+func PullRequestHash(title, body string) (string, error) {
+	return HashJSON(map[string]string{"title": title, "body": body})
+}
+
 // Digest is the SHA-256 of the decision's canonical JSON, which is what is
 // signed.
 func Digest(d Decision) ([]byte, error) {
@@ -155,8 +233,9 @@ func SignDecision(kp nkeys.KeyPair, d Decision) (v1.DecisionSignature, error) {
 // than the daemon's: something else changed them since.
 var ErrStale = errors.New("this changed since it was shown; look again")
 
-// ErrUnsigned is a decision through the citadel that no approver signed.
-var ErrUnsigned = errors.New("a decision through the citadel must be signed by one of the world's approvers")
+// ErrUnsigned is a decision, or a command that sets an agent working or
+// changes the repository, through the citadel that no approver signed.
+var ErrUnsigned = errors.New("this must be signed by one of the world's approvers when it comes through the citadel")
 
 // ErrBadSignature is a decision signature that doesn't verify.
 var ErrBadSignature = errors.New("the decision's signature doesn't verify")

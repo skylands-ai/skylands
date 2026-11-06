@@ -35,6 +35,9 @@ type signedWorld struct {
 	cli      *socket.Client
 	owner    nkeys.KeyPair
 	ownerPub string
+	// starter is an approver that signs the sessions' starts, and is never
+	// revoked.
+	starter nkeys.KeyPair
 }
 
 func (w *signedWorld) approver(name string) (nkeys.KeyPair, string) {
@@ -65,7 +68,7 @@ func (w *signedWorld) command(session, typ string, body any) v1.Reply {
 // waiting starts a session and returns its request once it waits.
 func (w *signedWorld) waiting(session, repoID string) socket.RequestInfo {
 	w.t.Helper()
-	if r := w.command(session, v1.CommandStartSession, v1.StartSession{ID: "start-" + session, SessionID: session, RepoID: repoID, Agent: "fake", Prompt: "fix it"}); r.Error != "" {
+	if r := w.command(session, v1.CommandStartSession, w.startCommand(session, repoID, "fix it")); r.Error != "" {
 		w.t.Fatalf("StartSession: %s", r.Error)
 	}
 	for deadline := time.Now().Add(20 * time.Second); ; {
@@ -127,6 +130,7 @@ func startSignedWorld(t *testing.T, ctx context.Context) (*signedWorld, socket.R
 			t.Errorf("daemon.Run returned %v", err)
 		}
 	})
+	w.starter, _ = w.approver("starter")
 	var repo socket.RepoInfo
 	for deadline := time.Now().Add(10 * time.Second); ; {
 		if repo, err = w.cli.RegisterRepo(ctx, gitRepo(t, "main.go")); err == nil {
@@ -333,9 +337,17 @@ func (w *signedWorld) waitFor(what string, ok func() bool) {
 // start starts a session on the fake agent.
 func (w *signedWorld) start(id, repoID, prompt string) {
 	w.t.Helper()
-	if r := w.command(id, v1.CommandStartSession, v1.StartSession{ID: "start-" + id, SessionID: id, RepoID: repoID, Agent: "fake", Prompt: prompt}); r.Error != "" {
+	if r := w.command(id, v1.CommandStartSession, w.startCommand(id, repoID, prompt)); r.Error != "" {
 		w.t.Fatalf("StartSession: %s", r.Error)
 	}
+}
+
+// startCommand starts a session on the fake agent, signed by the starter.
+func (w *signedWorld) startCommand(id, repoID, prompt string) v1.StartSession {
+	w.t.Helper()
+	cmd := v1.StartSession{ID: "start-" + id, SessionID: id, RepoID: repoID, Agent: "fake", Prompt: prompt}
+	cmd.Signature = w.sign(w.starter, approval.Start{V: approval.DecisionVersion, Kind: approval.KindStart, World: w.ownerPub, Host: "ws", Session: id, Repo: repoID, Agent: "fake", Prompt: approval.TextHash(prompt)})
+	return cmd
 }
 
 // repoRules is a repository's rules as the host's CLI sees them.
@@ -501,7 +513,9 @@ func TestAnswersTrustAndRulesMustBeSigned(t *testing.T) {
 	}
 	prompt := func(id string) {
 		t.Helper()
-		if r := w.command(id, v1.CommandSendPrompt, v1.SendPrompt{ID: "again-" + id, Text: "fix it again"}); r.Error != "" {
+		// Each session has had its first prompt, which is its revision.
+		sig := w.sign(w.starter, approval.Prompt{V: approval.DecisionVersion, Kind: approval.KindPrompt, World: world, Host: "ws", Session: id, Revision: 1, Prompt: approval.TextHash("fix it again")})
+		if r := w.command(id, v1.CommandSendPrompt, v1.SendPrompt{ID: "again-" + id, Text: "fix it again", Revision: 1, Signature: sig}); r.Error != "" {
 			t.Fatalf("prompt %s: %s", id, r.Error)
 		}
 	}

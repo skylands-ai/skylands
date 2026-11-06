@@ -76,6 +76,15 @@ func decode(t *testing.T, raw json.RawMessage) Decision {
 	case KindAnswer:
 		var x Answer
 		err, d = json.Unmarshal(raw, &x), x
+	case KindStart:
+		var x Start
+		err, d = json.Unmarshal(raw, &x), x
+	case KindPrompt:
+		var x Prompt
+		err, d = json.Unmarshal(raw, &x), x
+	case KindChange:
+		var x Change
+		err, d = json.Unmarshal(raw, &x), x
 	case KindTrust:
 		var x Trust
 		err, d = json.Unmarshal(raw, &x), x
@@ -193,6 +202,15 @@ func TestVerifyDecisionRefuses(t *testing.T) {
 			changed = x
 		case RepoRules:
 			x.Rules = x.Rules[:63] + "0"
+			changed = x
+		case Start:
+			x.Mode = ""
+			changed = x
+		case Prompt:
+			x.Revision++
+			changed = x
+		case Change:
+			x.Action = ChangeCommit + "s"
 			changed = x
 		}
 		if err := VerifyDecision(changed, vd.Signature); !errors.Is(err, ErrBadSignature) {

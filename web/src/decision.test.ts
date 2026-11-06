@@ -2,7 +2,7 @@ import { fromSeed } from '@nats-io/nkeys'
 import { bytesToHex } from '@noble/hashes/utils.js'
 import { describe, expect, it } from 'vitest'
 import { canonicalize } from './canonical'
-import { answersHash, decisionDigest, formHash, normalizeRules, rulesHash, signDecision, type Decision, type DecisionSignature } from './decision'
+import { answersHash, decisionDigest, formHash, normalizeRules, pullRequestHash, rulesHash, signDecision, textHash, type Decision, type DecisionSignature } from './decision'
 import type { QuestionField, Rule } from './protocol'
 import raw from '../../internal/approval/testdata/decision-vector.json?raw'
 
@@ -18,7 +18,7 @@ const kp = () => fromSeed(new TextEncoder().encode(v.seed))
 
 describe('signDecision', () => {
   it('reproduces every Go decision byte for byte', () => {
-    expect(new Set(v.decisions.map((d) => d.decision.kind))).toEqual(new Set(['toolcall', 'answer', 'trust', 'session-rules', 'repo-rules']))
+    expect(new Set(v.decisions.map((d) => d.decision.kind))).toEqual(new Set(['toolcall', 'answer', 'trust', 'session-rules', 'repo-rules', 'start', 'prompt', 'change']))
     for (const d of v.decisions) {
       expect(canonicalize(d.decision)).toBe(d.canonical)
       expect(bytesToHex(decisionDigest(d.decision))).toBe(d.digest)
@@ -37,6 +37,15 @@ describe('hashes', () => {
     expect(formHash(v.form.message, v.form.fields)).toBe(v.form.hash)
     expect(answersHash(v.answers.answers)).toBe(v.answers.hash)
     expect(rulesHash(v.rules.rules)).toBe(v.rules.hash)
+  })
+
+  it('reproduces the Go text and pull request hashes the vector signs', () => {
+    const of = (kind: string) => v.decisions.filter((d) => d.decision.kind === kind).map((d) => d.decision as unknown as Record<string, unknown>)
+    expect(textHash('Fix the flaky test \u00e9\u{1F600}\nThen run it.')).toBe(of('start')[0].prompt)
+    expect(textHash('/review the diff')).toBe(of('prompt')[0].prompt)
+    const changes = of('change')
+    expect(textHash('Make it faster')).toBe(changes.find((c) => c.action === 'commit')?.text)
+    expect(pullRequestHash('Make it faster', "It was slow.\n\nNow it isn't.")).toBe(changes.find((c) => c.action === 'pull-request')?.text)
   })
 
   it('hashes a form the same whether its empty properties are there or not', () => {

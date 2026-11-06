@@ -43,10 +43,14 @@ export interface InboxActions {
   trust(s: Session, trusted: boolean): Promise<string>
   /** Commits everything in the worktree. Resolves with an error message, or empty. */
   commit(s: Session, message: string): Promise<string>
-  /** Merges the session's branch into its base in the checkout. */
-  merge(s: Session): Promise<string>
+  /**
+   * Merges the session's branch into its base in the checkout. after counts
+   * the changes sent just before it, such as a commit, which have moved
+   * the session's revision on from what it shows.
+   */
+  merge(s: Session, after?: number): Promise<string>
   /** Pushes the branch and opens a pull request from it. */
-  pullRequest(s: Session): Promise<string>
+  pullRequest(s: Session, after?: number): Promise<string>
   /** Replaces a session's rules, or its repository's, which new sessions copy. */
   setSessionRules(s: Session, rules: Rule[]): Promise<string>
   setRepoRules(host: string, repoId: string, rules: Rule[]): Promise<string>
@@ -272,8 +276,8 @@ function changesCard(x: Session, f: Fetched | undefined, actions: InboxActions):
     const commit = (): Promise<string> => actions.commit(x, input.value.trim())
     const row = el('div', { class: 'acts' }, [input, button('Commit', !canMerge, () => void act(commit, 'Committing\u2026'))])
     if (canMerge && x.base) {
-      row.appendChild(button(`Commit and merge into ${x.base}`, true, () => void act(async () => (await commit()) || actions.merge(x), 'Committing and merging\u2026')))
-      if (!x.pullRequest) row.appendChild(button('Commit and open a pull request', false, () => void act(async () => (await commit()) || actions.pullRequest(x), 'Committing and pushing\u2026')))
+      row.appendChild(button(`Commit and merge into ${x.base}`, true, () => void act(async () => (await commit()) || actions.merge(x, 1), 'Committing and merging\u2026')))
+      if (!x.pullRequest) row.appendChild(button('Commit and open a pull request', false, () => void act(async () => (await commit()) || actions.pullRequest(x, 1), 'Committing and pushing\u2026')))
     }
     box.appendChild(row)
   } else if (canMerge) {

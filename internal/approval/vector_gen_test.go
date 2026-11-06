@@ -18,10 +18,23 @@ func TestWriteDecisionVector(t *testing.T) {
 	if os.Getenv("SKYLANDS_WRITE_VECTOR") == "" {
 		t.Skip("set SKYLANDS_WRITE_VECTOR to write the vector")
 	}
+	// The key and world are kept from the vector already written, so adding
+	// a decision leaves the others' bytes as they were.
 	kp, _ := nkeys.CreateUser()
-	seed, _ := kp.Seed()
 	owner, _ := nkeys.CreateOperator()
 	ownerPub, _ := owner.PublicKey()
+	if data, err := os.ReadFile("testdata/decision-vector.json"); err == nil {
+		var old vector
+		if json.Unmarshal(data, &old) == nil && old.Seed != "" && len(old.Decisions) > 0 {
+			kp, _ = nkeys.FromSeed([]byte(old.Seed))
+			var first struct {
+				World string `json:"world"`
+			}
+			_ = json.Unmarshal(old.Decisions[0].Decision, &first)
+			ownerPub = first.World
+		}
+	}
+	seed, _ := kp.Seed()
 
 	message := "Which file should I edit? é\U0001F600"
 	fields := []v1.QuestionField{
@@ -37,6 +50,7 @@ func TestWriteDecisionVector(t *testing.T) {
 	answersHash, _ := AnswersHash(answers)
 	list := []v1.Rule{{Decision: "allow", Kind: "execute", Pattern: "go test *"}, {Decision: "deny", Kind: "*", Pattern: "worktree", Source: "repo"}}
 	rulesHash, _ := RulesHash(list)
+	prHash, _ := PullRequestHash("Make it faster", "It was slow.\n\nNow it isn't.")
 
 	decisions := []Decision{
 		ToolCall{V: DecisionVersion, Kind: KindToolCall, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Request: "Req1", Decision: "allow", Option: "allow_once", Input: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
@@ -45,6 +59,11 @@ func TestWriteDecisionVector(t *testing.T) {
 		Trust{V: DecisionVersion, Kind: KindTrust, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Trusted: true, Revision: 2},
 		SessionRules{V: DecisionVersion, Kind: KindSessionRules, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Rules: rulesHash, Revision: 1},
 		RepoRules{V: DecisionVersion, Kind: KindRepoRules, World: ownerPub, Host: "workstation", Repo: "R3po", Rules: rulesHash, Revision: 0},
+		Start{V: DecisionVersion, Kind: KindStart, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Repo: "R3po", Agent: "claude", Mode: "plan", Model: "", InCheckout: true, Prompt: TextHash("Fix the flaky test é\U0001F600\nThen run it.")},
+		Prompt{V: DecisionVersion, Kind: KindPrompt, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Revision: 3, Prompt: TextHash("/review the diff")},
+		Change{V: DecisionVersion, Kind: KindChange, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Revision: 4, Action: ChangeCommit, Text: TextHash("Make it faster")},
+		Change{V: DecisionVersion, Kind: KindChange, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Revision: 5, Action: ChangeMerge},
+		Change{V: DecisionVersion, Kind: KindChange, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Revision: 5, Action: ChangePullRequest, Text: prHash},
 	}
 	var out []vectorDecision
 	for _, d := range decisions {

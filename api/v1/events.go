@@ -286,10 +286,13 @@ type SessionStarted struct {
 	RulesLapsed    bool   `json:"rulesLapsed,omitempty"`
 }
 
-// PromptSent records what a person asked the session to do.
+// PromptSent records what a person asked the session to do, and the
+// approver who signed it with their signature, once the world exists.
 type PromptSent struct {
 	SessionID string `json:"sessionId"`
 	Text      string `json:"text"`
+	Approver  string `json:"approver,omitempty"`
+	Signature string `json:"signature,omitempty"`
 }
 
 // AgentSpawned records that the agent process is up, identified itself,
@@ -441,6 +444,11 @@ type StartSession struct {
 	// InCheckout runs the agent in the registered checkout itself instead
 	// of a worktree of its own. One session at a time may work there.
 	InCheckout bool `json:"inCheckout,omitempty"`
+	// Signature is an approver's signature over the command, as in
+	// ApproveToolCall, which a command through the citadel needs once the
+	// world exists. It names SessionID, which
+	// the browser picks, so a signed start starts one session.
+	Signature *DecisionSignature `json:"signature,omitempty"`
 }
 
 // Reply is the answer to any command: an error, or the handler's result.
@@ -781,6 +789,13 @@ type SendPrompt struct {
 	ID        string `json:"id"`
 	SessionID string `json:"sessionId"`
 	Text      string `json:"text"`
+	// Revision is the session's revision the prompt was sent at, which a
+	// signed prompt names.
+	Revision int `json:"revision,omitempty"`
+	// Signature is an approver's signature over the command, as in
+	// ApproveToolCall, which a command through the citadel needs once the
+	// world exists.
+	Signature *DecisionSignature `json:"signature,omitempty"`
 }
 
 // StopAgent ends a session, cancelling any turn in progress.
@@ -807,6 +822,9 @@ type ChangesCommitted struct {
 	Commit    string   `json:"commit"`
 	Message   string   `json:"message"`
 	Files     []string `json:"files,omitempty"`
+	// Approver and Signature are as in PromptSent.
+	Approver  string `json:"approver,omitempty"`
+	Signature string `json:"signature,omitempty"`
 }
 
 // ChangesMerged records the session's branch merged into its base in the
@@ -815,6 +833,9 @@ type ChangesMerged struct {
 	SessionID string `json:"sessionId"`
 	Into      string `json:"into"`
 	Commit    string `json:"commit"`
+	// Approver and Signature are as in PromptSent.
+	Approver  string `json:"approver,omitempty"`
+	Signature string `json:"signature,omitempty"`
 }
 
 // PullRequestOpened records the session's branch pushed and a pull
@@ -823,6 +844,9 @@ type PullRequestOpened struct {
 	SessionID string `json:"sessionId"`
 	URL       string `json:"url"`
 	Branch    string `json:"branch"`
+	// Approver and Signature are as in PromptSent.
+	Approver  string `json:"approver,omitempty"`
+	Signature string `json:"signature,omitempty"`
 }
 
 // WorktreeRemoved records that the session's worktree is gone, and whether
@@ -846,6 +870,9 @@ type CommitChanges struct {
 	ID        string `json:"id"`
 	SessionID string `json:"sessionId"`
 	Message   string `json:"message,omitempty"`
+	// Revision and Signature are as in SendPrompt.
+	Revision  int                `json:"revision,omitempty"`
+	Signature *DecisionSignature `json:"signature,omitempty"`
 }
 
 // MergeChanges merges the session's branch into its base in the registered
@@ -853,6 +880,9 @@ type CommitChanges struct {
 type MergeChanges struct {
 	ID        string `json:"id"`
 	SessionID string `json:"sessionId"`
+	// Revision and Signature are as in SendPrompt.
+	Revision  int                `json:"revision,omitempty"`
+	Signature *DecisionSignature `json:"signature,omitempty"`
 }
 
 // OpenPullRequest pushes the session's branch to the repository's origin
@@ -863,6 +893,9 @@ type OpenPullRequest struct {
 	SessionID string `json:"sessionId"`
 	Title     string `json:"title,omitempty"`
 	Body      string `json:"body,omitempty"`
+	// Revision and Signature are as in SendPrompt.
+	Revision  int                `json:"revision,omitempty"`
+	Signature *DecisionSignature `json:"signature,omitempty"`
 }
 
 // EventSessionRulesSet records a session's rules replaced, from the

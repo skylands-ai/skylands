@@ -1,5 +1,5 @@
 import { keepStorage, keyFromSeed, loadApprover, newApproverKey, seedOf, sign, type Signed } from './approver'
-import { answersHash, DECISION_VERSION, formHash, normalizeRules, rulesHash, signDecision, type Decision, type DecisionSignature } from './decision'
+import { answersHash, DECISION_VERSION, formHash, normalizeRules, rulesHash, signDecision, textHash, type Decision, type DecisionSignature } from './decision'
 import type { ApproverInfo, Permission, Question, Repo, Rule, Session, VoucherInfo } from './protocol'
 import { api } from './signin'
 import type { State, Store } from './store'
@@ -148,6 +148,38 @@ export function signRepoRules(s: State, r: Repo, rules: Rule[]): { rules: Rule[]
   const list = normalizeRules(rules, true)
   const revision = r.rulesRevision ?? 0
   return { rules: list, revision, signature: signAs(s, (world) => ({ v: DECISION_VERSION, kind: 'repo-rules', world, host: r.host, repo: r.id, rules: rulesHash(list), revision })) }
+}
+
+/**
+ * A command's signature once the world exists, or nothing before it does,
+ * when a daemon takes unsigned commands, or why this browser can't sign.
+ */
+function signOnceWorld(s: State, build: (world: string) => Decision): { signature?: DecisionSignature; error?: string } {
+  if (!s.world?.owner) return {}
+  const signature = signAs(s, build)
+  return typeof signature === 'string' ? { error: signature } : { signature }
+}
+
+/** A new session's id: letters and digits, as the citadel takes one a browser picks. */
+export function newSessionId(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  const bytes = crypto.getRandomValues(new Uint8Array(22))
+  return Array.from(bytes, (b) => chars[b % chars.length]).join('')
+}
+
+/** This browser's signature over starting a session, as the daemon will check it. */
+export function signStart(s: State, start: { host: string; session: string; repo: string; agent: string; mode: string; model: string; inCheckout: boolean; prompt: string }) {
+  return signOnceWorld(s, (world) => ({ v: DECISION_VERSION, kind: 'start', world, host: start.host, session: start.session, repo: start.repo, agent: start.agent, mode: start.mode, model: start.model, inCheckout: start.inCheckout, prompt: textHash(start.prompt) }))
+}
+
+/** This browser's signature over another prompt to a session, at the revision it names. */
+export function signPrompt(s: State, x: Session, text: string, revision: number) {
+  return signOnceWorld(s, (world) => ({ v: DECISION_VERSION, kind: 'prompt', world, host: x.host, session: x.id, revision, prompt: textHash(text) }))
+}
+
+/** This browser's signature over a commit, merge, or pull request, at the revision it names. */
+export function signChange(s: State, x: Session, action: 'commit' | 'merge' | 'pull-request', text: string, revision: number) {
+  return signOnceWorld(s, (world) => ({ v: DECISION_VERSION, kind: 'change', world, host: x.host, session: x.id, revision, action, text }))
 }
 
 /** Whether this browser can sign for the world it shows. */

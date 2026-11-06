@@ -29,7 +29,8 @@ import type { AgentCommand, Rule } from './protocol'
 import { World } from './world/world'
 import { connectToCitadel } from './ws'
 import { api } from './signin'
-import { approverActions, canSign, keepThisBrowser, loadThisBrowser, signAnswer, signFor, signRepoRules, signSessionRules, signTrust } from './approvers'
+import { approverActions, canSign, keepThisBrowser, loadThisBrowser, signAnswer, signChange, signFor, signPrompt, signRepoRules, signSessionRules, signTrust } from './approvers'
+import { pullRequestHash, textHash } from './decision'
 
 const stage = byId<HTMLElement>('stage')
 const canvas = byId<HTMLCanvasElement>('world')
@@ -104,7 +105,12 @@ const inboxActions: InboxActions = {
     store.setView('world')
     nav.selectAgent(x.host, x.repoId, x.id)
   },
-  prompt: (x, text) => sessionCommand(x.host, x.id, 'prompt', { text }),
+  prompt: (x, text) => {
+    const revision = x.revision ?? 0
+    const signed = signPrompt(store.state, x, text, revision)
+    if (signed.error) return Promise.resolve(signed.error)
+    return sessionCommand(x.host, x.id, 'prompt', { text, revision, signature: signed.signature })
+  },
   cancel: (x) => sessionCommand(x.host, x.id, 'cancel', {}),
   setMode: (x, mode) => sessionCommand(x.host, x.id, 'mode', { mode }),
   commands: async (x) => {
@@ -150,9 +156,24 @@ const inboxActions: InboxActions = {
     if (typeof signature === 'string') return Promise.resolve(signature)
     return sessionCommand(x.host, x.id, 'trust', { trusted, revision: x.trustRevision ?? 0, signature })
   },
-  commit: (x, message) => sessionCommand(x.host, x.id, 'commit', { message }),
-  merge: (x) => sessionCommand(x.host, x.id, 'merge', {}),
-  pullRequest: (x) => sessionCommand(x.host, x.id, 'pull-request', {}),
+  commit: (x, message) => {
+    const revision = x.revision ?? 0
+    const signed = signChange(store.state, x, 'commit', textHash(message), revision)
+    if (signed.error) return Promise.resolve(signed.error)
+    return sessionCommand(x.host, x.id, 'commit', { message, revision, signature: signed.signature })
+  },
+  merge: (x, after = 0) => {
+    const revision = (x.revision ?? 0) + after
+    const signed = signChange(store.state, x, 'merge', '', revision)
+    if (signed.error) return Promise.resolve(signed.error)
+    return sessionCommand(x.host, x.id, 'merge', { revision, signature: signed.signature })
+  },
+  pullRequest: (x, after = 0) => {
+    const revision = (x.revision ?? 0) + after
+    const signed = signChange(store.state, x, 'pull-request', pullRequestHash('', ''), revision)
+    if (signed.error) return Promise.resolve(signed.error)
+    return sessionCommand(x.host, x.id, 'pull-request', { revision, signature: signed.signature })
+  },
   setSessionRules: (x, rules) => {
     const signed = signSessionRules(store.state, x, rules)
     if (typeof signed.signature === 'string') return Promise.resolve(signed.signature)

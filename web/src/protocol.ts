@@ -272,6 +272,8 @@ export interface Session {
   model?: string
   /** The mode the session is in, absent for the first its adapter lists. */
   mode?: string
+  /** How many prompts, commits, merges, and pull requests the session has had; a signed prompt or change names it. */
+  revision?: number
   agentName?: string
   prompt: string
   /** What the agent works on: its own branch, cut from base, or the checkout's when inCheckout is set. */

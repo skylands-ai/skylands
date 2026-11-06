@@ -1,3 +1,4 @@
+import { newSessionId, signStart } from './approvers'
 import { byId, el } from './dom'
 import type { Island } from './protocol'
 import { api } from './signin'
@@ -48,6 +49,8 @@ export class CommandBar {
   private readonly why = byId<HTMLElement>('scopeWhy')
   private host = ''
   private repoId = ''
+  /** The state last shown, which a start is signed against. */
+  private state: State | null = null
   private busy = false
   /** The agents the agent chip lists, so it is rebuilt only when they change. */
   private agentsShown: string | null = null
@@ -95,6 +98,7 @@ export class CommandBar {
 
   /** Shows the bar on a terrace or one of its files, aimed at that repo. */
   update(s: State): void {
+    this.state = s
     const l = level(s)
     const repo = s.terrace ? s.repos[s.terrace] : undefined
     const island = s.selected !== 'cit' ? s.islands[s.selected] : undefined
@@ -208,10 +212,18 @@ export class CommandBar {
     this.go.disabled = true
     this.setWhy('Dispatching\u2026', 'info')
     try {
+      // The browser picks the session's id, which the signature names, so
+      // the signed start starts this one session.
+      const start = { host: this.host, session: newSessionId(), repo: this.repoId, agent: this.agent.value, mode: this.chosenMode(), model: this.chosenModel(), inCheckout: this.where.value === 'checkout', prompt }
+      const signed = this.state ? signStart(this.state, start) : {}
+      if (signed.error) {
+        this.setWhy(signed.error, 'error')
+        return
+      }
       const resp = await api('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ host: this.host, repoId: this.repoId, agent: this.agent.value, model: this.chosenModel(), mode: this.chosenMode(), prompt, inCheckout: this.where.value === 'checkout' }),
+        body: JSON.stringify({ host: start.host, sessionId: start.session, repoId: start.repo, agent: start.agent, model: start.model, mode: start.mode, prompt, inCheckout: start.inCheckout, signature: signed.signature }),
       })
       const body = (await resp.json().catch(() => ({}))) as { error?: string }
       if (!resp.ok) {
