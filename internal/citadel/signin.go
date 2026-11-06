@@ -92,7 +92,7 @@ func (c *citadel) postSignIn(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		Expires:  expires,
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   viaHTTPS(r),
 		SameSite: http.SameSiteStrictMode,
 	})
 	a, _ := view.registry.Approver(req.SignIn.Signer)
@@ -212,11 +212,36 @@ func sameOrigin(next http.Handler) http.Handler {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			if origin := r.Header.Get("Origin"); origin != "" {
 				if u, err := url.Parse(origin); err != nil || !strings.EqualFold(u.Host, r.Host) {
-					writeError(w, http.StatusForbidden, "a page from another origin can't do that here")
+					why := "a page from another origin can't do that here"
+					// A proxy that sends its own Host, rather than the
+					// browser's, makes every page look like another origin.
+					if err == nil && strings.EqualFold(u.Host, r.Header.Get("X-Forwarded-Host")) {
+						why = "the proxy in front of the citadel changes the Host header from " + u.Host + " to " + r.Host + "; have it pass the browser's Host through, as tailscale serve does"
+					}
+					writeError(w, http.StatusForbidden, why)
 					return
 				}
 			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// viaHTTPS says whether the browser reached the citadel over HTTPS: the
+// citadel's own TLS, or a proxy on this machine, such as tailscale serve,
+// that ends HTTPS and says so with X-Forwarded-Proto. The header is
+// trusted only from this machine.
+func viaHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if !strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return false
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
