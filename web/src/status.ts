@@ -1,4 +1,4 @@
-import type { Island, Session, TokenUsage } from './protocol'
+import type { AgentModel, Island, Session, TokenUsage } from './protocol'
 import type { State } from './store'
 import type { Status } from './world/world'
 
@@ -53,6 +53,21 @@ export function agentColor(agent: string): string {
     default:
       return '#B58BEB'
   }
+}
+
+/**
+ * A model as a chip lists it: its id, which is what a session is set to,
+ * followed by the agent's name for it when that name says more.
+ */
+export function modelText(m: AgentModel): string {
+  const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+  return m.name && !squash(m.id).includes(squash(m.name)) ? `${m.id} \u00b7 ${m.name}` : m.id
+}
+
+/** What to call a session's mode: the agent's name for it, as its island last read it, or its id. */
+export function modeName(island: Island | undefined, s: Session): string {
+  const mode = island?.agents?.find((a) => a.name === s.agent)?.modes?.find((m) => m.id === s.mode)
+  return mode?.name || s.mode || ''
 }
 
 /** What to call an adapter in the interface. */

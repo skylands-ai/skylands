@@ -185,6 +185,19 @@ type AgentAvailability struct {
 	Models []AgentModel `json:"models,omitempty"`
 	// DefaultModel is the model a new session started on.
 	DefaultModel string `json:"defaultModel,omitempty"`
+	// Modes are the modes a session may be in, as the agent names them:
+	// the ones its adapter lists, which keep it asking before it acts, in
+	// the adapter's order, the first being where a session starts. They
+	// are read with the models. With none, the agent has no mode setting.
+	Modes []AgentMode `json:"modes,omitempty"`
+}
+
+// AgentMode is one mode a session may be in: the value its mode is set
+// to, and what the agent calls it.
+type AgentMode struct {
+	ID          string `json:"id"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // AgentModel is one model an agent offers: the value a session's model is
@@ -230,7 +243,7 @@ func IsSessionEvent(eventType string) bool {
 		EventPermissionRequested, EventPermissionGranted, EventPermissionDenied, EventPermissionExpired, EventSessionTrusted,
 		EventSessionResumed, EventChangesCommitted, EventChangesMerged, EventPullRequestOpened, EventWorktreeRemoved,
 		EventSessionRulesSet, EventSessionRulesLapsed, EventQuestionAsked, EventQuestionAnswered, EventQuestionExpired, EventTurnCancelled,
-		EventTokensUsed:
+		EventTokensUsed, EventSessionModeChanged, EventSessionModelChanged:
 		return true
 	}
 	return false
@@ -246,6 +259,10 @@ type SessionStarted struct {
 	// Model is the model the agent was asked to use, or empty for the
 	// agent's own default.
 	Model string `json:"model,omitempty"`
+	// Mode is the mode the session started in, one its adapter lists.
+	// Empty, in a session from before modes were recorded, is the first
+	// the adapter lists.
+	Mode string `json:"mode,omitempty"`
 	// Worktree is the directory the agent works in: a worktree of its own,
 	// or the checkout when InCheckout is set.
 	Worktree string `json:"worktree"`
@@ -416,7 +433,10 @@ type StartSession struct {
 	RepoID    string `json:"repoId"`
 	Agent     string `json:"agent"`
 	// Model overrides the agent's default model when set.
-	Model  string `json:"model,omitempty"`
+	Model string `json:"model,omitempty"`
+	// Mode is one of the modes the agent's adapter lists, which keep it
+	// asking before it acts. Empty is the first of them.
+	Mode   string `json:"mode,omitempty"`
 	Prompt string `json:"prompt"`
 	// InCheckout runs the agent in the registered checkout itself instead
 	// of a worktree of its own. One session at a time may work there.
@@ -977,4 +997,60 @@ const CommandCancelTurn = "CancelTurn"
 type CancelTurn struct {
 	ID        string `json:"id"`
 	SessionID string `json:"sessionId"`
+}
+
+// Who changed a session's mode or model, in SessionModeChanged and
+// SessionModelChanged: besides "local" and "citadel" for a person, the
+// agent itself, or the daemon setting a mode back.
+const (
+	ChangedByAgent  = "agent"
+	ChangedByDaemon = "daemon"
+)
+
+// EventSessionModeChanged records a session's mode changing after it
+// started: set by a person, changed by the agent itself, or set back by
+// the daemon when the agent left the modes its adapter lists, which are
+// the ones that keep it asking before it acts. A mode the agent moved to
+// that isn't listed is recorded too, followed by the daemon's setting it
+// back.
+const EventSessionModeChanged = "SessionModeChanged"
+
+// SessionModeChanged carries the session's mode and who set it.
+type SessionModeChanged struct {
+	SessionID string `json:"sessionId"`
+	Mode      string `json:"mode"`
+	By        string `json:"by"`
+}
+
+// EventSessionModelChanged records a session's model changing after it
+// started: set by a person, or changed by the agent itself, as through
+// one of its commands.
+const EventSessionModelChanged = "SessionModelChanged"
+
+// SessionModelChanged carries the session's model and who set it.
+type SessionModelChanged struct {
+	SessionID string `json:"sessionId"`
+	Model     string `json:"model"`
+	By        string `json:"by"`
+}
+
+// CommandSetSessionMode and CommandSetSessionModel are sent to a session
+// by request-reply, or over the host's socket.
+const (
+	CommandSetSessionMode  = "SetSessionMode"
+	CommandSetSessionModel = "SetSessionModel"
+)
+
+// SetSessionMode sets an idle session's mode to one its adapter lists.
+type SetSessionMode struct {
+	ID        string `json:"id"`
+	SessionID string `json:"sessionId"`
+	Mode      string `json:"mode"`
+}
+
+// SetSessionModel sets an idle session's model to one its agent takes.
+type SetSessionModel struct {
+	ID        string `json:"id"`
+	SessionID string `json:"sessionId"`
+	Model     string `json:"model"`
 }

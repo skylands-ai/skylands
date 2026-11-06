@@ -31,11 +31,13 @@ type Adapter struct {
 	Command []string
 	// Env adds to the daemon's environment for the agent process.
 	Env []string
-	// Mode is the value every session is set to in the agent's mode
-	// setting: the ACP session config option in the "mode" category. Empty
-	// leaves the agent's own. A session the agent will not set it for does
-	// not start.
-	Mode string
+	// Modes are the values a session may be set to in the agent's mode
+	// setting, the ACP session config option in the "mode" category: the
+	// modes that keep the agent asking before it acts. A session starts in
+	// the first unless told another, and one the agent will not set does
+	// not start. While a session runs, a mode the agent moves to that
+	// isn't listed is set back. None leaves the agent's own mode alone.
+	Modes []string
 	// Meta goes in the _meta of every session the agent opens or loads,
 	// for an agent that takes settings there that ACP has no field for.
 	Meta acp.Meta
@@ -77,12 +79,12 @@ func DefaultRegistry() Registry {
 	return Registry{
 		"fake": {Name: "fake", Provider: "local", Command: []string{exe, "fakeagent"}, BuiltIn: true},
 		"claude": {Name: "claude", Provider: "claude", Command: []string{"npx", "-y", ClaudeAdapterPackage},
-			Mode: claudeMode, Meta: claudeMeta(),
+			Modes: claudeModes, Meta: claudeMeta(),
 			Login: "run claude and log in with /login, or set ANTHROPIC_API_KEY"},
 		"codex": {Name: "codex", Provider: "codex", Command: []string{"npx", "-y", CodexAdapterPackage},
-			Mode: codexMode, Instructions: codexInstructions,
+			Modes: codexModes, Instructions: codexInstructions,
 			Login: "run npx -y " + CodexAdapterPackage + " login, or codex login if the Codex CLI is installed"},
-		"goose": {Name: "goose", Provider: "goose", Command: []string{"goose", "acp"}, Mode: gooseMode, Install: gooseInstall},
+		"goose": {Name: "goose", Provider: "goose", Command: []string{"goose", "acp"}, Modes: gooseModes, Install: gooseInstall},
 	}
 }
 
@@ -160,6 +162,16 @@ type Observer interface {
 	// Question answers a question the agent asks a person. It may block
 	// until someone answers; ctx ends if the agent gives up waiting.
 	Question(ctx context.Context, q Question) Answer
+	// ModeChanged runs when the conversation's mode changes without the
+	// run being asked to change it: by is v1.ChangedByAgent when the agent
+	// changed it itself, or v1.ChangedByDaemon when the run set back a
+	// mode the adapter doesn't list.
+	ModeChanged(mode, by string)
+	// ModelChanged runs when the agent changes its own model.
+	ModelChanged(model string)
+	// ModeLost runs when the agent moved to a mode the adapter doesn't
+	// list and could not be set back, so it may act without asking.
+	ModeLost(err error)
 }
 
 // Question is what an agent asks a person: a message and the form it
@@ -213,6 +225,9 @@ type handler struct {
 	// side collects the text of side sessions, such as a title request,
 	// which the observer never sees.
 	side map[acp.SessionId]*strings.Builder
+	// settings hears what the agent says its options or its mode are now,
+	// unasked.
+	settings func(id acp.SessionId, options []acp.SessionConfigOption, mode string)
 }
 
 // aside starts collecting the text of a session instead of reporting it.
@@ -296,6 +311,14 @@ func (h *handler) update(n *acp.SessionNotification) {
 		h.obs.Plan(entries)
 	case acp.SessionUpdateTypeUsageUpdate:
 		h.obs.Usage(u.Used, u.Size)
+	case acp.SessionUpdateTypeCurrentModeUpdate:
+		if h.settings != nil {
+			h.settings(n.SessionID, nil, string(u.CurrentModeID))
+		}
+	case acp.SessionUpdateTypeConfigOptionUpdate:
+		if h.settings != nil {
+			h.settings(n.SessionID, u.ConfigOptions, "")
+		}
 	case acp.SessionUpdateTypeAgentMessageChunk:
 		if text := contentText(u.Content); text != "" {
 			h.obs.Message(text)

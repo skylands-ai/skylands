@@ -253,6 +253,28 @@ specifies. No events, streams, or aggregates are needed for it.
   airship is a taupe goose with a neck and an orange beak, and its ship
   in the sci-fi theme a swept-wing glider. Not yet run live: goose is
   not installed on the machine this was built on.
+- A session's mode and model change while it runs (#40, first part). An
+  adapter lists the modes that keep its agent asking before it acts, the
+  first being where a session starts: Claude Code's default (Manual) and
+  plan, Codex's read-only, and goose's approve and chat. StartSession
+  takes one of them, which SessionStarted records. SetSessionMode and
+  SetSessionModel change an idle session's mode or model through the
+  agent's ACP config options, from the conversation's header or `session
+  mode|model` on the host, and SessionModeChanged and SessionModelChanged
+  record each change with who made it: a person, the agent, or the daemon.
+  The daemon follows the agent's own current_mode_update and
+  config_option_update, keeping apart the changes it asked for, so the
+  header follows the agent changing its own model. A mode the adapter
+  doesn't list is set back, and a session whose mode can't be set back is
+  stopped. A restart brings a session back on its latest mode and model.
+  The title's side session runs in the first listed mode, whatever the
+  conversation's: run live, Claude Code in plan mode answered a title
+  request with a name for a plan.
+  The agent check reads each agent's listed modes, as it names them, with
+  its models, which the command bar's Mode chip and the header list. The
+  fake agent offers a plan mode, changes its own mode or model when told,
+  and announces every change, so the guard and the record are tested end
+  to end. Slash commands are the second part.
 
 ## After the MVP
 

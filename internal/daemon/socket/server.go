@@ -36,6 +36,9 @@ type API interface {
 	StopSession(ctx context.Context, sessionID, commandID string) (SessionInfo, error)
 	// CancelTurn interrupts the turn in progress and leaves the session open.
 	CancelTurn(ctx context.Context, sessionID, commandID string) (SessionInfo, error)
+	// SetMode and SetModel change an idle session's mode or model.
+	SetMode(ctx context.Context, sessionID, commandID, mode string) (SessionInfo, error)
+	SetModel(ctx context.Context, sessionID, commandID, model string) (SessionInfo, error)
 	// RemoveSession deletes a finished session's worktree and branch.
 	RemoveSession(ctx context.Context, sessionID, commandID string, force bool) (RemoveResult, error)
 	// PruneSessions removes what finished sessions left behind.
@@ -164,6 +167,21 @@ func Serve(ctx context.Context, ln net.Listener, api API) error {
 		}
 		reply(w, http.StatusOK, info)
 	})
+	for _, setting := range []struct {
+		path string
+		set  func(ctx context.Context, sessionID, commandID, value string) (SessionInfo, error)
+	}{{"mode", api.SetMode}, {"model", api.SetModel}} {
+		mux.HandleFunc("POST /v1/sessions/{id}/"+setting.path, func(w http.ResponseWriter, r *http.Request) {
+			var req SessionCommand
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			info, err := setting.set(r.Context(), r.PathValue("id"), req.CommandID, req.Value)
+			if err != nil {
+				reply(w, sessionStatus(err), ErrorResponse{Error: err.Error()})
+				return
+			}
+			reply(w, http.StatusOK, info)
+		})
+	}
 	mux.HandleFunc("DELETE /v1/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		var req SessionCommand
 		_ = json.NewDecoder(r.Body).Decode(&req)

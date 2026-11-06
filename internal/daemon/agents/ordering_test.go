@@ -53,7 +53,7 @@ func TestARequestComesAfterTheReportsBeforeIt(t *testing.T) {
 	}
 	cmd, env := fakeagent.TestCommand()
 	obs := &slowRecorder{}
-	r, err := Start(ctx, Adapter{Name: "fake", Command: cmd, Env: env}, cwd, "", obs)
+	r, err := Start(ctx, Adapter{Name: "fake", Command: cmd, Env: env}, cwd, Settings{}, obs)
 	if err != nil {
 		t.Fatal(err)
 	}

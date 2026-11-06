@@ -147,7 +147,7 @@ func (c *agentChecker) fromCache(found []v1.AgentAvailability) (unknown []string
 			unknown = append(unknown, a.Name)
 			continue
 		}
-		found[i].ModelsRead, found[i].Models, found[i].DefaultModel = true, known.Models, known.DefaultModel
+		found[i].ModelsRead, found[i].Models, found[i].DefaultModel, found[i].Modes = true, known.Models, known.DefaultModel, known.Modes
 	}
 	return unknown
 }
@@ -163,7 +163,7 @@ func (c *agentChecker) remember(found []v1.AgentAvailability) {
 		case !a.Available:
 			delete(c.models, a.Name)
 		case a.ModelsRead:
-			c.models[a.Name] = v1.AgentAvailability{Login: a.Login, Models: a.Models, DefaultModel: a.DefaultModel}
+			c.models[a.Name] = v1.AgentAvailability{Login: a.Login, Models: a.Models, DefaultModel: a.DefaultModel, Modes: a.Modes}
 		}
 	}
 }

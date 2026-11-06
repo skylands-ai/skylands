@@ -27,8 +27,8 @@ func TestCodexAdapter(t *testing.T) {
 	if ad.Provider != "codex" {
 		t.Errorf("codex provider = %q", ad.Provider)
 	}
-	if ad.Mode != "read-only" || len(ad.Env) != 0 {
-		t.Errorf("codex mode = %q and env = %q, want read-only sessions set over ACP alone", ad.Mode, ad.Env)
+	if !reflect.DeepEqual(ad.Modes, []string{"read-only"}) || len(ad.Env) != 0 {
+		t.Errorf("codex modes = %q and env = %q, want read-only sessions set over ACP alone", ad.Modes, ad.Env)
 	}
 	if ad.Login == "" || ad.Instructions == "" {
 		t.Error("codex adapter has no login hint or instructions")
@@ -42,8 +42,8 @@ func TestGooseAdapter(t *testing.T) {
 	if !reflect.DeepEqual(ad.Command, []string{"goose", "acp"}) || ad.Provider != "goose" {
 		t.Errorf("goose adapter = %+v", ad)
 	}
-	if ad.Mode != "approve" || len(ad.Env) != 0 {
-		t.Errorf("goose mode = %q and env = %q, want approve sessions set over ACP alone", ad.Mode, ad.Env)
+	if !reflect.DeepEqual(ad.Modes, []string{"approve", "chat"}) || len(ad.Env) != 0 {
+		t.Errorf("goose modes = %q and env = %q, want approve or chat sessions set over ACP alone", ad.Modes, ad.Env)
 	}
 	if ad.Install == "" {
 		t.Error("goose adapter has no install hint")
@@ -63,7 +63,7 @@ func TestSettingsGoThroughConfigOptions(t *testing.T) {
 		if config != "" {
 			e = append(e, fakeagent.EnvConfigOptions+"="+config)
 		}
-		return Adapter{Name: "fake", Command: cmd, Env: e, Mode: "ask"}
+		return Adapter{Name: "fake", Command: cmd, Env: e, Modes: []string{"ask"}}
 	}
 	settings := func(t *testing.T, run *Run, rec *recorder) string {
 		t.Helper()
@@ -75,7 +75,7 @@ func TestSettingsGoThroughConfigOptions(t *testing.T) {
 	}
 
 	rec := &recorder{}
-	run, err := Start(ctx, agent("1"), t.TempDir(), "fake-large", rec)
+	run, err := Start(ctx, agent("1"), t.TempDir(), Settings{Model: "fake-large"}, rec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestSettingsGoThroughConfigOptions(t *testing.T) {
 
 	// A loaded session comes back at the agent's own values and is set again.
 	rec = &recorder{}
-	run, how, err := Resume(ctx, agent("1"), t.TempDir(), "fake-large", "sess-before", "", rec)
+	run, how, err := Resume(ctx, agent("1"), t.TempDir(), Settings{Model: "fake-large"}, "sess-before", "", rec)
 	if err != nil || how != ResumedByLoad {
 		t.Fatalf("Resume = %q, %v", how, err)
 	}
@@ -101,7 +101,7 @@ func TestSettingsGoThroughConfigOptions(t *testing.T) {
 
 	// So is the new session that stands in for one that could not be loaded.
 	rec = &recorder{}
-	run, how, err = Resume(ctx, agent("1", fakeagent.EnvNoLoad+"=1"), t.TempDir(), "", "sess-before", "", rec)
+	run, how, err = Resume(ctx, agent("1", fakeagent.EnvNoLoad+"=1"), t.TempDir(), Settings{}, "sess-before", "", rec)
 	if err != nil || how != ResumedBySeed {
 		t.Fatalf("Resume = %q, %v", how, err)
 	}
@@ -118,7 +118,7 @@ func TestSettingsGoThroughConfigOptions(t *testing.T) {
 		{"a mode that does not take", "stuck", "", "did not confirm its mode is ask"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Start(ctx, agent(tc.config), t.TempDir(), tc.model, &recorder{})
+			_, err := Start(ctx, agent(tc.config), t.TempDir(), Settings{Model: tc.model}, &recorder{})
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("Start = %v, want an error saying %q", err, tc.want)
 			}
@@ -127,7 +127,7 @@ func TestSettingsGoThroughConfigOptions(t *testing.T) {
 
 	// An agent without a model setting cannot be given a model.
 	plain := Adapter{Name: "fake", Command: cmd, Env: env}
-	if _, err := Start(ctx, plain, t.TempDir(), "fake-large", &recorder{}); err == nil || !strings.Contains(err.Error(), "no model setting") {
+	if _, err := Start(ctx, plain, t.TempDir(), Settings{Model: "fake-large"}, &recorder{}); err == nil || !strings.Contains(err.Error(), "no model setting") {
 		t.Errorf("Start with a model = %v", err)
 	}
 }
@@ -199,7 +199,7 @@ func TestInstructionsGoToAgentsThatTakeThem(t *testing.T) {
 
 	taker := Adapter{Name: "fake", Command: cmd, Env: append(append([]string(nil), env...), fakeagent.EnvSystemPrompt+"=1"), Instructions: instructions}
 	rec := &recorder{}
-	run, err := Start(ctx, taker, t.TempDir(), "", rec)
+	run, err := Start(ctx, taker, t.TempDir(), Settings{}, rec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestInstructionsGoToAgentsThatTakeThem(t *testing.T) {
 	_ = run.Close()
 
 	rec = &recorder{}
-	run, how, err := Resume(ctx, taker, t.TempDir(), "", "sess-before", "", rec)
+	run, how, err := Resume(ctx, taker, t.TempDir(), Settings{}, "sess-before", "", rec)
 	if err != nil || how != ResumedByLoad {
 		t.Fatalf("Resume = %q, %v", how, err)
 	}
@@ -216,7 +216,7 @@ func TestInstructionsGoToAgentsThatTakeThem(t *testing.T) {
 
 	// An agent that does not advertise the system prompt is not sent one.
 	rec = &recorder{}
-	run, err = Start(ctx, Adapter{Name: "fake", Command: cmd, Env: env, Instructions: instructions}, t.TempDir(), "", rec)
+	run, err = Start(ctx, Adapter{Name: "fake", Command: cmd, Env: env, Instructions: instructions}, t.TempDir(), Settings{}, rec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestMetaGoesWithEverySession(t *testing.T) {
 
 	ad := Adapter{Name: "fake", Command: cmd, Env: strict, Meta: meta}
 	rec := &recorder{}
-	run, err := Start(ctx, ad, t.TempDir(), "", rec)
+	run, err := Start(ctx, ad, t.TempDir(), Settings{}, rec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func TestMetaGoesWithEverySession(t *testing.T) {
 	_ = run.Close()
 
 	rec = &recorder{}
-	run, how, err := Resume(ctx, ad, t.TempDir(), "", "sess-before", "", rec)
+	run, how, err := Resume(ctx, ad, t.TempDir(), Settings{}, "sess-before", "", rec)
 	if err != nil || how != ResumedByLoad {
 		t.Fatalf("Resume = %q, %v", how, err)
 	}
@@ -270,7 +270,7 @@ func TestMetaGoesWithEverySession(t *testing.T) {
 	rec = &recorder{}
 	noLoad := ad
 	noLoad.Env = append(append([]string(nil), strict...), fakeagent.EnvNoLoad+"=1")
-	run, how, err = Resume(ctx, noLoad, t.TempDir(), "", "sess-before", "", rec)
+	run, how, err = Resume(ctx, noLoad, t.TempDir(), Settings{}, "sess-before", "", rec)
 	if err != nil || how != ResumedBySeed {
 		t.Fatalf("Resume = %q, %v", how, err)
 	}
@@ -283,7 +283,7 @@ func TestMetaGoesWithEverySession(t *testing.T) {
 
 	// An adapter without Meta sends none.
 	rec = &recorder{}
-	run, err = Start(ctx, Adapter{Name: "fake", Command: cmd, Env: env}, t.TempDir(), "", rec)
+	run, err = Start(ctx, Adapter{Name: "fake", Command: cmd, Env: env}, t.TempDir(), Settings{}, rec)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -21,6 +21,7 @@ type startSessionRequest struct {
 	RepoID string `json:"repoId"`
 	Agent  string `json:"agent"`
 	Model  string `json:"model"`
+	Mode   string `json:"mode"`
 	Prompt string `json:"prompt"`
 	// InCheckout runs the agent in the registered checkout itself rather
 	// than a worktree of its own.
@@ -53,6 +54,8 @@ func (c *citadel) api() http.Handler {
 	signedIn("POST /api/sessions", c.startSession)
 	signedIn("POST /api/sessions/{host}/{id}/prompt", c.sendPrompt)
 	signedIn("POST /api/sessions/{host}/{id}/cancel", c.cancelTurn)
+	signedIn("POST /api/sessions/{host}/{id}/mode", c.setMode)
+	signedIn("POST /api/sessions/{host}/{id}/model", c.setModel)
 	signedIn("POST /api/sessions/{host}/{id}/stop", c.stopAgent)
 	signedIn("POST /api/sessions/{host}/{id}/requests/{rid}/approve", c.approve)
 	signedIn("POST /api/sessions/{host}/{id}/requests/{rid}/deny", c.deny)
@@ -132,6 +135,35 @@ func (c *citadel) pullRequest(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	cmd := v1.OpenPullRequest{ID: nuid.Next(), SessionID: id, Title: strings.TrimSpace(body.Title), Body: strings.TrimSpace(body.Body)}
 	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandOpenPullRequest), cmd, http.StatusOK)
+}
+
+// setMode sets an idle session's mode to one its adapter lists. Every
+// listed mode keeps the agent asking, so it isn't signed, like a prompt.
+func (c *citadel) setMode(w http.ResponseWriter, r *http.Request) {
+	host, id := r.PathValue("host"), r.PathValue("id")
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Mode) == "" {
+		writeError(w, http.StatusBadRequest, "a mode is required")
+		return
+	}
+	cmd := v1.SetSessionMode{ID: nuid.Next(), SessionID: id, Mode: strings.TrimSpace(body.Mode)}
+	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandSetSessionMode), cmd, http.StatusOK)
+}
+
+// setModel sets an idle session's model.
+func (c *citadel) setModel(w http.ResponseWriter, r *http.Request) {
+	host, id := r.PathValue("host"), r.PathValue("id")
+	var body struct {
+		Model string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Model) == "" {
+		writeError(w, http.StatusBadRequest, "a model is required")
+		return
+	}
+	cmd := v1.SetSessionModel{ID: nuid.Next(), SessionID: id, Model: strings.TrimSpace(body.Model)}
+	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandSetSessionModel), cmd, http.StatusOK)
 }
 
 // sendPrompt continues an idle session on its island.
@@ -284,7 +316,7 @@ func (c *citadel) startSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessionID := nuid.Next()
-	cmd := v1.StartSession{ID: nuid.Next(), SessionID: sessionID, RepoID: req.RepoID, Agent: req.Agent, Model: strings.TrimSpace(req.Model), Prompt: req.Prompt, InCheckout: req.InCheckout}
+	cmd := v1.StartSession{ID: nuid.Next(), SessionID: sessionID, RepoID: req.RepoID, Agent: req.Agent, Model: strings.TrimSpace(req.Model), Mode: strings.TrimSpace(req.Mode), Prompt: req.Prompt, InCheckout: req.InCheckout}
 	result, err := c.sendCommand(r.Context(), v1.SessionCommandSubject(req.Host, sessionID, v1.CommandStartSession), cmd)
 	switch {
 	case errors.Is(err, nats.ErrNoResponders), errors.Is(err, nats.ErrTimeout):

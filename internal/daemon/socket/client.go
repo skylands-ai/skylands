@@ -127,6 +127,20 @@ func (c *Client) CancelTurn(ctx context.Context, sessionID string) (SessionInfo,
 	return out, err
 }
 
+// SetMode sets an idle session's mode to one its adapter lists.
+func (c *Client) SetMode(ctx context.Context, sessionID, mode string) (SessionInfo, error) {
+	var out SessionInfo
+	err := c.call(ctx, http.MethodPost, "/v1/sessions/"+sessionID+"/mode", SessionCommand{CommandID: nuid.Next(), Value: mode}, &out)
+	return out, err
+}
+
+// SetModel sets an idle session's model.
+func (c *Client) SetModel(ctx context.Context, sessionID, model string) (SessionInfo, error) {
+	var out SessionInfo
+	err := c.call(ctx, http.MethodPost, "/v1/sessions/"+sessionID+"/model", SessionCommand{CommandID: nuid.Next(), Value: model}, &out)
+	return out, err
+}
+
 // RemoveSession deletes a finished session's worktree and branch. With
 // force, uncommitted changes and unmerged commits go too.
 func (c *Client) RemoveSession(ctx context.Context, sessionID string, force bool) (RemoveResult, error) {

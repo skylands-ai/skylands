@@ -136,7 +136,12 @@ func (w *world) startDaemonIn(host, socketPath, dataDir string) (stop func()) {
 		done <- daemon.Run(ctx, daemon.Config{
 			TrustFirstWorld: true,
 			Host:            host, NATSURL: w.hub.LeafURL(), DataDir: dataDir, SocketPath: socketPath, Version: "v0.1.0",
-			Adapters: agents.Registry{"fake": {Name: "fake", Provider: "local", Command: fakeCmd, Env: fakeEnv}},
+			Adapters: agents.Registry{
+				"fake": {Name: "fake", Provider: "local", Command: fakeCmd, Env: fakeEnv},
+				// moded offers a mode and a model setting, and lists two
+				// of its modes.
+				"moded": {Name: "moded", Provider: "local", Command: fakeCmd, Env: append(append([]string(nil), fakeEnv...), fakeagent.EnvConfigOptions+"=1"), Modes: []string{"ask", "plan"}},
+			},
 		})
 	}()
 	return func() {
@@ -627,6 +632,43 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 	b.wait(t, "the session to end", 15*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "ended" })
 	if code, _ := post2("/api/sessions/ws/"+id+"/prompt", `{"text":"too late"}`); code != http.StatusBadRequest {
 		t.Errorf("prompt after stop: %d", code)
+	}
+	if code, _ := post2("/api/sessions/ws/"+id+"/mode", `{"mode":"plan"}`); code != http.StatusBadRequest {
+		t.Errorf("set the mode after stop: %d", code)
+	}
+
+	// A session starts in a mode its adapter lists, and its mode and model
+	// change while it is idle.
+	if code, out := post(`{"host":"ws","repoId":"` + info.ID + `","agent":"moded","mode":"auto","prompt":"x"}`); code != http.StatusBadRequest || !strings.Contains(fmt.Sprint(out["error"]), "not one the adapter lists") {
+		t.Errorf("start in an unlisted mode: %d %v", code, out)
+	}
+	planCode, planOut := post(`{"host":"ws","repoId":"` + info.ID + `","agent":"moded","mode":"plan","prompt":"` + fakeagent.SettingsQuestion + `"}`)
+	if planCode != http.StatusCreated || planOut["sessionId"] == nil {
+		t.Fatalf("start a session in plan: %d %v", planCode, planOut)
+	}
+	moded := planOut["sessionId"].(string)
+	b.wait(t, "the session in plan to wait", 30*time.Second, func(v view) bool {
+		s, ok := v.sessions[moded]
+		return ok && s.Status == "idle" && s.Mode == "plan"
+	})
+	if code, out := post2("/api/sessions/ws/"+moded+"/mode", `{"mode":"ask"}`); code != http.StatusOK {
+		t.Errorf("set the mode: %d %v", code, out)
+	}
+	if code, out := post2("/api/sessions/ws/"+moded+"/model", `{"model":"fake-large"}`); code != http.StatusOK {
+		t.Errorf("set the model: %d %v", code, out)
+	}
+	if code, out := post2("/api/sessions/ws/"+moded+"/mode", `{"mode":"auto"}`); code != http.StatusBadRequest || !strings.Contains(fmt.Sprint(out["error"]), "not one the adapter lists") {
+		t.Errorf("set an unlisted mode: %d %v", code, out)
+	}
+	if code, _ := post2("/api/sessions/ws/"+moded+"/model", `{}`); code != http.StatusBadRequest {
+		t.Errorf("set no model: %d", code)
+	}
+	b.wait(t, "the new mode and model to show", 10*time.Second, func(v view) bool {
+		s, ok := v.sessions[moded]
+		return ok && s.Mode == "ask" && s.Model == "fake-large"
+	})
+	if code, out := post2("/api/sessions/ws/"+moded+"/stop", `{}`); code != http.StatusOK {
+		t.Fatalf("stop the session in plan: %d %v", code, out)
 	}
 
 	// A later browser gets the session in its snapshot.

@@ -1,7 +1,7 @@
 import { byId, el } from './dom'
-import type { AgentModel, Island } from './protocol'
+import type { Island } from './protocol'
 import { api } from './signin'
-import { agentLabel, isStale } from './status'
+import { agentLabel, isStale, modelText } from './status'
 import { level, type State } from './store'
 
 /** The agents in the order the chip lists them, offered as they are until the island says which it can run. */
@@ -9,15 +9,6 @@ const AGENTS = ['fake', 'claude', 'codex', 'goose']
 
 function agentText(name: string): string {
   return name === 'fake' ? 'Fake agent, built in' : agentLabel(name)
-}
-
-/**
- * A model as the chip lists it: its id, which is what a session is set to,
- * followed by the agent's name for it when that name says more.
- */
-function modelText(m: AgentModel): string {
-  const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
-  return m.name && !squash(m.id).includes(squash(m.name)) ? `${m.id} \u00b7 ${m.name}` : m.id
 }
 
 /** Known agents in their usual order, then any others by name. */
@@ -44,6 +35,12 @@ export class CommandBar {
    * last read them from the agent; each agent's last choice stays chosen.
    */
   private readonly model = byId<HTMLSelectElement>('modelSel')
+  /**
+   * The modes the chosen agent's adapter lists, shown only for an agent
+   * with more than one; each agent's last choice stays chosen.
+   */
+  private readonly modeChip = byId<HTMLElement>('modeChip')
+  private readonly mode = byId<HTMLSelectElement>('modeSel')
   /** A model id typed by hand, shown while the model is "Other". */
   private readonly otherModel = byId<HTMLInputElement>('modelOther')
   private readonly where = byId<HTMLSelectElement>('whereSel')
@@ -62,6 +59,10 @@ export class CommandBar {
   private modelsShown: string | null = null
   /** Each agent's last model choice, kept while another agent is chosen. */
   private readonly lastModel = new Map<string, { value: string; other: string }>()
+  /** The agent and modes the mode chip lists, and each agent's last mode choice. */
+  private modesShown: string | null = null
+  private modesFor: string | null = null
+  private readonly lastMode = new Map<string, string>()
   /** What the status line is showing: the default hint, a link problem, a dispatch error, or a dispatch result. */
   private kind: 'hint' | 'blocked' | 'error' | 'info' = 'hint'
 
@@ -70,7 +71,10 @@ export class CommandBar {
 
   constructor() {
     this.syncAgents(null)
-    this.agent.addEventListener('change', () => this.syncModels())
+    this.agent.addEventListener('change', () => {
+      this.syncModes()
+      this.syncModels()
+    })
     this.model.addEventListener('change', () => {
       const other = this.model.value === CommandBar.OTHER
       this.otherModel.hidden = !other
@@ -136,7 +140,32 @@ export class CommandBar {
       this.agent.replaceChildren(...names.map((n) => el('option', { value: n, text: agentText(n) })))
       if (names.includes(keep)) this.agent.value = keep
     }
+    this.syncModes()
     this.syncModels()
+  }
+
+  /**
+   * Lists the modes the chosen agent's adapter lists, as the agent names
+   * them, bringing back its last choice. The chip shows only when there
+   * is a choice to make.
+   */
+  private syncModes(): void {
+    const agent = this.agent.value
+    const modes = this.island?.agents?.find((a) => a.name === agent)?.modes ?? []
+    const key = JSON.stringify([agent, modes])
+    if (key === this.modesShown) return
+    if (this.modesFor !== null && !this.modeChip.hidden) this.lastMode.set(this.modesFor, this.mode.value)
+    this.modesFor = agent
+    this.modesShown = key
+    this.mode.replaceChildren(...modes.map((m) => el('option', { value: m.id, text: m.name || m.id, title: m.description || null })))
+    this.modeChip.hidden = modes.length < 2
+    const last = this.lastMode.get(agent)
+    this.mode.value = last && modes.some((m) => m.id === last) ? last : (modes[0]?.id ?? '')
+  }
+
+  /** The mode for the next session, or empty for the first the adapter lists. */
+  private chosenMode(): string {
+    return this.modeChip.hidden ? '' : this.mode.value
   }
 
   /**
@@ -182,7 +211,7 @@ export class CommandBar {
       const resp = await api('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ host: this.host, repoId: this.repoId, agent: this.agent.value, model: this.chosenModel(), prompt, inCheckout: this.where.value === 'checkout' }),
+        body: JSON.stringify({ host: this.host, repoId: this.repoId, agent: this.agent.value, model: this.chosenModel(), mode: this.chosenMode(), prompt, inCheckout: this.where.value === 'checkout' }),
       })
       const body = (await resp.json().catch(() => ({}))) as { error?: string }
       if (!resp.ok) {

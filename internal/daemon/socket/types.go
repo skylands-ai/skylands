@@ -31,9 +31,13 @@ type RepoInfo struct {
 
 // SessionInfo describes one agent session on this host.
 type SessionInfo struct {
-	ID      string `json:"id"`
-	Repo    string `json:"repo"`
-	Agent   string `json:"agent"`
+	ID    string `json:"id"`
+	Repo  string `json:"repo"`
+	Agent string `json:"agent"`
+	// Mode is the mode the session is in, and Model the model it runs on,
+	// empty for the agent's own default.
+	Mode    string `json:"mode,omitempty"`
+	Model   string `json:"model,omitempty"`
 	Status  string `json:"status"`
 	Turns   int    `json:"turns"`
 	Title   string `json:"title,omitempty"`
@@ -72,6 +76,8 @@ type SessionInfo struct {
 type SessionCommand struct {
 	// CommandID identifies the command. The client fills it in when empty.
 	CommandID string `json:"commandId,omitempty"`
+	// Value is the mode or model to set, for those commands.
+	Value string `json:"value,omitempty"`
 	// Force removes a worktree with uncommitted changes and a branch with
 	// unmerged commits.
 	Force bool `json:"force,omitempty"`

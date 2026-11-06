@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -33,6 +34,8 @@ type recorder struct {
 	messages  []string
 	asked     []PermissionRequest
 	questions []Question
+	// settings are the mode and model changes the observer heard about.
+	settings []string
 	// answer, when set, answers every question; otherwise the first choice of
 	// each field is picked.
 	answer func(Question) Answer
@@ -73,7 +76,7 @@ func TestQuestionsReachTheObserver(t *testing.T) {
 	rec := &recorder{answer: func(q Question) Answer {
 		return Answer{Answers: json.RawMessage(`{"question_0":"main.go","question_0_custom":"just the top"}`)}
 	}}
-	if _, err := RunPrompt(ctx, ad, cwd, "ask me which file", "", rec); err != nil {
+	if _, err := RunPrompt(ctx, ad, cwd, "ask me which file", Settings{}, rec); err != nil {
 		t.Fatalf("RunPrompt: %v", err)
 	}
 	if len(rec.questions) != 1 || rec.questions[0].Message != "Which file should I edit?" || len(rec.questions[0].Fields) != 2 {
@@ -91,7 +94,7 @@ func TestQuestionsReachTheObserver(t *testing.T) {
 
 	// A refusal is told apart from an answer.
 	rec2 := &recorder{answer: func(Question) Answer { return Answer{Declined: true} }}
-	if _, err := RunPrompt(ctx, ad, cwd, "ask me which file", "", rec2); err != nil {
+	if _, err := RunPrompt(ctx, ad, cwd, "ask me which file", Settings{}, rec2); err != nil {
 		t.Fatalf("RunPrompt: %v", err)
 	}
 	if said := rec2.said(); !strings.Contains(said, "You declined to choose, so I took README.md.") {
@@ -100,7 +103,7 @@ func TestQuestionsReachTheObserver(t *testing.T) {
 
 	// Without the words that make it ask, nothing is asked.
 	rec3 := &recorder{}
-	if _, err := RunPrompt(ctx, ad, cwd, "do the thing", "", rec3); err != nil {
+	if _, err := RunPrompt(ctx, ad, cwd, "do the thing", Settings{}, rec3); err != nil {
 		t.Fatal(err)
 	}
 	if len(rec3.questions) != 0 {
@@ -133,6 +136,29 @@ func (r *recorder) Permission(_ context.Context, req PermissionRequest) Decision
 	return Decision{Cancelled: true}
 }
 
+func (r *recorder) ModeChanged(mode, by string) {
+	r.mu.Lock()
+	r.settings = append(r.settings, "mode="+mode+" by="+by)
+	r.mu.Unlock()
+}
+func (r *recorder) ModelChanged(model string) {
+	r.mu.Lock()
+	r.settings = append(r.settings, "model="+model)
+	r.mu.Unlock()
+}
+func (r *recorder) ModeLost(err error) {
+	r.mu.Lock()
+	r.settings = append(r.settings, "lost: "+err.Error())
+	r.mu.Unlock()
+}
+
+// changes are the settings the agent changed, or the run set back, so far.
+func (r *recorder) changes() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.settings...)
+}
+
 func (r *recorder) Message(text string) {
 	r.mu.Lock()
 	r.messages = append(r.messages, text)
@@ -160,7 +186,7 @@ func TestResumeLoadsOrSeedsASession(t *testing.T) {
 	// An agent that loads sessions comes back under the same session id,
 	// and the history it replays while loading stays out of the observer.
 	rec := &recorder{}
-	run, how, err := Resume(ctx, ad, cwd, "", "sess-before", transcript, rec)
+	run, how, err := Resume(ctx, ad, cwd, Settings{}, "sess-before", transcript, rec)
 	if err != nil || how != ResumedByLoad {
 		t.Fatalf("Resume = %q, %v", how, err)
 	}
@@ -182,7 +208,7 @@ func TestResumeLoadsOrSeedsASession(t *testing.T) {
 	// goes in front of its first prompt only.
 	forgetful := Adapter{Name: "fake", Command: cmd, Env: append(append([]string(nil), env...), fakeagent.EnvNoLoad+"=1")}
 	rec2 := &recorder{}
-	run2, how, err := Resume(ctx, forgetful, cwd, "", "sess-before", transcript, rec2)
+	run2, how, err := Resume(ctx, forgetful, cwd, Settings{}, "sess-before", transcript, rec2)
 	if err != nil || how != ResumedBySeed {
 		t.Fatalf("Resume of a forgetful agent = %q, %v", how, err)
 	}
@@ -206,7 +232,7 @@ func TestResumeLoadsOrSeedsASession(t *testing.T) {
 
 	// With nothing to load and nothing to seed, Resume is a plain start.
 	rec3 := &recorder{}
-	run3, how, err := Resume(ctx, ad, cwd, "", "", "", rec3)
+	run3, how, err := Resume(ctx, ad, cwd, Settings{}, "", "", rec3)
 	if err != nil || how != ResumedBySeed {
 		t.Fatalf("Resume with nothing = %q, %v", how, err)
 	}
@@ -230,7 +256,7 @@ func TestRunPromptDrivesTheFakeAgent(t *testing.T) {
 	}
 	cmd, env := fakeagent.TestCommand()
 	rec := &recorder{}
-	stop, err := RunPrompt(ctx, Adapter{Name: "fake", Command: cmd, Env: env}, cwd, "do the thing", "", rec)
+	stop, err := RunPrompt(ctx, Adapter{Name: "fake", Command: cmd, Env: env}, cwd, "do the thing", Settings{}, rec)
 	if err != nil {
 		t.Fatalf("RunPrompt: %v", err)
 	}
@@ -342,7 +368,7 @@ func TestTitleUsesASideSession(t *testing.T) {
 	cwd := t.TempDir()
 	cmd, env := fakeagent.TestCommand()
 	rec := &recorder{}
-	run, err := Start(ctx, Adapter{Name: "fake", Command: cmd, Env: env}, cwd, "", rec)
+	run, err := Start(ctx, Adapter{Name: "fake", Command: cmd, Env: env}, cwd, Settings{}, rec)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -391,7 +417,7 @@ func TestStampNumbersSessionUpdates(t *testing.T) {
 }
 
 func TestRunPromptReportsAMissingAgent(t *testing.T) {
-	_, err := RunPrompt(context.Background(), Adapter{Name: "nope", Command: []string{"/definitely/not/here"}}, t.TempDir(), "x", "", &recorder{})
+	_, err := RunPrompt(context.Background(), Adapter{Name: "nope", Command: []string{"/definitely/not/here"}}, t.TempDir(), "x", Settings{}, &recorder{})
 	if err == nil {
 		t.Fatal("a missing agent command started")
 	}
@@ -409,8 +435,8 @@ func TestClaudeAdapter(t *testing.T) {
 	if cmd := ad.Command; len(cmd) == 0 || cmd[len(cmd)-1] != ClaudeAdapterPackage {
 		t.Errorf("claude adapter command = %q, want it to run %s", cmd, ClaudeAdapterPackage)
 	}
-	if ad.Mode != "default" || len(ad.Env) != 0 {
-		t.Errorf("claude mode = %q and env = %q, want default sessions set over ACP alone", ad.Mode, ad.Env)
+	if !reflect.DeepEqual(ad.Modes, []string{"default", "plan"}) || len(ad.Env) != 0 {
+		t.Errorf("claude modes = %q and env = %q, want sessions set to Manual or Plan over ACP alone", ad.Modes, ad.Env)
 	}
 	meta, _ := json.Marshal(ad.Meta)
 	if want := `{"claudeCode":{"options":{"allowDangerouslySkipPermissions":false}}}`; string(meta) != want {

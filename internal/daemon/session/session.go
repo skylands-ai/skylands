@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -61,10 +62,15 @@ type ToolCall struct {
 
 // Session is one agent run on one repository.
 type Session struct {
-	ID        string
-	RepoID    string
-	Agent     string
+	ID     string
+	RepoID string
+	Agent  string
+	// Model is the model the session runs on, or empty for the agent's
+	// own default, and Mode the mode it is in, one its adapter lists, or
+	// empty for the first, in a session from before modes were recorded.
+	// Both follow the session as a person or the agent changes them.
 	Model     string
+	Mode      string
 	AgentName string
 	Prompt    string
 	// Worktree is where the agent works: a worktree of its own, or the
@@ -257,6 +263,7 @@ var (
 	ErrOpen            = errors.New("the session is still open; stop it first")
 	ErrInCheckout      = errors.New("the session works in the checkout itself, so it has no branch or worktree of its own")
 	ErrNoWorktree      = errors.New("the worktree has been removed")
+	ErrModeNotListed   = agents.ErrModeNotListed
 	ErrNothingToCommit = errors.New("there is nothing to commit")
 	ErrUncommitted     = errors.New("the worktree has uncommitted changes; commit them first")
 	ErrNothingToMerge  = errors.New("the branch has no commits its base lacks")
@@ -381,7 +388,13 @@ func (m *Manager) resume(id string) {
 	// seeded agent sees the conversation as it was.
 	transcript, _ := os.ReadFile(m.transcriptPath(id))
 	obs := &observer{m: m, id: id, t: m.transcript(id)}
-	run, how, err := agents.Resume(m.ctx, adapter, s.Worktree, s.Model, s.AgentSessionID, string(transcript), obs)
+	// The session comes back on its latest mode and model. A mode the
+	// adapter no longer lists gives way to the first it does.
+	settings := agents.Settings{Mode: s.Mode, Model: s.Model}
+	if !slices.Contains(adapter.Modes, settings.Mode) {
+		settings.Mode = ""
+	}
+	run, how, err := agents.Resume(m.ctx, adapter, s.Worktree, settings, s.AgentSessionID, string(transcript), obs)
 	if err != nil {
 		if m.ctx.Err() == nil {
 			m.failed(id, err)
@@ -1196,6 +1209,13 @@ func (m *Manager) Start(ctx context.Context, cmd v1.StartSession) (Session, erro
 	if !ok {
 		return Session{}, fmt.Errorf("%w: %s", ErrUnknownAgent, cmd.Agent)
 	}
+	mode := cmd.Mode
+	switch {
+	case mode == "" && len(adapter.Modes) > 0:
+		mode = adapter.Modes[0]
+	case mode != "" && !slices.Contains(adapter.Modes, mode):
+		return Session{}, fmt.Errorf("%w: %s", ErrModeNotListed, mode)
+	}
 	id := cmd.SessionID
 	if id == "" {
 		id = nuid.Next()
@@ -1219,7 +1239,7 @@ func (m *Manager) Start(ctx context.Context, cmd v1.StartSession) (Session, erro
 
 	// The copy of the repository's rules stands on the signature of the
 	// list it copies.
-	started := v1.SessionStarted{SessionID: id, RepoID: repo.ID, Agent: cmd.Agent, Model: cmd.Model, Worktree: worktree, Branch: branch, Base: base, InCheckout: cmd.InCheckout, Rules: rules.Inherit(repo.Rules),
+	started := v1.SessionStarted{SessionID: id, RepoID: repo.ID, Agent: cmd.Agent, Model: cmd.Model, Mode: mode, Worktree: worktree, Branch: branch, Base: base, InCheckout: cmd.InCheckout, Rules: rules.Inherit(repo.Rules),
 		RulesBy: repo.RulesBy, RulesApprover: repo.RulesApprover, RulesSignature: repo.RulesSignature, RulesRevision: max(repo.RulesRevision-1, 0), RulesLapsed: repo.RulesLapsed}
 	if err := m.record(ctx, id, cmd.ID, v1.EventSessionStarted, started); err != nil {
 		return Session{}, err
@@ -1227,20 +1247,20 @@ func (m *Manager) Start(ctx context.Context, cmd v1.StartSession) (Session, erro
 	if err := m.record(ctx, id, cmd.ID, v1.EventPromptSent, v1.PromptSent{SessionID: id, Text: cmd.Prompt}); err != nil {
 		return Session{}, err
 	}
-	slog.Info("session: started", "session", id, "repo", repo.Name, "agent", cmd.Agent, "model", cmd.Model, "worktree", worktree, "branch", branch, "base", base)
+	slog.Info("session: started", "session", id, "repo", repo.Name, "agent", cmd.Agent, "model", cmd.Model, "mode", mode, "worktree", worktree, "branch", branch, "base", base)
 	m.transcript(id).Append("## You\n\n" + strings.TrimSpace(cmd.Prompt) + "\n\n## Agent\n\n")
 
 	m.runs.Add(1)
-	go m.begin(id, adapter, worktree, cmd.Prompt, cmd.Model)
+	go m.begin(id, adapter, worktree, cmd.Prompt, agents.Settings{Mode: mode, Model: cmd.Model})
 	s, _ := m.Get(id)
 	return s, nil
 }
 
 // begin launches a session's agent and runs its first turn.
-func (m *Manager) begin(id string, adapter agents.Adapter, worktree, prompt, model string) {
+func (m *Manager) begin(id string, adapter agents.Adapter, worktree, prompt string, settings agents.Settings) {
 	defer m.runs.Done()
 	obs := &observer{m: m, id: id, t: m.transcript(id)}
-	run, err := agents.Start(m.ctx, adapter, worktree, model, obs)
+	run, err := agents.Start(m.ctx, adapter, worktree, settings, obs)
 	if err != nil {
 		if m.ctx.Err() == nil {
 			m.failed(id, err)
@@ -1430,7 +1450,7 @@ func (m *Manager) apply(ev v1.Event) {
 		if ev.Decode(&d) != nil {
 			return
 		}
-		m.sessions[d.SessionID] = &Session{ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Worktree: d.Worktree, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Rules: d.Rules, RulesBy: d.RulesBy, RulesApprover: d.RulesApprover, RulesSignature: d.RulesSignature, RulesLapsed: d.RulesLapsed, Status: StatusRunning, StartedAt: ev.Time, UpdatedAt: ev.Time}
+		m.sessions[d.SessionID] = &Session{ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Mode: d.Mode, Worktree: d.Worktree, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Rules: d.Rules, RulesBy: d.RulesBy, RulesApprover: d.RulesApprover, RulesSignature: d.RulesSignature, RulesLapsed: d.RulesLapsed, Status: StatusRunning, StartedAt: ev.Time, UpdatedAt: ev.Time}
 		if ev.CommandID != "" {
 			m.handled[ev.CommandID] = d.SessionID
 		}
@@ -1473,6 +1493,26 @@ func (m *Manager) apply(ev v1.Event) {
 		if ev.Decode(&d) == nil {
 			if s := touch(d.SessionID); s != nil {
 				s.Title = d.Title
+			}
+		}
+	case v1.EventSessionModeChanged:
+		var d v1.SessionModeChanged
+		if ev.Decode(&d) == nil {
+			if s := touch(d.SessionID); s != nil {
+				s.Mode = d.Mode
+				if ev.CommandID != "" {
+					m.handled[ev.CommandID] = d.SessionID
+				}
+			}
+		}
+	case v1.EventSessionModelChanged:
+		var d v1.SessionModelChanged
+		if ev.Decode(&d) == nil {
+			if s := touch(d.SessionID); s != nil {
+				s.Model = d.Model
+				if ev.CommandID != "" {
+					m.handled[ev.CommandID] = d.SessionID
+				}
 			}
 		}
 	case v1.EventSessionTrusted:

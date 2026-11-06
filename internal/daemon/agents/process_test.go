@@ -72,7 +72,7 @@ func TestClosingAnAgentEndsWhatItStarted(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	ad, pidFile := agentWithChild(t)
-	r, err := Start(ctx, ad, t.TempDir(), "", quietObserver{})
+	r, err := Start(ctx, ad, t.TempDir(), Settings{}, quietObserver{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestClosingAHungAgentEndsItAndWhatItStarted(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	ad, pidFile := agentWithChild(t, fakeagent.EnvHang+"=1")
-	r, err := Start(ctx, ad, t.TempDir(), "", quietObserver{})
+	r, err := Start(ctx, ad, t.TempDir(), Settings{}, quietObserver{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestCancellingAnAgentEndsWhatItStarted(t *testing.T) {
 	defer cancel()
 	runCtx, stop := context.WithCancel(ctx)
 	ad, pidFile := agentWithChild(t)
-	r, err := Start(runCtx, ad, t.TempDir(), "", quietObserver{})
+	r, err := Start(runCtx, ad, t.TempDir(), Settings{}, quietObserver{})
 	if err != nil {
 		t.Fatal(err)
 	}
