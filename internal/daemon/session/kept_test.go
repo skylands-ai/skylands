@@ -82,18 +82,30 @@ func TestRequestsKeepTheirInputAndCallsTheirWholeOutput(t *testing.T) {
 		t.Errorf("the edit's record = truncated %v, %v; want it cut", record.Truncated, err)
 	}
 
-	// The hashes survive a reload, from the events alone.
+	// The hashes survive a reload, from the events alone. The session ends
+	// first: a reload brings an open session's agent back in the
+	// background, which would still be running in the test's directories
+	// when they are removed.
+	if _, err := m.Stop(f.ctx, v1.StopAgent{ID: "c3", SessionID: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	m.Wait()
 	m2, err := Load(f.ctx, f.store, f.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer m2.Wait()
 	reloaded, _ := m2.Get("s1")
+	found := false
 	for _, tc := range reloaded.ToolCalls {
-		if tc.ID == edit.ID && (tc.OutputHash != edit.OutputHash || tc.OutputSize != edit.OutputSize) {
-			t.Errorf("after a reload, the edit = %+v", tc)
+		if tc.ID == edit.ID {
+			found = true
+			if tc.OutputHash != edit.OutputHash || tc.OutputSize != edit.OutputSize {
+				t.Errorf("after a reload, the edit = %+v", tc)
+			}
 		}
 	}
-	if _, err := m.Stop(f.ctx, v1.StopAgent{ID: "c3", SessionID: "s1"}); err != nil {
-		t.Fatal(err)
+	if !found {
+		t.Errorf("after a reload, the edit is missing from %+v", reloaded.ToolCalls)
 	}
 }

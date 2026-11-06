@@ -238,6 +238,22 @@ func TestWithin(t *testing.T) {
 	if within(filepath.Join(filepath.Dir(dir), "elsewhere"), dir) {
 		t.Error("a sibling is within the directory")
 	}
+	// A directory named through a link, as macOS names its temporary
+	// directory, holds a path written either way.
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if !within(filepath.Join(link, "a"), link) || !within(filepath.Join(real, "a"), link) {
+		t.Error("a file under a linked directory is not within it")
+	}
+	if within(filepath.Join(filepath.Dir(real), "elsewhere"), link) {
+		t.Error("a sibling of a linked directory is within it")
+	}
 }
 
 // TestUnitPassesSystemdAnalyze has systemd itself read a rendered unit,
