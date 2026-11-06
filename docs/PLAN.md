@@ -286,6 +286,17 @@ specifies. No events, streams, or aggregates are needed for it.
   the list, and both refusals are tested end to end. The withheld lists were
   checked against Claude Code's announced commands and Codex's adapter at
   their pinned versions; check them again when a pin moves.
+- Signed prompts are done (#45). StartSession, SendPrompt, CommitChanges,
+  MergeChanges, and OpenPullRequest through the citadel must be signed by
+  an approver once the world exists, as decisions are: three new decision
+  kinds, start, prompt, and change, which the shared vector covers. A start
+  names its session, which the browser now picks, and the daemon refuses
+  a session id it has seen; a prompt or a change names the session's
+  revision, which counts its prompts, commits, merges, and pull requests,
+  so a signature can't be used twice, and one made before another prompt
+  is stale after it. PromptSent, ChangesCommitted, ChangesMerged, and
+  PullRequestOpened record the approver and signature. Stopping,
+  interrupting, and mode and model changes stay unsigned.
   The agent check reads each agent's listed modes, as it names them, with
   its models, which the command bar's Mode chip and the header list. The
   fake agent offers a plan mode, changes its own mode or model when told,

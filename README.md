@@ -392,8 +392,15 @@ checks the signature, against the world's approvers and against its own
 record, before it acts, so a citadel can pass decisions along but can't
 make one. Trust and rule changes are signed over the version of them the
 browser showed, so one made since is refused rather than overwritten, and
-an old one can't be sent again. Only an approver's browser gets into the
-world at all, as [Approvers](#approvers) describes.
+an old one can't be sent again. What sets an agent working or changes the
+repository is signed the same way: starting a session, each prompt, and
+committing, merging, or opening a pull request. A start names the session,
+which the browser picks, and the rest name the session's revision, which
+each of them moves on, so none can be sent twice, and a merge signed
+before another prompt is refused after it. The session records who sent
+each. Stopping or interrupting a session, and changing its mode or model,
+aren't signed: none of them can make an agent act. Only an approver's
+browser gets into the world at all, as [Approvers](#approvers) describes.
 `skylands request history` lists every decision on tool calls on the
 host, with who made it and whether its signature still verifies, and
 `skylands request history --show <id>` prints one decision whole: its

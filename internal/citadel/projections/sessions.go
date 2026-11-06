@@ -94,6 +94,9 @@ type Session struct {
 	StopReason string `json:"stopReason,omitempty"`
 	Error      string `json:"error,omitempty"`
 	Turns      int    `json:"turns"`
+	// Revision counts the session's prompts, commits, merges, and pull
+	// requests, as its daemon does. A signed prompt or change names it.
+	Revision int `json:"revision"`
 	// Title is what the agent named the conversation, if it has yet.
 	Title string `json:"title,omitempty"`
 	// Trusted means the session's tool calls are allowed without asking,
@@ -194,6 +197,7 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 					s.Prompt = d.Text
 				}
 				s.Turns++
+				s.Revision++
 				s.Status = "running"
 				s.Cancelling = false
 				changed = s
@@ -343,6 +347,7 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 			if s, ok := p.byID[d.SessionID]; ok {
 				s.Commit = d.Commit
 				s.Commits++
+				s.Revision++
 				changed = s
 			}
 		}
@@ -351,6 +356,7 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 		if ev.Decode(&d) == nil {
 			if s, ok := p.byID[d.SessionID]; ok {
 				s.MergedInto, s.MergedCommit = d.Into, d.Commit
+				s.Revision++
 				changed = s
 			}
 		}
@@ -359,6 +365,7 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 		if ev.Decode(&d) == nil {
 			if s, ok := p.byID[d.SessionID]; ok {
 				s.PullRequest = d.URL
+				s.Revision++
 				changed = s
 			}
 		}

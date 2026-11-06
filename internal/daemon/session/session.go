@@ -132,7 +132,11 @@ type Session struct {
 	Decided   []Decided
 	Questions []Question
 	// Turns counts the prompts sent so far.
-	Turns     int
+	Turns int
+	// Revision counts the session's prompts, commits, merges, and pull
+	// requests. A signed prompt or change names it and moves it on, so its
+	// signature can't be used again.
+	Revision  int
 	StartedAt time.Time
 	EndedAt   time.Time
 	// UpdatedAt is the time of the session's latest event.
@@ -230,7 +234,8 @@ type Config struct {
 	// expires. Zero means 30 minutes.
 	PermissionTimeout time.Duration
 	// World is the owner key of the world the host belongs to, or "" before
-	// it is known. Once it is known, a decision through the citadel must be
+	// it is known. Once it is known, a decision through the citadel, or a
+	// command that sets an agent working or changes the repository, must be
 	// signed by one of the world's approvers.
 	World func() string
 	// VerifyDecision checks an approver's signature over a decision that
@@ -266,6 +271,7 @@ var (
 	ErrModeNotListed   = agents.ErrModeNotListed
 	ErrCommandWithheld = agents.ErrCommandWithheld
 	ErrCommandUnknown  = agents.ErrCommandUnknown
+	ErrSessionExists   = errors.New("a session with this id already exists")
 	ErrNothingToCommit = errors.New("there is nothing to commit")
 	ErrUncommitted     = errors.New("the worktree has uncommitted changes; commit them first")
 	ErrNothingToMerge  = errors.New("the branch has no commits its base lacks")
@@ -496,11 +502,12 @@ func (m *Manager) world() string {
 	return m.cfg.World()
 }
 
-// signed checks a decision through the citadel once the world exists: an
+// signed checks a decision, or a command that sets an agent working or
+// changes the repository, through the citadel once the world exists: an
 // approver must have signed the decision build makes from the daemon's own
 // record, and must approve for the world. It returns the approver and
-// signature to record, or none for a decision that needs no signature:
-// one on the host, or one before the world exists.
+// signature to record, or none for one that needs no signature: one on
+// the host, or one before the world exists.
 func (m *Manager) signed(ctx context.Context, by string, sig *v1.DecisionSignature, what string, build func(world string) approval.Decision) (string, string, error) {
 	world := m.world()
 	if by != "citadel" || world == "" {
@@ -517,6 +524,16 @@ func (m *Manager) signed(ctx context.Context, by string, sig *v1.DecisionSignatu
 		return "", "", err
 	}
 	return sig.Approver, sig.Sig, nil
+}
+
+// signedAt checks a signed command that names the session's revision, as
+// signed does, once the world exists: one signed at another revision is
+// stale, since the session has moved on since it was shown.
+func (m *Manager) signedAt(ctx context.Context, s Session, revision int, sig *v1.DecisionSignature, what string, build func(world string) approval.Decision) (string, string, error) {
+	if m.world() != "" && revision != s.Revision {
+		return "", "", fmt.Errorf("%w: the session is at revision %d, not %d", ErrStale, s.Revision, revision)
+	}
+	return m.signed(ctx, "citadel", sig, what, build)
 }
 
 // stands reports whether trust or a rule list still stands on who set it:
@@ -567,7 +584,8 @@ func (m *Manager) Deny(ctx context.Context, cmd v1.DenyToolCall, by string) (Ses
 	return m.decide(ctx, cmd.ID, cmd.SessionID, cmd.RequestID, by, "", "", cmd.Signature, false)
 }
 
-// ErrUnsigned is a decision through the citadel that no approver signed.
+// ErrUnsigned is a decision or command through the citadel that no
+// approver signed.
 var ErrUnsigned = approval.ErrUnsigned
 
 // ErrInputMismatch is an approval through the citadel that names no input,
@@ -1035,10 +1053,16 @@ func (m *Manager) Prompt(ctx context.Context, cmd v1.SendPrompt) (Session, error
 	if strings.TrimSpace(cmd.Text) == "" {
 		return *s, ErrEmptyPrompt
 	}
+	approver, signature, err := m.signedAt(ctx, *s, cmd.Revision, cmd.Signature, "a prompt to "+cmd.SessionID, func(world string) approval.Decision {
+		return approval.Prompt{V: approval.DecisionVersion, Kind: approval.KindPrompt, World: world, Host: m.cfg.Host, Session: cmd.SessionID, Revision: s.Revision, Prompt: approval.TextHash(cmd.Text)}
+	})
+	if err != nil {
+		return *s, err
+	}
 	if err := l.run.CheckPrompt(ctx, cmd.Text, CommandWait); err != nil {
 		return *s, err
 	}
-	if err := m.record(ctx, cmd.SessionID, cmd.ID, v1.EventPromptSent, v1.PromptSent{SessionID: cmd.SessionID, Text: cmd.Text}); err != nil {
+	if err := m.record(ctx, cmd.SessionID, cmd.ID, v1.EventPromptSent, v1.PromptSent{SessionID: cmd.SessionID, Text: cmd.Text, Approver: approver, Signature: signature}); err != nil {
 		return Session{}, err
 	}
 	m.transcript(cmd.SessionID).Append("## You\n\n" + strings.TrimSpace(cmd.Text) + "\n\n## Agent\n\n")
@@ -1228,6 +1252,17 @@ func (m *Manager) Start(ctx context.Context, cmd v1.StartSession) (Session, erro
 	if id == "" {
 		id = nuid.Next()
 	}
+	// A signed start names its session, so it starts that one only.
+	if _, exists := m.Get(id); exists {
+		return Session{}, fmt.Errorf("%w: %s", ErrSessionExists, id)
+	}
+	approver, signature, err := m.signed(ctx, "citadel", cmd.Signature, "the start of "+id, func(world string) approval.Decision {
+		return approval.Start{V: approval.DecisionVersion, Kind: approval.KindStart, World: world, Host: m.cfg.Host, Session: cmd.SessionID, Repo: cmd.RepoID, Agent: cmd.Agent,
+			Mode: cmd.Mode, Model: cmd.Model, InCheckout: cmd.InCheckout, Prompt: approval.TextHash(cmd.Prompt)}
+	})
+	if err != nil {
+		return Session{}, err
+	}
 	base, err := currentBranch(ctx, repo.Path)
 	if err != nil {
 		return Session{}, err
@@ -1252,7 +1287,7 @@ func (m *Manager) Start(ctx context.Context, cmd v1.StartSession) (Session, erro
 	if err := m.record(ctx, id, cmd.ID, v1.EventSessionStarted, started); err != nil {
 		return Session{}, err
 	}
-	if err := m.record(ctx, id, cmd.ID, v1.EventPromptSent, v1.PromptSent{SessionID: id, Text: cmd.Prompt}); err != nil {
+	if err := m.record(ctx, id, cmd.ID, v1.EventPromptSent, v1.PromptSent{SessionID: id, Text: cmd.Prompt, Approver: approver, Signature: signature}); err != nil {
 		return Session{}, err
 	}
 	slog.Info("session: started", "session", id, "repo", repo.Name, "agent", cmd.Agent, "model", cmd.Model, "mode", mode, "worktree", worktree, "branch", branch, "base", base)
@@ -1479,6 +1514,7 @@ func (m *Manager) apply(ev v1.Event) {
 					s.Prompt = d.Text
 				}
 				s.Turns++
+				s.Revision++
 				s.Status = StatusRunning
 				s.Cancelling = false
 				if ev.CommandID != "" {
@@ -1645,6 +1681,7 @@ func (m *Manager) apply(ev v1.Event) {
 			if s := touch(d.SessionID); s != nil {
 				s.Commit = d.Commit
 				s.Commits++
+				s.Revision++
 				if ev.CommandID != "" {
 					m.handled[ev.CommandID] = d.SessionID
 				}
@@ -1655,6 +1692,7 @@ func (m *Manager) apply(ev v1.Event) {
 		if ev.Decode(&d) == nil {
 			if s := touch(d.SessionID); s != nil {
 				s.MergedInto, s.MergedCommit = d.Into, d.Commit
+				s.Revision++
 				if ev.CommandID != "" {
 					m.handled[ev.CommandID] = d.SessionID
 				}
@@ -1665,6 +1703,7 @@ func (m *Manager) apply(ev v1.Event) {
 		if ev.Decode(&d) == nil {
 			if s := touch(d.SessionID); s != nil {
 				s.PullRequest = d.URL
+				s.Revision++
 				if ev.CommandID != "" {
 					m.handled[ev.CommandID] = d.SessionID
 				}

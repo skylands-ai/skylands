@@ -77,7 +77,51 @@ export interface RepoRulesDecision {
   revision: number
 }
 
-export type Decision = ToolCallDecision | AnswerDecision | TrustDecision | SessionRulesDecision | RepoRulesDecision
+/**
+ * Starting a session with its first prompt, as internal/approval's Start.
+ * The browser picks the session's id, so a signed start starts one session.
+ */
+export interface StartDecision {
+  v: number
+  kind: 'start'
+  world: string
+  host: string
+  session: string
+  repo: string
+  agent: string
+  /** As the command names them: empty for the adapter's first mode and the agent's own model. */
+  mode: string
+  model: string
+  inCheckout: boolean
+  /** textHash of the prompt. */
+  prompt: string
+}
+
+/** Another prompt to a session, at the session's revision, which the prompt moves on. */
+export interface PromptDecision {
+  v: number
+  kind: 'prompt'
+  world: string
+  host: string
+  session: string
+  revision: number
+  prompt: string
+}
+
+/** A commit, merge, or pull request from a session's changes, at its revision. */
+export interface ChangeDecision {
+  v: number
+  kind: 'change'
+  world: string
+  host: string
+  session: string
+  revision: number
+  action: 'commit' | 'merge' | 'pull-request'
+  /** textHash of a commit's message, pullRequestHash of a pull request's title and body, and "" for a merge. */
+  text: string
+}
+
+export type Decision = ToolCallDecision | AnswerDecision | TrustDecision | SessionRulesDecision | RepoRulesDecision | StartDecision | PromptDecision | ChangeDecision
 
 /** An approver's signature over a decision, which the command through the citadel carries. */
 export interface DecisionSignature {
@@ -92,6 +136,16 @@ export function decisionDigest(d: Decision): Uint8Array {
 
 export function signDecision(kp: KeyPair, d: Decision): DecisionSignature {
   return { approver: kp.getPublicKey(), sig: toBase64url(kp.sign(decisionDigest(d))) }
+}
+
+/** The SHA-256 of a text's UTF-8 bytes, in lowercase hex. */
+export function textHash(text: string): string {
+  return bytesToHex(sha256(new TextEncoder().encode(text)))
+}
+
+/** The SHA-256 of a pull request's title and body as canonical JSON. */
+export function pullRequestHash(title: string, body: string): string {
+  return hashJSON({ title, body })
 }
 
 /** The SHA-256 of a value's canonical JSON, in lowercase hex. */

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -23,6 +24,10 @@ type startSessionRequest struct {
 	Model  string `json:"model"`
 	Mode   string `json:"mode"`
 	Prompt string `json:"prompt"`
+	// SessionID is the id the browser picked for the session, which a
+	// signed start names. Without one the citadel picks it.
+	SessionID string                `json:"sessionId"`
+	Signature *v1.DecisionSignature `json:"signature"`
 	// InCheckout runs the agent in the registered checkout itself rather
 	// than a worktree of its own.
 	InCheckout bool `json:"inCheckout"`
@@ -112,17 +117,24 @@ func (c *citadel) repoRules(w http.ResponseWriter, r *http.Request) {
 func (c *citadel) commit(w http.ResponseWriter, r *http.Request) {
 	host, id := r.PathValue("host"), r.PathValue("id")
 	var body struct {
-		Message string `json:"message"`
+		Message   string                `json:"message"`
+		Revision  int                   `json:"revision"`
+		Signature *v1.DecisionSignature `json:"signature"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	cmd := v1.CommitChanges{ID: nuid.Next(), SessionID: id, Message: strings.TrimSpace(body.Message)}
+	cmd := v1.CommitChanges{ID: nuid.Next(), SessionID: id, Message: strings.TrimSpace(body.Message), Revision: body.Revision, Signature: body.Signature}
 	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandCommitChanges), cmd, http.StatusOK)
 }
 
 // merge merges a session's branch into its base in the checkout on its island.
 func (c *citadel) merge(w http.ResponseWriter, r *http.Request) {
 	host, id := r.PathValue("host"), r.PathValue("id")
-	cmd := v1.MergeChanges{ID: nuid.Next(), SessionID: id}
+	var body struct {
+		Revision  int                   `json:"revision"`
+		Signature *v1.DecisionSignature `json:"signature"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	cmd := v1.MergeChanges{ID: nuid.Next(), SessionID: id, Revision: body.Revision, Signature: body.Signature}
 	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandMergeChanges), cmd, http.StatusOK)
 }
 
@@ -130,11 +142,13 @@ func (c *citadel) merge(w http.ResponseWriter, r *http.Request) {
 func (c *citadel) pullRequest(w http.ResponseWriter, r *http.Request) {
 	host, id := r.PathValue("host"), r.PathValue("id")
 	var body struct {
-		Title string `json:"title"`
-		Body  string `json:"body"`
+		Title     string                `json:"title"`
+		Body      string                `json:"body"`
+		Revision  int                   `json:"revision"`
+		Signature *v1.DecisionSignature `json:"signature"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	cmd := v1.OpenPullRequest{ID: nuid.Next(), SessionID: id, Title: strings.TrimSpace(body.Title), Body: strings.TrimSpace(body.Body)}
+	cmd := v1.OpenPullRequest{ID: nuid.Next(), SessionID: id, Title: strings.TrimSpace(body.Title), Body: strings.TrimSpace(body.Body), Revision: body.Revision, Signature: body.Signature}
 	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandOpenPullRequest), cmd, http.StatusOK)
 }
 
@@ -171,13 +185,15 @@ func (c *citadel) setModel(w http.ResponseWriter, r *http.Request) {
 func (c *citadel) sendPrompt(w http.ResponseWriter, r *http.Request) {
 	host, id := r.PathValue("host"), r.PathValue("id")
 	var body struct {
-		Text string `json:"text"`
+		Text      string                `json:"text"`
+		Revision  int                   `json:"revision"`
+		Signature *v1.DecisionSignature `json:"signature"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Text) == "" {
 		writeError(w, http.StatusBadRequest, "a prompt is required")
 		return
 	}
-	cmd := v1.SendPrompt{ID: nuid.Next(), SessionID: id, Text: strings.TrimSpace(body.Text)}
+	cmd := v1.SendPrompt{ID: nuid.Next(), SessionID: id, Text: strings.TrimSpace(body.Text), Revision: body.Revision, Signature: body.Signature}
 	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandSendPrompt), cmd, http.StatusOK)
 }
 
@@ -292,6 +308,10 @@ func (c *citadel) fetchFromHost(kind string) http.HandlerFunc {
 	}
 }
 
+// sessionIDPattern is a session id a browser may pick: it names the
+// session's subjects, worktree, and files, so letters and digits only.
+var sessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9]{8,64}$`)
+
 // startSession dispatches a prompt straight to the island that holds the
 // repository. Choosing the host or repo for a work order comes later.
 func (c *citadel) startSession(w http.ResponseWriter, r *http.Request) {
@@ -316,8 +336,14 @@ func (c *citadel) startSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := nuid.Next()
-	cmd := v1.StartSession{ID: nuid.Next(), SessionID: sessionID, RepoID: req.RepoID, Agent: req.Agent, Model: strings.TrimSpace(req.Model), Mode: strings.TrimSpace(req.Mode), Prompt: req.Prompt, InCheckout: req.InCheckout}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		sessionID = nuid.Next()
+	} else if !sessionIDPattern.MatchString(sessionID) {
+		writeError(w, http.StatusBadRequest, "a session id is 8 to 64 letters and digits")
+		return
+	}
+	cmd := v1.StartSession{Signature: req.Signature, ID: nuid.Next(), SessionID: sessionID, RepoID: req.RepoID, Agent: req.Agent, Model: strings.TrimSpace(req.Model), Mode: strings.TrimSpace(req.Mode), Prompt: req.Prompt, InCheckout: req.InCheckout}
 	result, err := c.sendCommand(r.Context(), v1.SessionCommandSubject(req.Host, sessionID, v1.CommandStartSession), cmd)
 	switch {
 	case errors.Is(err, nats.ErrNoResponders), errors.Is(err, nats.ErrTimeout):
