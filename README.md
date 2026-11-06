@@ -170,6 +170,48 @@ browser at once. Until the world is set up there's no approver to sign in
 as, and the citadel lets anyone who reaches it in, so set it up before you
 let others reach it.
 
+### Open the world on your phone
+
+A phone can't open the address a laptop reaches the citadel at, such as
+`127.0.0.1`, and installing the web app or getting push notifications on
+it needs HTTPS. [Tailscale](https://tailscale.com) gives the citadel an
+HTTPS address on your tailnet, with no public endpoint and no
+certificate to manage. The phone and the laptop both need to be on the
+tailnet.
+
+1. On the machine running devworld, serve the citadel's port on the
+   tailnet. Tailscale asks you to turn on HTTPS for the tailnet the first
+   time, if it isn't already:
+
+   ```sh
+   tailscale serve --bg 8080
+   ```
+
+   That serves `https://<machine>.<tailnet>.ts.net` until `tailscale serve
+   --https=443 off`. The citadel keeps listening on 127.0.0.1, where
+   Tailscale reaches it. The first page at that address can take half a
+   minute, while Tailscale gets its certificate. On macOS the command
+   comes with the app, at
+   `/Applications/Tailscale.app/Contents/MacOS/Tailscale`.
+2. Run devworld with that address, so the links it makes name it, or
+   install it with the same flag:
+
+   ```sh
+   skylands devworld up --url https://<machine>.<tailnet>.ts.net
+   ```
+
+3. Set the world up at that address. A browser keeps its key per address,
+   so for a world already set up at `127.0.0.1`, make that browser an
+   approver at the new address too: press "Add an approver", and open the
+   link in the same browser.
+4. Add the phone: press "Add an approver", and scan the code. The link
+   opens at the citadel's `--url`, as "Opens at" shows.
+
+Another reverse proxy works the same way if it passes the browser's `Host`
+header through, as `tailscale serve` does, along with WebSocket upgrades.
+Through one that rewrites `Host`, the citadel refuses what a page asks of
+it, and says why.
+
 ### Keep it running
 
 `up` runs in the terminal you start it from. To have it start when you log
