@@ -75,8 +75,10 @@ skylands preflight
 
 It reports git, Node, and npx with the versions and paths it found, and starts
 each agent over ACP without asking a model anything. It says whether Claude Code
-and Codex are logged in, and which models each offers that login. It also checks
-`gh`, and asks the daemon on this machine which version it runs. Each problem
+and Codex are logged in, and which models each offers that login. It looks for
+allow rules in Claude Code's own settings, because Claude Code runs a call one
+of them allows without asking, so the call never reaches Skylands' approvals.
+It also checks `gh`, and asks the daemon on this machine which version it runs. Each problem
 comes with what to do about it. The command exits with status 1 when a check
 fails.
 

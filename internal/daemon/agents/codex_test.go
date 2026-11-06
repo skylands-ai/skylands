@@ -223,3 +223,70 @@ func TestInstructionsGoToAgentsThatTakeThem(t *testing.T) {
 	ask(t, run, rec, fakeagent.NoInstructions)
 	_ = run.Close()
 }
+
+// TestMetaGoesWithEverySession sends an adapter's Meta with every session
+// the agent opens or loads: the conversation's, the title's side session,
+// a loaded one, the new one that stands in for one that could not be
+// loaded, and the one a probe opens to read the models. The fake agent
+// here refuses any session without it.
+func TestMetaGoesWithEverySession(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd, env := fakeagent.TestCommand()
+	strict := append(append([]string(nil), env...), fakeagent.EnvRequireMeta+"=1")
+	meta := acp.Meta{"claudeCode": map[string]any{"options": map[string]any{"allowDangerouslySkipPermissions": false}}}
+	const want = `{"claudeCode":{"options":{"allowDangerouslySkipPermissions":false}}}`
+	ask := func(t *testing.T, run *Run, rec *recorder, want string) {
+		t.Helper()
+		before := len(rec.said())
+		if _, err := run.Prompt(ctx, fakeagent.MetaQuestion); err != nil {
+			t.Fatal(err)
+		}
+		if got := rec.said()[before:]; got != want {
+			t.Errorf("meta = %q, want %q", got, want)
+		}
+	}
+
+	ad := Adapter{Name: "fake", Command: cmd, Env: strict, Meta: meta}
+	rec := &recorder{}
+	run, err := Start(ctx, ad, t.TempDir(), "", rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ask(t, run, rec, want)
+	if _, err := run.Title(ctx, "do the thing", 10*time.Second); err != nil {
+		t.Errorf("title: %v", err)
+	}
+	_ = run.Close()
+
+	rec = &recorder{}
+	run, how, err := Resume(ctx, ad, t.TempDir(), "", "sess-before", "", rec)
+	if err != nil || how != ResumedByLoad {
+		t.Fatalf("Resume = %q, %v", how, err)
+	}
+	ask(t, run, rec, want)
+	_ = run.Close()
+
+	rec = &recorder{}
+	noLoad := ad
+	noLoad.Env = append(append([]string(nil), strict...), fakeagent.EnvNoLoad+"=1")
+	run, how, err = Resume(ctx, noLoad, t.TempDir(), "", "sess-before", "", rec)
+	if err != nil || how != ResumedBySeed {
+		t.Fatalf("Resume = %q, %v", how, err)
+	}
+	ask(t, run, rec, want)
+	_ = run.Close()
+
+	if p, err := ProbeAgent(ctx, ad, t.TempDir(), ProbeOptions{Models: true}); err != nil || !p.ModelsRead {
+		t.Errorf("ProbeAgent = %+v, %v, want the models read from a session it opened", p, err)
+	}
+
+	// An adapter without Meta sends none.
+	rec = &recorder{}
+	run, err = Start(ctx, Adapter{Name: "fake", Command: cmd, Env: env}, t.TempDir(), "", rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ask(t, run, rec, fakeagent.NoMeta)
+	_ = run.Close()
+}

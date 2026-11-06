@@ -1,17 +1,21 @@
 // Package preflight checks that a host has what Skylands needs to run
 // agents: git for worktrees, Node for agents that come from npm, each agent
-// starting over ACP and, where it says, logged in, gh for pull requests,
-// and a daemon on the local socket.
+// starting over ACP and, where it says, logged in, no allow rules in
+// Claude Code's own settings, gh for pull requests, and a daemon on the
+// local socket.
 package preflight
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -102,6 +106,11 @@ type Env struct {
 	// CheckAgents asks the daemon to check its agents now, in its own
 	// environment, which also updates its island.
 	CheckAgents func(ctx context.Context, socketPath string) ([]v1.AgentAvailability, error)
+	// ClaudeDir is where Claude Code keeps its user settings:
+	// $CLAUDE_CONFIG_DIR, or ~/.claude. Empty when there is no home.
+	ClaudeDir string
+	// ReadFile reads a whole file, as os.ReadFile does.
+	ReadFile func(name string) ([]byte, error)
 }
 
 // Default is the environment for checking this machine with the daemon
@@ -125,13 +134,110 @@ func Default(socketPath, version string) Env {
 		CheckAgents: func(ctx context.Context, path string) ([]v1.AgentAvailability, error) {
 			return socket.Dial(path).CheckAgents(ctx)
 		},
+		ClaudeDir: claudeDir(),
+		ReadFile:  os.ReadFile,
 	}
+}
+
+// claudeDir is where Claude Code keeps its user settings.
+func claudeDir() string {
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		return dir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".claude")
 }
 
 // Run makes every check, in the order they are shown.
 func Run(ctx context.Context, e Env) []Check {
-	checks := RunAgents(ctx, e)
+	checks := withClaudeSettings(ctx, e, RunAgents(ctx, e))
 	return append(checks, ghCheck(ctx, e), daemonCheck(ctx, e, Ready(checks)))
+}
+
+// withClaudeSettings adds the check of Claude Code's own settings after
+// Claude Code's other checks, when it is installed.
+func withClaudeSettings(ctx context.Context, e Env, checks []Check) []Check {
+	last := -1
+	for i, c := range checks {
+		if c.Agent != "claude" {
+			continue
+		}
+		if c.Name == "agent claude" && (c.Missing || c.Status == Fail || c.Status == Skip) {
+			return checks
+		}
+		last = i
+	}
+	if last < 0 || e.ReadFile == nil {
+		return checks
+	}
+	return slices.Insert(checks, last+1, claudeSettingsCheck(ctx, e))
+}
+
+// claudeSettingsCheck looks for allow rules in Claude Code's own settings:
+// the user's, and the project and local settings of each repository the
+// daemon has registered. Claude Code runs a call that one of them allows
+// without asking, even in the mode the daemon sets, so the call never
+// reaches the host's rules or a person.
+func claudeSettingsCheck(ctx context.Context, e Env) Check {
+	c := Check{Name: "settings claude", Agent: "claude"}
+	var files []string
+	if e.ClaudeDir != "" {
+		files = append(files, filepath.Join(e.ClaudeDir, "settings.json"))
+	}
+	repos := -1
+	if e.Status != nil {
+		if st, err := e.Status(ctx, e.SocketPath); err == nil {
+			repos = len(st.Repos)
+			for _, r := range st.Repos {
+				files = append(files, filepath.Join(r.Path, ".claude", "settings.json"), filepath.Join(r.Path, ".claude", "settings.local.json"))
+			}
+		}
+	}
+	var allowing, unreadable []string
+	for _, f := range files {
+		data, err := e.ReadFile(f)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		var settings struct {
+			Permissions struct {
+				Allow []string `json:"allow"`
+			} `json:"permissions"`
+		}
+		if err == nil {
+			err = json.Unmarshal(data, &settings)
+		}
+		if err != nil {
+			unreadable = append(unreadable, f)
+			continue
+		}
+		if n := len(settings.Permissions.Allow); n > 0 {
+			allowing = append(allowing, fmt.Sprintf("%s (%d)", f, n))
+		}
+	}
+	switch {
+	case len(allowing) > 0:
+		c.Status, c.Found = Warn, "allow rules in "+strings.Join(allowing, ", ")
+		c.Fix = "Claude Code runs a call these rules allow without asking, so neither the host's rules nor a person sees it; remove the rules for calls Skylands should decide"
+		if len(unreadable) > 0 {
+			c.Found += "; could not read " + strings.Join(unreadable, ", ")
+		}
+	case len(unreadable) > 0:
+		c.Status, c.Found = Warn, "could not read "+strings.Join(unreadable, ", ")
+		c.Fix = "check them for allow rules: Claude Code runs a call one allows without asking, so neither the host's rules nor a person sees it"
+	case repos < 0:
+		c.Found = "no allow rules in your settings; no daemon answered to say which repositories to read"
+	case repos == 0:
+		c.Found = "no allow rules in your settings, and no repositories are registered"
+	case repos == 1:
+		c.Found = "no allow rules in your settings or the registered repository's"
+	default:
+		c.Found = fmt.Sprintf("no allow rules in your settings or those of %d registered repositories", repos)
+	}
+	return c
 }
 
 // RunAgents makes the checks that decide which agents can run: git, Node

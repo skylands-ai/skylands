@@ -25,8 +25,10 @@ func newPreflightCmd() *cobra.Command {
 		Short:   "Check that this host has what it needs to run agents",
 		Long: `Preflight checks what a daemon on this host needs: git for session
 worktrees, Node and npx for agents from npm, each agent starting over ACP
-and, when it reports one, its login, gh for pull requests, and a daemon
-answering on the local socket. Starting an agent asks no model anything.
+and, when it reports one, its login, allow rules in Claude Code's own
+settings, which let calls skip the host's approvals, gh for pull requests,
+and a daemon answering on the local socket. Starting an agent asks no model
+anything.
 
 It checks with this shell's PATH and environment. A service from
 "skylands daemon install" or "devworld install" gets only the PATH. It

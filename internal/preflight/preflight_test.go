@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"reflect"
 	"strings"
 	"testing"
@@ -28,6 +29,9 @@ type host struct {
 	probed       []string
 	// modelsAsked are the agents whose models a probe was asked to read.
 	modelsAsked []string
+	// files are the files on the machine by path, such as Claude Code's
+	// settings.
+	files map[string]string
 }
 
 func healthy() *host {
@@ -45,6 +49,7 @@ func healthy() *host {
 		},
 		probeErr: map[string]error{},
 		daemon:   &socket.StatusInfo{Host: "wopr", Version: "v1.0.0", Started: time.Now().Add(-time.Hour)},
+		files:    map[string]string{},
 		daemonAgents: []v1.AgentAvailability{
 			{Name: "claude", Available: true},
 			{Name: "fake", Available: true},
@@ -97,6 +102,14 @@ func (h *host) env() Env {
 		CheckAgents: func(context.Context, string) ([]v1.AgentAvailability, error) {
 			return h.daemonAgents, nil
 		},
+		ClaudeDir: "/home/joshua/.claude",
+		ReadFile: func(name string) ([]byte, error) {
+			data, ok := h.files[name]
+			if !ok {
+				return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+			}
+			return []byte(data), nil
+		},
 	}
 }
 
@@ -119,7 +132,7 @@ func TestHealthyHost(t *testing.T) {
 			t.Errorf("%s: %s %q, %q; want ok", c.Name, c.Status, c.Found, c.Fix)
 		}
 	}
-	want := []string{"git", "node", "npx", "agent claude", "login claude", "agent fake", "gh", "daemon"}
+	want := []string{"git", "node", "npx", "agent claude", "login claude", "settings claude", "agent fake", "gh", "daemon"}
 	if !reflect.DeepEqual(names, want) {
 		t.Errorf("checks %q, want %q", names, want)
 	}
@@ -275,11 +288,77 @@ func TestAvailability(t *testing.T) {
 func TestRunAgentsLeavesOutGhAndTheDaemon(t *testing.T) {
 	h := healthy()
 	m := byName(RunAgents(context.Background(), h.env()))
-	if _, ok := m["gh"]; ok {
-		t.Error("RunAgents checked gh")
+	for _, name := range []string{"settings claude", "gh", "daemon"} {
+		if _, ok := m[name]; ok {
+			t.Errorf("RunAgents checked %s", name)
+		}
 	}
-	if _, ok := m["daemon"]; ok {
-		t.Error("RunAgents checked the daemon")
+}
+
+// TestClaudeSettings looks for allow rules in Claude Code's own settings,
+// the user's and each registered repository's, which let calls skip the
+// host's rules and a person.
+func TestClaudeSettings(t *testing.T) {
+	const (
+		user    = "/home/joshua/.claude/settings.json"
+		project = "/code/shop/.claude/settings.json"
+		local   = "/code/shop/.claude/settings.local.json"
+	)
+	withRepo := func(h *host) {
+		h.daemon.Repos = []socket.RepoInfo{{ID: "r1", Name: "shop", Path: "/code/shop"}}
+	}
+	for _, tc := range []struct {
+		name   string
+		setup  func(h *host)
+		status Status
+		found  string
+		fix    string
+	}{
+		{"no settings", func(h *host) {}, OK, "no allow rules in your settings, and no repositories are registered", ""},
+		{"settings without allow rules", func(h *host) {
+			withRepo(h)
+			h.files[user] = `{"model": "opus", "permissions": {"deny": ["Bash(rm:*)"]}}`
+			h.files[project] = `{"permissions": {"allow": []}}`
+		}, OK, "no allow rules in your settings or the registered repository's", ""},
+		{"allow rules", func(h *host) {
+			withRepo(h)
+			h.files[user] = `{"permissions": {"allow": ["Bash(go test:*)", "WebFetch"]}}`
+			h.files[local] = `{"permissions": {"allow": ["Edit"]}}`
+		}, Warn, user + " (2), " + local + " (1)", "without asking"},
+		{"a file that is not JSON", func(h *host) {
+			withRepo(h)
+			h.files[project] = `{"permissions": `
+		}, Warn, "could not read " + project, "check them for allow rules"},
+		{"no daemon", func(h *host) {
+			h.daemon = nil
+			h.files[project] = `{"permissions": {"allow": ["Edit"]}}`
+		}, OK, "no daemon answered", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := healthy()
+			tc.setup(h)
+			c := byName(Run(context.Background(), h.env()))["settings claude"]
+			if c.Status != tc.status || !strings.Contains(c.Found, tc.found) || !strings.Contains(c.Fix, tc.fix) {
+				t.Errorf("settings claude = %s %q, fix %q; want %s with %q, fix with %q", c.Status, c.Found, c.Fix, tc.status, tc.found, tc.fix)
+			}
+			if c.Agent != "claude" {
+				t.Errorf("agent = %q", c.Agent)
+			}
+		})
+	}
+
+	// Allow rules don't stop Claude Code from running, so it stays ready.
+	h := healthy()
+	h.files[user] = `{"permissions": {"allow": ["Edit"]}}`
+	if got := Ready(Run(context.Background(), h.env())); !reflect.DeepEqual(got, []string{"claude", "fake"}) {
+		t.Errorf("Ready = %q, want claude still ready", got)
+	}
+
+	// Claude Code that isn't installed has no settings to check.
+	h = healthy()
+	h.missing["npx"] = true
+	if _, ok := byName(Run(context.Background(), h.env()))["settings claude"]; ok {
+		t.Error("checked Claude Code's settings with Claude Code unable to run")
 	}
 }
 

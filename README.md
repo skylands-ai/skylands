@@ -57,9 +57,11 @@ skylands preflight
 It reports git, Node, and npx with the versions and paths it found, starts
 each agent over ACP without asking a model anything, reports whether Claude
 Code and Codex are logged in as each sees it and which models each offers
-that login, checks `gh`, and asks the daemon on the local socket which
-version it runs. Reading the models opens a session in the agent without
-prompting it, which starts what a session needs, such as its MCP servers.
+that login, looks for allow rules in Claude Code's own settings, which let
+calls past the host's approvals (see [Approvals](#approvals)), checks
+`gh`, and asks the daemon on the local socket which version it runs.
+Reading the models opens a session in the agent without prompting it,
+which starts what a session needs, such as its MCP servers.
 Each problem comes with
 what to do about it, and the command exits with status 1 when a check
 fails. An agent that isn't installed, such as goose without `goose` on
@@ -302,6 +304,18 @@ a conversation's header, lets that session's calls through without asking
 from then on, except what a deny rule refuses. A request nobody answers in 30 minutes
 expires, and the agent is told it was cancelled; ending the session
 cancels whatever it was asking.
+
+The daemon sets every Claude Code session to its Manual mode, through
+Claude Code's mode setting over ACP, whatever `permissions.defaultMode`
+Claude Code's settings name, and turns its bypass mode off for the
+session; a session whose mode can't be set doesn't start.
+In Manual, Claude Code asks before making changes, except a call that an
+allow rule in its own settings matches: `permissions.allow` in
+`~/.claude/settings.json`, or in the repository's `.claude/settings.json`
+or `.claude/settings.local.json`. Claude Code runs such a call without
+asking, so it reaches neither the host's rules nor a person, deny rules
+included. `skylands preflight` names the files that hold allow rules;
+remove the ones for calls Skylands should decide.
 
 Codex has a sandbox of its own, and the daemon sets every Codex session to
 its read-only mode, through Codex's mode setting over ACP, so Codex asks

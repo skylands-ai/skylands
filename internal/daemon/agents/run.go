@@ -45,6 +45,9 @@ type Run struct {
 	// mode and model are what every session the agent opens or loads is
 	// set to through its config options; empty leaves the agent's own.
 	mode, model string
+	// meta is the adapter's Meta, which goes with every session the agent
+	// opens or loads.
+	meta acp.Meta
 }
 
 // Start launches the adapter's agent in cwd, initializes it, and opens a
@@ -55,7 +58,7 @@ func Start(ctx context.Context, ad Adapter, cwd, model string, obs Observer) (*R
 	if err != nil {
 		return nil, err
 	}
-	sess, err := r.client.NewSession(ctx, &acp.NewSessionRequest{Cwd: cwd, McpServers: []acp.McpServer{}, SystemPrompt: r.system})
+	sess, err := r.client.NewSession(ctx, &acp.NewSessionRequest{Cwd: cwd, McpServers: []acp.McpServer{}, SystemPrompt: r.system, Meta: r.meta})
 	if err != nil {
 		_ = r.Close()
 		return nil, r.fail("open session", err)
@@ -86,7 +89,7 @@ func Resume(ctx context.Context, ad Adapter, cwd, model, agentSessionID, transcr
 	if agentSessionID != "" && init.AgentCapabilities != nil && init.AgentCapabilities.LoadSession {
 		id := acp.SessionId(agentSessionID)
 		r.handler.aside(id)
-		loaded, err := r.client.LoadSession(ctx, &acp.LoadSessionRequest{SessionID: id, Cwd: cwd, McpServers: []acp.McpServer{}, SystemPrompt: r.system})
+		loaded, err := r.client.LoadSession(ctx, &acp.LoadSessionRequest{SessionID: id, Cwd: cwd, McpServers: []acp.McpServer{}, SystemPrompt: r.system, Meta: r.meta})
 		r.drain()
 		r.handler.collected(id)
 		if err == nil {
@@ -110,7 +113,7 @@ func Resume(ctx context.Context, ad Adapter, cwd, model, agentSessionID, transcr
 		}
 		slog.Info("agents: the agent could not load its session, seeding a new one", "agent", ad.Name, "err", err)
 	}
-	sess, err := r.client.NewSession(ctx, &acp.NewSessionRequest{Cwd: cwd, McpServers: []acp.McpServer{}, SystemPrompt: r.system})
+	sess, err := r.client.NewSession(ctx, &acp.NewSessionRequest{Cwd: cwd, McpServers: []acp.McpServer{}, SystemPrompt: r.system, Meta: r.meta})
 	if err != nil {
 		_ = r.Close()
 		return nil, "", r.fail("open session", err)
@@ -201,7 +204,7 @@ func launch(ctx context.Context, ad Adapter, cwd, model string, obs Observer) (*
 		cancel()
 		return nil, nil, fmt.Errorf("start %s agent: %w", ad.Name, err)
 	}
-	r := &Run{name: ad.Name, cwd: cwd, client: client, cancel: cancel, stderr: stderr, transport: transport, seq: h.seq, handler: h, mode: ad.Mode, model: model}
+	r := &Run{name: ad.Name, cwd: cwd, client: client, cancel: cancel, stderr: stderr, transport: transport, seq: h.seq, handler: h, mode: ad.Mode, model: model, meta: ad.Meta}
 
 	init, err := client.Initialize(ctx, &acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersion(1),
@@ -385,7 +388,7 @@ func (r *Run) drain() { r.handler.catchUp() }
 func (r *Run) Title(ctx context.Context, request string, timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	sess, err := r.client.NewSession(ctx, &acp.NewSessionRequest{Cwd: r.cwd, McpServers: []acp.McpServer{}})
+	sess, err := r.client.NewSession(ctx, &acp.NewSessionRequest{Cwd: r.cwd, McpServers: []acp.McpServer{}, Meta: r.meta})
 	if err != nil {
 		return "", fmt.Errorf("open a side session: %w", err)
 	}
