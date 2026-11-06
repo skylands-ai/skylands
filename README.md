@@ -123,6 +123,12 @@ Use the address the citadel prints. A browser keeps its key per address, so
 to it `http://localhost:8080` and `http://127.0.0.1:8080` are different
 places; the citadel sends `localhost` and `[::1]` on to the address it prints.
 Don't set up in a private window, which forgets the key when it closes.
+To set the world up at another address, such as this machine's name on
+your network or an HTTPS address in front of the citadel, give
+`devworld up` that address with `--url`, as in `--url
+https://box.example.ts.net`; the setup link names it. Without `--http`
+the citadel still listens on 127.0.0.1 only, so whatever serves that
+address must reach it there, or listen more widely with `--http`.
 
 Until the world is set up,
 every page leads to `/setup`, and only the link's one-time code sets it up; a

@@ -7,9 +7,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -58,6 +60,29 @@ type worldView struct {
 	watching bool
 	// skipped is the registry records already logged as not counting.
 	skipped map[string]bool
+}
+
+// CheckPublicURL says what's wrong with a URL people open a citadel at, or
+// nil for none: it is http or https with a host, and nothing after the
+// host but a slash, since the citadel serves its pages from the root.
+// Empty means the listen address.
+func CheckPublicURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("--url %q: %w", raw, err)
+	}
+	switch {
+	case u.Scheme != "http" && u.Scheme != "https":
+		return fmt.Errorf("--url %q: give the whole URL, starting http:// or https://", raw)
+	case u.Host == "" || u.Hostname() == "":
+		return fmt.Errorf("--url %q has no host", raw)
+	case u.User != nil, u.RawQuery != "", u.Fragment != "", u.Path != "" && u.Path != "/":
+		return fmt.Errorf("--url %q: give only the scheme, host, and port; the citadel serves its pages from the root", raw)
+	}
+	return nil
 }
 
 // publicURL is where people open this citadel: the configured URL, or the

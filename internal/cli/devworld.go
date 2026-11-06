@@ -32,6 +32,7 @@ type devworldOptions struct {
 	leafListen string
 	host       string
 	socketPath string
+	url        string
 }
 
 func newDevworldUpCmd() *cobra.Command {
@@ -61,6 +62,7 @@ to 127.0.0.1.`,
 func devworldUpFlags(f *pflag.FlagSet, o *devworldOptions) {
 	f.StringVar(&o.dataDir, "data-dir", defaultDataDir(), "directory for the JetStream stores and daemon state")
 	f.StringVar(&o.httpAddr, "http", "127.0.0.1:8080", "address the web application listens on")
+	f.StringVar(&o.url, "url", "", "URL people open the citadel at, used in the links it prints, such as an HTTPS address in front of it (default http:// and --http)")
 	f.StringVar(&o.natsListen, "nats-listen", "127.0.0.1:4222", "address the embedded NATS server accepts clients on")
 	f.StringVar(&o.leafListen, "leaf-listen", "127.0.0.1:7422", "address the embedded NATS server accepts daemon leaf nodes on")
 	f.StringVar(&o.host, "host", daemon.DefaultHost(), "name of this machine's island")
@@ -83,6 +85,9 @@ func newDevworldInstallCmd() *cobra.Command {
 // until one of them stops or ctx is cancelled. The setup link, while there
 // is no world, goes to stderr apart from the log.
 func runDevworld(ctx context.Context, o devworldOptions, stderr io.Writer) error {
+	if err := citadel.CheckPublicURL(o.url); err != nil {
+		return err
+	}
 	srv, err := natsembed.Start(ctx, natsembed.Config{
 		Name:       "skylands-devworld",
 		ClientAddr: o.natsListen,
@@ -104,9 +109,10 @@ func runDevworld(ctx context.Context, o devworldOptions, stderr io.Writer) error
 	errc := make(chan error, 2)
 	go func() {
 		errc <- citadel.Run(ctx, citadel.Config{
-			NATSURL:  srv.ClientURL(),
-			HTTPAddr: o.httpAddr,
-			LeafURL:  srv.LeafURL(),
+			NATSURL:   srv.ClientURL(),
+			HTTPAddr:  o.httpAddr,
+			PublicURL: o.url,
+			LeafURL:   srv.LeafURL(),
 			OnSetupLink: func(link string) {
 				setupLink.Store(link)
 				showSetupLink(stderr, link)

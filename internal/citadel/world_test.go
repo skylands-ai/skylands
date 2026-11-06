@@ -404,3 +404,29 @@ func TestApproversThroughTheCitadel(t *testing.T) {
 		t.Errorf("snapshot = %s, %v; want three approvers", data, err)
 	}
 }
+
+func TestCheckPublicURL(t *testing.T) {
+	for raw, ok := range map[string]bool{
+		"":                                true,
+		"https://box.example.ts.net":      true,
+		"https://box.example.ts.net/":     true,
+		"http://192.168.1.20:8080":        true,
+		"http://[fd7a:115c::1]:8080":      true,
+		"box.example.ts.net":              false,
+		"box:8080":                        false,
+		"ftp://box":                       false,
+		"https://":                        false,
+		"https://box/skylands":            false,
+		"https://box/?x=1":                false,
+		"https://box/#setup":              false,
+		"https://someone@box.example.net": false,
+	} {
+		if err := CheckPublicURL(raw); (err == nil) != ok {
+			t.Errorf("CheckPublicURL(%q) = %v, want ok %v", raw, err, ok)
+		}
+	}
+	c := &citadel{cfg: Config{PublicURL: "https://box.example.ts.net/", HTTPAddr: "127.0.0.1:8080"}}
+	if got := c.publicURL(); got != "https://box.example.ts.net" {
+		t.Errorf("publicURL = %q", got)
+	}
+}
