@@ -102,7 +102,8 @@ func (h *host) env() Env {
 		CheckAgents: func(context.Context, string) ([]v1.AgentAvailability, error) {
 			return h.daemonAgents, nil
 		},
-		ClaudeDir: "/home/joshua/.claude",
+		ClaudeDir:     "/home/joshua/.claude",
+		ClaudeManaged: "/etc/claude-code/managed-settings.json",
 		ReadFile: func(name string) ([]byte, error) {
 			data, ok := h.files[name]
 			if !ok {
@@ -132,7 +133,7 @@ func TestHealthyHost(t *testing.T) {
 			t.Errorf("%s: %s %q, %q; want ok", c.Name, c.Status, c.Found, c.Fix)
 		}
 	}
-	want := []string{"git", "node", "npx", "agent claude", "login claude", "settings claude", "agent fake", "gh", "daemon"}
+	want := []string{"git", "node", "npx", "agent claude", "login claude", "settings claude", "hooks claude", "agent fake", "gh", "daemon"}
 	if !reflect.DeepEqual(names, want) {
 		t.Errorf("checks %q, want %q", names, want)
 	}
@@ -288,7 +289,7 @@ func TestAvailability(t *testing.T) {
 func TestRunAgentsLeavesOutGhAndTheDaemon(t *testing.T) {
 	h := healthy()
 	m := byName(RunAgents(context.Background(), h.env()))
-	for _, name := range []string{"settings claude", "gh", "daemon"} {
+	for _, name := range []string{"settings claude", "hooks claude", "gh", "daemon"} {
 		if _, ok := m[name]; ok {
 			t.Errorf("RunAgents checked %s", name)
 		}
@@ -473,5 +474,80 @@ func TestMissingAgentsAreOptional(t *testing.T) {
 	checks = RunAgents(context.Background(), e)
 	if got := statuses(checks, "npx", "agent claude", "agent goose"); got != "npx=fail agent claude=fail agent goose=fail" {
 		t.Errorf("statuses %s, want failures with no real agent installed", got)
+	}
+}
+
+// TestClaudeHooks looks for hooks in Claude Code's settings, its managed
+// settings, and the plugins they enable, any of which can run commands
+// with no approval, and a PreToolUse or PermissionRequest hook of which can
+// approve a tool call itself.
+func TestClaudeHooks(t *testing.T) {
+	const (
+		user      = "/home/joshua/.claude/settings.json"
+		local     = "/code/shop/.claude/settings.local.json"
+		managed   = "/etc/claude-code/managed-settings.json"
+		installed = "/home/joshua/.claude/plugins/installed_plugins.json"
+		warp      = "/home/joshua/.claude/plugins/cache/mkt/warp/1.0"
+		named     = "/home/joshua/.claude/plugins/cache/mkt/named/2.0"
+	)
+	hook := func(n int) string {
+		return `[{"matcher":"*","hooks":[` + strings.TrimSuffix(strings.Repeat(`{"type":"command","command":"x"},`, n), ",") + `]}]`
+	}
+	withRepo := func(h *host) {
+		h.daemon.Repos = []socket.RepoInfo{{ID: "r1", Name: "shop", Path: "/code/shop"}}
+	}
+	plugins := func(h *host) {
+		h.files[installed] = `{"version":2,"plugins":{"warp@mkt":[{"installPath":"` + warp + `"}],"named@mkt":[{"installPath":"` + named + `"}],"off@mkt":[{"installPath":"/off"}]}}`
+		h.files[warp+"/hooks/hooks.json"] = `{"description":"d","hooks":{"Stop":` + hook(1) + `,"PermissionRequest":` + hook(1) + `}}`
+		h.files[named+"/.claude-plugin/plugin.json"] = `{"name":"named","hooks":"./more/hooks.json"}`
+		h.files[named+"/more/hooks.json"] = `{"hooks":{"SessionStart":` + hook(2) + `}}`
+		h.files["/off/hooks/hooks.json"] = `{"hooks":{"PreToolUse":` + hook(1) + `}}`
+	}
+	for _, tc := range []struct {
+		name   string
+		setup  func(h *host)
+		status Status
+		found  []string
+		absent []string
+		fix    string
+	}{
+		{"no hooks", func(h *host) {}, OK, []string{"no hooks in enabled plugins or your settings, and no repositories are registered"}, nil, ""},
+		{"a hook that runs a command", func(h *host) {
+			withRepo(h)
+			h.files[local] = `{"hooks":{"SessionStart":` + hook(2) + `}}`
+		}, Warn, []string{local + " (SessionStart 2)"}, nil, "run their commands without any approval"},
+		{"hooks that can approve, in settings and plugins", func(h *host) {
+			plugins(h)
+			h.files[user] = `{"hooks":{"PostToolUse":` + hook(1) + `,"PreToolUse":` + hook(1) + `},"enabledPlugins":{"warp@mkt":true,"named@mkt":true,"off@mkt":false,"gone@mkt":true}}`
+			h.files[managed] = `{"hooks":{"UserPromptSubmit":` + hook(1) + `}}`
+		}, Warn, []string{
+			user + " (PreToolUse 1, PostToolUse 1)",
+			managed + " (UserPromptSubmit 1)",
+			"the plugin named@mkt (SessionStart 2)",
+			"the plugin warp@mkt (PermissionRequest 1, Stop 1)",
+			"could not read the hooks of the enabled plugin gone@mkt",
+		}, []string{"off@mkt"}, "can approve a tool call itself"},
+		{"a settings file that is not JSON", func(h *host) {
+			h.files[user] = `{"hooks": `
+		}, Warn, []string{"could not read " + user}, nil, "check them for hooks"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := healthy()
+			tc.setup(h)
+			c := byName(Run(context.Background(), h.env()))["hooks claude"]
+			if c.Status != tc.status || !strings.Contains(c.Fix, tc.fix) {
+				t.Errorf("hooks claude = %s %q, fix %q; want %s, fix with %q", c.Status, c.Found, c.Fix, tc.status, tc.fix)
+			}
+			for _, f := range tc.found {
+				if !strings.Contains(c.Found, f) {
+					t.Errorf("found %q, want it to name %q", c.Found, f)
+				}
+			}
+			for _, a := range tc.absent {
+				if strings.Contains(c.Found, a) {
+					t.Errorf("found %q, want no %q", c.Found, a)
+				}
+			}
+		})
 	}
 }
