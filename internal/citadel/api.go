@@ -70,6 +70,7 @@ func (c *citadel) api() http.Handler {
 	signedIn("GET /api/sessions/{host}/{id}/diff", c.fetchFromHost(v1.FetchDiff))
 	signedIn("GET /api/sessions/{host}/{id}/changes", c.fetchFromHost(v1.FetchChanges))
 	signedIn("GET /api/sessions/{host}/{id}/tools/{tid}", c.fetchFromHost(v1.FetchToolCall))
+	signedIn("GET /api/sessions/{host}/{id}/commands", c.fetchFromHost(v1.FetchCommands))
 	signedIn("GET /api/sessions/{host}/{id}/requests/{rid}/input", c.fetchFromHost(v1.FetchRequestInput))
 	return sameOrigin(mux)
 }

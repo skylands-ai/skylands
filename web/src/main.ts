@@ -25,7 +25,7 @@ import { refreshOpenChips } from './toolchip'
 import { renderMarkdown } from './markdown'
 import { providerOf } from './world/airship'
 import type { AgentState } from './world/agents'
-import type { Rule } from './protocol'
+import type { AgentCommand, Rule } from './protocol'
 import { World } from './world/world'
 import { connectToCitadel } from './ws'
 import { api } from './signin'
@@ -107,6 +107,16 @@ const inboxActions: InboxActions = {
   prompt: (x, text) => sessionCommand(x.host, x.id, 'prompt', { text }),
   cancel: (x) => sessionCommand(x.host, x.id, 'cancel', {}),
   setMode: (x, mode) => sessionCommand(x.host, x.id, 'mode', { mode }),
+  commands: async (x) => {
+    try {
+      const resp = await api(`/api/sessions/${encodeURIComponent(x.host)}/${encodeURIComponent(x.id)}/commands`)
+      const out = (await resp.json().catch(() => ({}))) as { error?: string; commands?: AgentCommand[] }
+      if (!resp.ok) return out.error ?? `The citadel answered ${resp.status}.`
+      return out.commands ?? []
+    } catch (err) {
+      return `Could not reach the citadel: ${(err as Error).message}`
+    }
+  },
   setModel: (x, model) => sessionCommand(x.host, x.id, 'model', { model }),
   stop: (x) => sessionCommand(x.host, x.id, 'stop', {}),
   redraw: () => store.update({}),

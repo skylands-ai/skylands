@@ -33,6 +33,7 @@ type Sessions interface {
 	Changes(ctx context.Context, id string) (v1.ChangesResult, error)
 	ToolCall(sessionID, toolCallID string) (v1.ToolCallDetail, error)
 	RequestInput(sessionID, requestID string) (v1.RequestInput, error)
+	Commands(id string) (v1.CommandsResult, error)
 }
 
 // Responder answers fetch requests for one host.
@@ -91,6 +92,15 @@ func (r *Responder) Handle(ctx context.Context, msg *nats.Msg) {
 			return
 		}
 		data, _ := json.Marshal(in)
+		r.reply(msg, v1.Reply{Result: data})
+		return
+	case v1.FetchCommands:
+		commands, err := r.sessions.Commands(s.ID)
+		if err != nil {
+			r.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		data, _ := json.Marshal(commands)
 		r.reply(msg, v1.Reply{Result: data})
 		return
 	case v1.FetchToolCall:

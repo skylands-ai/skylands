@@ -3,7 +3,7 @@ import type { FetchCache, Fetched } from './fetchcache'
 import type { LiveText } from './live'
 import { renderMarkdown } from './markdown'
 import { agentGlyph, timeNode } from './panels/parts'
-import type { AgentAvailability, Permission, Question, QuestionField, Session } from './protocol'
+import type { AgentAvailability, AgentCommand, Permission, Question, QuestionField, Session } from './protocol'
 import { replyBox } from './reply'
 import { inputsVersion, requestInput } from './requestinput'
 import { canSign as canSignIn, myApprover } from './approvers'
@@ -25,6 +25,8 @@ export interface InboxActions {
   prompt(s: Session, text: string): Promise<string>
   /** Interrupts the turn in progress and keeps the session. */
   cancel(s: Session): Promise<string>
+  /** The slash commands the session's agent announced, less the ones the host withholds, or an error message. */
+  commands(s: Session): Promise<AgentCommand[] | string>
   /** Sets an idle session's mode, or its model. Resolves with an error message, or empty. */
   setMode(s: Session, mode: string): Promise<string>
   setModel(s: Session, model: string): Promise<string>
@@ -674,7 +676,7 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
 
   const foot = el('div', { class: 'convo-foot' })
   if (x.status !== 'running') foot.appendChild(changesCard(x, changes, actions))
-  if (isOpen(x)) foot.appendChild(replyBox(x, { prompt: (text) => actions.prompt(x, text), cancel: () => actions.cancel(x), stop: () => actions.stop(x) }))
+  if (isOpen(x)) foot.appendChild(replyBox(x, { prompt: (text) => actions.prompt(x, text), commands: () => actions.commands(x), cancel: () => actions.cancel(x), stop: () => actions.stop(x) }))
   else foot.appendChild(el('p', { class: 'muted', style: 'margin:0;font-size:13px', text: 'This session is over. Start a new one from its terrace in the world.' }))
 
   const hint = !isOpen(x)

@@ -286,6 +286,20 @@ its commands can, the header follows. Each change is noted in the
 conversation, and a session that comes back after a daemon restart is set
 to its latest mode and model.
 
+Typing `/` at the start of a reply lists the slash commands the agent
+announced for the session, filtered as you type, with what each does; pick
+one and the line under the box says what it takes. Your skills, plugins'
+commands, a repository's custom commands, and MCP prompts are among them,
+as the agent announces them on the island's machine. The daemon runs only
+commands the agent announced, and refuses a prompt that starts with any
+other, typed or picked, since an agent may still run a command it doesn't
+list, such as Claude Code's `/logout`. It also refuses the ones that act
+outside the session's tool calls, where no approval reaches: Claude
+Code's `/remote-control`, `/config`, `/schedule`, `/ultrareview`, `/loop`,
+`/design`, `/design-consent`, `/design-revoke`, `/usage-credits`, `/import`,
+and `/auto-mode-setup`, and Codex's `/logout`. A prompt that starts with a
+path, such as `/usr/bin`, is text.
+
 Codex runs the same way, through its ACP adapter from npm at the version
 pinned in `internal/daemon/agents/codex.go`, and needs a Codex login on that
 machine: run `npx -y @agentclientprotocol/codex-acp@2.5.0 login`, or `codex

@@ -110,6 +110,13 @@ export interface AgentMode {
   description?: string
 }
 
+/** One slash command an agent announced for a session: its name without the slash, what it does, and what to type after it. */
+export interface AgentCommand {
+  name: string
+  description?: string
+  hint?: string
+}
+
 /** One model an agent offers: the id a session's model is set to, and what the agent calls it. */
 export interface AgentModel {
   id: string

@@ -270,6 +270,22 @@ specifies. No events, streams, or aggregates are needed for it.
   The title's side session runs in the first listed mode, whatever the
   conversation's: run live, Claude Code in plan mode answered a title
   request with a name for a plan.
+- Slash commands are done (#40, second part). The daemon keeps the
+  commands each session's agent announces in available_commands_update,
+  including while a session loads, and the commands fetch returns them less
+  the ones the adapter withholds: commands that act outside the session's
+  tool calls, such as Claude Code's /remote-control and /config and
+  Codex's /logout. A prompt whose first word is a slash and a name is a
+  command, and the daemon refuses one the adapter withholds or the agent
+  didn't announce, since an adapter may pass on a command it leaves out of
+  its list, as Claude Code's does /logout. StartSession refuses a withheld
+  command at once; an unannounced first command ends the session once the
+  agent is up, waiting a moment for its commands. The reply box lists the
+  commands when a reply starts with a slash. The fake agent announces two
+  commands a moment after a session opens and answers them, so the wait,
+  the list, and both refusals are tested end to end. The withheld lists were
+  checked against Claude Code's announced commands and Codex's adapter at
+  their pinned versions; check them again when a pin moves.
   The agent check reads each agent's listed modes, as it names them, with
   its models, which the command bar's Mode chip and the header list. The
   fake agent offers a plan mode, changes its own mode or model when told,

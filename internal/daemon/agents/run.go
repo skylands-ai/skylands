@@ -42,8 +42,10 @@ type Run struct {
 	// system is the adapter's instructions as ACP's session system prompt,
 	// or nil when there are none or the agent does not take them.
 	system *acp.SystemPrompt
-	// modes are the adapter's Modes, the ones a session may be in.
-	modes []string
+	// modes are the adapter's Modes, the ones a session may be in, and
+	// withheld its Withheld commands.
+	modes    []string
+	withheld []string
 	// mode and model are what every session the agent opens or loads is
 	// set to through its config options; empty leaves the agent's own.
 	// They follow the conversation as a person or the agent changes it.
@@ -238,7 +240,7 @@ func launch(ctx context.Context, ad Adapter, cwd string, s Settings, obs Observe
 		return nil, nil, fmt.Errorf("start %s agent: %w", ad.Name, err)
 	}
 	r := &Run{name: ad.Name, cwd: cwd, client: client, cancel: cancel, stderr: stderr, transport: transport, seq: h.seq, handler: h,
-		modes: ad.Modes, mode: mode, model: s.Model, asking: map[acp.SessionConfigOptionCategory]string{}, meta: ad.Meta, ctx: ctx}
+		modes: ad.Modes, withheld: ad.Withheld, mode: mode, model: s.Model, asking: map[acp.SessionConfigOptionCategory]string{}, meta: ad.Meta, ctx: ctx}
 	h.settings = r.reported
 
 	init, err := client.Initialize(ctx, &acp.InitializeRequest{
