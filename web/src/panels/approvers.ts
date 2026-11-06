@@ -1,3 +1,4 @@
+import { citadelAddress } from '../address'
 import { myApprover, myKey, type ApproverActions } from '../approvers'
 import { el } from '../dom'
 import type { ApproverInfo, Rule } from '../protocol'
@@ -131,11 +132,55 @@ function inviteBox(s: State, actions: ApproverActions): HTMLElement {
   }
   return el('div', { class: 'invite' }, [
     el('p', { class: 'sub', text: `Open this on the phone or browser to add: scan the code, or copy the link to it. It works once, until ${new Date(inv.expires).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.` }),
+    addressChoice(s, actions),
+    inv.address !== location.origin
+      ? el('p', { class: 'sub', text: `The browser you add approves at ${inv.address}, so it must reach the citadel there.` })
+      : null,
     qrCode(inv.link, 'QR code of the link that adds an approver'),
     el('div', { class: 'addhost' }, [el('pre', {}, [el('code', { text: inv.link })])]),
     el('p', { class: 'sub', text: 'Anyone who opens it first becomes an approver, so share it only with yourself.' }),
     el('div', { class: 'actions' }, [copyButton(inv.link, 'Copy the link that adds an approver', 'btn small'), close]),
   ])
+}
+
+/**
+ * Where the link opens the world: this page's address, the citadel's
+ * --url, the address the link names now, or another one typed in.
+ */
+function addressChoice(s: State, actions: ApproverActions): HTMLElement {
+  const inv = s.invite!
+  const OTHER = 'other'
+  const choices: [string, string][] = [[location.origin, `${location.origin} (this page)`]]
+  if (s.world?.url && s.world.url !== location.origin) choices.push([s.world.url, `${s.world.url} (the citadel\u2019s address)`])
+  if (!choices.some(([v]) => v === inv.address)) choices.push([inv.address, inv.address])
+  choices.push([OTHER, 'Another address\u2026'])
+  const select = el('select', { 'aria-label': 'Address the link opens at' }) as HTMLSelectElement
+  select.replaceChildren(...choices.map(([value, text]) => el('option', { value, text })))
+  select.value = inv.other ? OTHER : inv.address
+  select.addEventListener('change', () => {
+    if (select.value === OTHER) actions.inviteOther({ text: '', error: '' })
+    else actions.inviteAt(select.value)
+  })
+  const box = el('div', { class: 'invite-address' }, [el('label', { class: 'chip' }, ['Opens at', select])])
+  const other = inv.other
+  if (other) {
+    const input = el('input', { type: 'url', value: other.text, placeholder: 'https://box.example.ts.net', 'aria-label': 'Another address', autocomplete: 'off' }) as HTMLInputElement
+    const apply = (): void => {
+      const got = citadelAddress(input.value)
+      if ('error' in got) actions.inviteOther({ text: input.value, error: got.error })
+      else actions.inviteAt(got.address)
+    }
+    input.addEventListener('input', () => {
+      other.text = input.value
+    })
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') apply()
+    })
+    box.appendChild(el('div', { class: 'actions' }, [input, el('button', { type: 'button', class: 'btn small', text: 'Use', onclick: apply })]))
+    if (other.error) box.appendChild(el('p', { class: 'approver-error', role: 'alert', text: other.error }))
+    queueMicrotask(() => input.focus())
+  }
+  return box
 }
 
 /** What this browser can do when it doesn't approve for the world. */

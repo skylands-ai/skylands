@@ -22,6 +22,8 @@ export interface WorldInfo {
   owner?: string
   /** The address daemons on other hosts dial, when the citadel knows it. */
   leafUrl?: string
+  /** The address people open the citadel at, when it was given one with --url. */
+  url?: string
   /** NATS settings the world needs that are missing. */
   problems?: string[]
   natsSettingsUrl?: string

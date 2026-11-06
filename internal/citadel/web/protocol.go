@@ -92,6 +92,9 @@ type WorldInfo struct {
 	Owner string `json:"owner,omitempty"`
 	// LeafURL is the address daemons on other hosts dial, when known.
 	LeafURL string `json:"leafUrl,omitempty"`
+	// URL is the address people open this citadel at, when it was given
+	// one with --url, which an invite link can name.
+	URL string `json:"url,omitempty"`
 	// Problems are the NATS settings the world needs that are missing.
 	Problems        []string `json:"problems,omitempty"`
 	NATSSettingsURL string   `json:"natsSettingsUrl,omitempty"`

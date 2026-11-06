@@ -1,4 +1,5 @@
 import { keepStorage, keyFromSeed, loadApprover, newApproverKey, seedOf, sign, type Signed } from './approver'
+import { citadelAddress, linkAt } from './address'
 import { answersHash, DECISION_VERSION, formHash, normalizeRules, rulesHash, signDecision, textHash, type Decision, type DecisionSignature } from './decision'
 import type { ApproverInfo, Permission, Question, Repo, Rule, Session, VoucherInfo } from './protocol'
 import { api } from './signin'
@@ -7,6 +8,10 @@ import type { State, Store } from './store'
 /** What the Approvers section can do: show an "Add an approver" link, and revoke an approver once confirmed. */
 export interface ApproverActions {
   invite(): void
+  /** Makes the link open the world at another address; the claim stays the same. */
+  inviteAt(address: string): void
+  /** Starts or stops typing another address for the link, or says what's wrong with it. */
+  inviteOther(other: { text: string; error: string } | null): void
   closeInvite(): void
   /** Asks for a confirmation before revoking key, or stops asking with null. */
   askRevoke(key: string | null): void
@@ -45,6 +50,35 @@ async function post(path: string, body: unknown): Promise<unknown> {
 
 const now = (): string => new Date().toISOString().replace(/\.\d+Z$/, 'Z')
 
+const INVITE_ADDRESS_KEY = 'skylands.inviteAddress'
+
+/**
+ * The address an "Add an approver" link opens at: the one last chosen in
+ * this browser, or the citadel's --url when it has one, or this page's
+ * own. A phone often can't open the address a laptop reaches the citadel
+ * at, such as 127.0.0.1.
+ */
+function inviteAddress(s: State): string {
+  try {
+    const kept = localStorage.getItem(INVITE_ADDRESS_KEY)
+    const ok = kept ? citadelAddress(kept) : null
+    if (ok && 'address' in ok) return ok.address
+  } catch {
+    // No storage: fall through.
+  }
+  return s.world?.url || location.origin
+}
+
+/** Keeps the address chosen for invite links, or forgets it when it is this page's own. */
+function rememberInviteAddress(address: string): void {
+  try {
+    if (address === location.origin) localStorage.removeItem(INVITE_ADDRESS_KEY)
+    else localStorage.setItem(INVITE_ADDRESS_KEY, address)
+  } catch {
+    // No storage: the choice lasts for this link only.
+  }
+}
+
 export function approverActions(store: Store): ApproverActions {
   let expiry: ReturnType<typeof setTimeout> | undefined
   const signer = () => {
@@ -61,9 +95,10 @@ export function approverActions(store: Store): ApproverActions {
           const claim = newApproverKey()
           const voucher: Signed = sign(kp, { type: 'voucher', world: owner, claim: claim.getPublicKey(), created: now() })
           const info = (await post('/api/world/vouchers', { voucher })) as VoucherInfo
-          const link = `${location.origin}/setup#approver=${seedOf(claim)}`
+          const address = inviteAddress(store.state)
+          const link = `${address}/setup#approver=${seedOf(claim)}`
           claim.clear()
-          store.update({ invite: { link, claim: info.claim, expires: info.expires }, approverError: null })
+          store.update({ invite: { link, claim: info.claim, expires: info.expires, address }, approverError: null })
           clearTimeout(expiry)
           // Re-render when the link stops working.
           expiry = setTimeout(() => store.update({}), Math.max(0, Date.parse(info.expires) - Date.now()) + 500)
@@ -71,6 +106,17 @@ export function approverActions(store: Store): ApproverActions {
           store.update({ approverError: `Couldn’t make a link: ${(err as Error).message}` })
         }
       })()
+    },
+    inviteAt(address) {
+      const inv = store.state.invite
+      if (!inv) return
+      rememberInviteAddress(address)
+      store.update({ invite: { ...inv, link: linkAt(inv.link, address), address, other: undefined } })
+    },
+    inviteOther(other) {
+      const inv = store.state.invite
+      if (!inv) return
+      store.update({ invite: { ...inv, other: other ?? undefined } })
     },
     closeInvite() {
       clearTimeout(expiry)

@@ -429,4 +429,12 @@ func TestCheckPublicURL(t *testing.T) {
 	if got := c.publicURL(); got != "https://box.example.ts.net" {
 		t.Errorf("publicURL = %q", got)
 	}
+	// The world's description names the address only when one was given,
+	// for an invite link to open at.
+	if got := c.worldInfo().URL; got != "https://box.example.ts.net" {
+		t.Errorf("worldInfo().URL = %q", got)
+	}
+	if got := (&citadel{cfg: Config{HTTPAddr: "127.0.0.1:8080"}}).worldInfo().URL; got != "" {
+		t.Errorf("worldInfo().URL without --url = %q", got)
+	}
 }
