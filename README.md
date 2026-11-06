@@ -57,9 +57,10 @@ skylands preflight
 It reports git, Node, and npx with the versions and paths it found, starts
 each agent over ACP without asking a model anything, reports whether Claude
 Code and Codex are logged in as each sees it and which models each offers
-that login, looks for allow rules in Claude Code's own settings, which let
-calls past the host's approvals (see [Approvals](#approvals)), checks
-`gh`, and asks the daemon on the local socket which version it runs.
+that login, looks for allow rules and hooks in Claude Code's own settings
+and plugins, which let calls past the host's approvals (see
+[Approvals](#approvals)), checks `gh`, and asks the daemon on the local
+socket which version it runs.
 Reading the models opens a session in the agent without prompting it,
 which starts what a session needs, such as its MCP servers.
 Each problem comes with
@@ -348,6 +349,15 @@ or `.claude/settings.local.json`. Claude Code runs such a call without
 asking, so it reaches neither the host's rules nor a person, deny rules
 included. `skylands preflight` names the files that hold allow rules;
 remove the ones for calls Skylands should decide.
+
+Claude Code also runs hooks: commands it starts on events, from the same
+settings files, its managed settings, and the plugins they enable. A
+`PreToolUse` or `PermissionRequest` hook can approve a tool call itself, so
+the call reaches neither the host's rules nor a person, and every hook runs
+its command with no approval at all, as the daemon's user, in the session's
+directory. `skylands preflight` names each file and enabled plugin that
+defines hooks, with its events; remove or turn off the ones Skylands
+sessions shouldn't run.
 
 Codex has a sandbox of its own, and the daemon sets every Codex session to
 its read-only mode, through Codex's mode setting over ACP, so Codex asks
