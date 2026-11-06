@@ -246,6 +246,9 @@ func (c *citadel) worldInfo() *web.WorldInfo {
 	defer c.mu.Unlock()
 	w := c.world
 	info := &web.WorldInfo{Checked: w.checked, Ready: w.signed != nil, Problems: w.problems, LeafURL: c.cfg.LeafURL, NATSSettingsURL: NATSSettingsURL}
+	if c.cfg.PublicURL != "" {
+		info.URL = c.publicURL()
+	}
 	if w.signed != nil {
 		info.Name, info.Owner = w.record.Name, w.record.Owner
 	}

@@ -146,6 +146,13 @@ whichever browser opens them first an approver, so share them only with
 yourself. Opening a link in a browser that already approves leaves it
 unused.
 
+A browser keeps its key for the address it opened the link at, and a phone
+often can't open the address the laptop uses, such as `127.0.0.1`. So the
+link's "Opens at" choice picks the address it names: this page's, the
+citadel's `--url` when it has one, or another you type, such as another
+citadel in the world. It starts on the address last chosen in that browser,
+or else the citadel's `--url`, or else this page's.
+
 Any approver can revoke any other, or itself, and a revocation is never
 undone. Revoking an approver also removes every approver added through it,
 and the section says which before you confirm, so revoking a stolen laptop

@@ -320,6 +320,10 @@ button.row{ color:inherit; font:inherit; }
 .invite{ display:flex; flex-direction:column; gap:8px; padding:10px; border-radius:8px; background:var(--surface-2); border:1px solid var(--line); }
 .invite p{ margin:0; }
 .invite .qr{ width:180px; height:180px; align-self:center; border-radius:6px; }
+.invite-address{ display:flex; flex-direction:column; gap:6px; }
+.invite-address .chip{ display:flex; white-space:nowrap; }
+.invite-address select{ flex:1; min-width:0; }
+.invite-address input{ flex:1; min-width:0; min-height:32px; padding:0 8px; border-radius:6px; border:1px solid var(--line); background:var(--surface); color:var(--text); font:inherit; font-size:13px; }
 .approver-error{ margin:0; font-size:13px; color:var(--bad); }
 .gone summary{ cursor:pointer; color:var(--muted); font-size:12px; font-weight:600; }
 .gone .sub{ font-size:12px; color:var(--muted); padding:2px 0 0 12px; }

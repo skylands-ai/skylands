@@ -22,6 +22,14 @@ export interface Invite {
   link: string
   claim: string
   expires: string
+  /** The address the link opens the world at. */
+  address: string
+  /**
+   * Another address being typed in, and what's wrong with it, while the
+   * choice of address is "Another address". Typing changes it in place, so
+   * the panel isn't drawn again for each key.
+   */
+  other?: { text: string; error: string }
 }
 
 export interface State extends Nav {
