@@ -126,14 +126,14 @@ func TestDevworldInstallTakesItsOwnFlagsAndName(t *testing.T) {
 	m.onInstall = func() { serveStatus(t, sock, socket.StatusInfo{Host: "h", Started: time.Now()}) }
 	useFakes(t, m)
 
-	code, _, stderr := run(t, "devworld", "install", "--http", "127.0.0.1:9090", "--socket", sock, "--name", "sky-test")
+	code, _, stderr := run(t, "devworld", "install", "--http", "127.0.0.1:9090", "--url", "https://box.example.ts.net", "--socket", sock, "--name", "sky-test")
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 	if m.installed.Name != "sky-test" {
 		t.Errorf("name = %q, want sky-test", m.installed.Name)
 	}
-	if want := []string{"/usr/local/bin/skylands", "devworld", "up", "--http=127.0.0.1:9090", "--socket=" + sock}; !reflect.DeepEqual(m.installed.Args, want) {
+	if want := []string{"/usr/local/bin/skylands", "devworld", "up", "--http=127.0.0.1:9090", "--socket=" + sock, "--url=https://box.example.ts.net"}; !reflect.DeepEqual(m.installed.Args, want) {
 		t.Errorf("args = %q, want %q", m.installed.Args, want)
 	}
 }

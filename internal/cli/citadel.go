@@ -37,7 +37,7 @@ citadels can run against one world, and they are interchangeable.`,
 	f.StringVar(&cfg.NATSURL, "nats-url", "nats://127.0.0.1:4222", "URL of the world's NATS server or cluster")
 	f.StringVar(&cfg.CredsFile, "creds", "", "path to the citadel's NATS credentials file")
 	f.StringVar(&cfg.HTTPAddr, "http", "127.0.0.1:8080", "address the web application listens on")
-	f.StringVar(&cfg.PublicURL, "url", "", "URL people open the citadel at, used in the links it prints (default http:// and --http)")
+	f.StringVar(&cfg.PublicURL, "url", "", "URL people open the citadel at, used in the links it prints, such as an HTTPS address in front of it (default http:// and --http)")
 	f.StringVar(&cfg.LeafURL, "leaf-url", "", `URL daemons on other hosts dial to join the world, shown under "Add a host"`)
 	return cmd
 }

@@ -75,6 +75,9 @@ type citadel struct {
 // serving while NATS is unreachable and reconnects on its own, so a citadel
 // and the world's server restart independently.
 func Run(ctx context.Context, cfg Config) error {
+	if err := CheckPublicURL(cfg.PublicURL); err != nil {
+		return err
+	}
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = 2 * time.Second
 	}
