@@ -107,10 +107,19 @@ func Executable() (string, error) {
 	return exe, nil
 }
 
+// within says whether path is dir or inside it. dir counts both as given
+// and with its symlinks resolved, since a path can name it either way: on
+// macOS the temporary directory is under /var/folders, which is a link to
+// /private/var/folders.
 func within(path, dir string) bool {
-	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
-		dir = resolved
+	if under(path, dir) {
+		return true
 	}
+	resolved, err := filepath.EvalSymlinks(dir)
+	return err == nil && under(path, resolved)
+}
+
+func under(path, dir string) bool {
 	rel, err := filepath.Rel(dir, path)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
