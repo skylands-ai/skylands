@@ -247,7 +247,7 @@ func newSessionCmd() *cobra.Command {
 		GroupID: groupLocal,
 		Short:   "List, stop, and clean up agent sessions on this host",
 	}
-	cmd.AddCommand(newSessionListCmd(), newSessionCancelCmd(), newSessionStopCmd(), newSessionRemoveCmd(), newSessionPruneCmd())
+	cmd.AddCommand(newSessionListCmd(), newSessionCancelCmd(), newSessionModeCmd(), newSessionModelCmd(), newSessionStopCmd(), newSessionRemoveCmd(), newSessionPruneCmd())
 	return cmd
 }
 
@@ -297,6 +297,49 @@ it. Anything the turn was waiting on a person for is withdrawn.`,
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Interrupted %s (%s). It goes idle once the agent stops; reply to steer it.\n", s.ID, cut(conversationOf(s), 50))
+			return nil
+		},
+	}
+	socketFlag(cmd, &socketPath)
+	return cmd
+}
+
+func newSessionModeCmd() *cobra.Command {
+	var socketPath string
+	cmd := &cobra.Command{
+		Use:   "mode <session> <mode>",
+		Short: "Change an idle session's mode",
+		Long: `Session mode sets an idle session's mode, such as Claude Code's plan, to one
+of the modes its agent's adapter lists: the ones that keep the agent asking
+before it acts. Any other is refused.`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			s, err := socket.Dial(socketPath).SetMode(cmd.Context(), args[0], args[1])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Set %s (%s) to mode %s.\n", s.ID, cut(conversationOf(s), 50), s.Mode)
+			return nil
+		},
+	}
+	socketFlag(cmd, &socketPath)
+	return cmd
+}
+
+func newSessionModelCmd() *cobra.Command {
+	var socketPath string
+	cmd := &cobra.Command{
+		Use:   "model <session> <model>",
+		Short: "Change an idle session's model",
+		Long: `Session model sets an idle session's model, through the agent's own model
+setting. A model the agent won't take is refused, with the models it offers.`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			s, err := socket.Dial(socketPath).SetModel(cmd.Context(), args[0], args[1])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Set %s (%s) to model %s.\n", s.ID, cut(conversationOf(s), 50), s.Model)
 			return nil
 		},
 	}

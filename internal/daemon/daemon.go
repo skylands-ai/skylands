@@ -410,6 +410,32 @@ func (c *commands) handle(ctx context.Context, msg *nats.Msg) {
 			return
 		}
 		c.replyResult(msg, map[string]any{"sessionId": s.ID, "status": s.Status, "cancelling": s.Cancelling})
+	case v1.CommandSetSessionMode:
+		var cmd v1.SetSessionMode
+		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+			c.reply(msg, v1.Reply{Error: "bad SetSessionMode: " + err.Error()})
+			return
+		}
+		cmd.SessionID = sessionID
+		s, err := c.sessions.SetMode(ctx, cmd, "citadel")
+		if err != nil {
+			c.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		c.replyResult(msg, map[string]any{"sessionId": s.ID, "mode": s.Mode})
+	case v1.CommandSetSessionModel:
+		var cmd v1.SetSessionModel
+		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+			c.reply(msg, v1.Reply{Error: "bad SetSessionModel: " + err.Error()})
+			return
+		}
+		cmd.SessionID = sessionID
+		s, err := c.sessions.SetModel(ctx, cmd, "citadel")
+		if err != nil {
+			c.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		c.replyResult(msg, map[string]any{"sessionId": s.ID, "model": s.Model})
 	case v1.CommandStopAgent:
 		var cmd v1.StopAgent
 		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
@@ -596,7 +622,7 @@ func (a *localAPI) sessionInfo(s session.Session) socket.SessionInfo {
 		name = r.Name
 	}
 	return socket.SessionInfo{
-		ID: s.ID, Repo: name, Agent: s.Agent, Status: string(s.Status), Turns: s.Turns, Title: s.Title, Prompt: s.Prompt, Pending: len(s.Pending), Questions: len(s.Questions), Cancelling: s.Cancelling,
+		ID: s.ID, Repo: name, Agent: s.Agent, Mode: s.Mode, Model: s.Model, Status: string(s.Status), Turns: s.Turns, Title: s.Title, Prompt: s.Prompt, Pending: len(s.Pending), Questions: len(s.Questions), Cancelling: s.Cancelling,
 		Trusted: s.Trusted, RulesLapsed: s.RulesLapsed,
 		Worktree: s.Worktree, Branch: s.Branch, Base: s.Base, InCheckout: s.InCheckout,
 		Commit: s.Commit, MergedInto: s.MergedInto, PullRequest: s.PullRequest, WorktreeRemoved: s.WorktreeRemoved,
@@ -611,6 +637,16 @@ func (a *localAPI) StopSession(ctx context.Context, sessionID, commandID string)
 
 func (a *localAPI) CancelTurn(ctx context.Context, sessionID, commandID string) (socket.SessionInfo, error) {
 	s, err := a.sessions.Cancel(ctx, v1.CancelTurn{ID: commandID, SessionID: sessionID}, "local")
+	return a.sessionInfo(s), err
+}
+
+func (a *localAPI) SetMode(ctx context.Context, sessionID, commandID, mode string) (socket.SessionInfo, error) {
+	s, err := a.sessions.SetMode(ctx, v1.SetSessionMode{ID: commandID, SessionID: sessionID, Mode: mode}, "local")
+	return a.sessionInfo(s), err
+}
+
+func (a *localAPI) SetModel(ctx context.Context, sessionID, commandID, model string) (socket.SessionInfo, error) {
+	s, err := a.sessions.SetModel(ctx, v1.SetSessionModel{ID: commandID, SessionID: sessionID, Model: model}, "local")
 	return a.sessionInfo(s), err
 }
 

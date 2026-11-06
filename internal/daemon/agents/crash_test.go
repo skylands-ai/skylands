@@ -34,7 +34,7 @@ func TestCrashHelper(t *testing.T) {
 	ctx := WithWatch(context.Background(), wd)
 	cmd, env := fakeagent.TestCommand()
 	ad := Adapter{Name: "fake", Command: cmd, Env: append(env, fakeagent.EnvChild+"="+pidFile)}
-	if _, err := Start(ctx, ad, filepath.Dir(pidFile), "", quietObserver{}); err != nil {
+	if _, err := Start(ctx, ad, filepath.Dir(pidFile), Settings{}, quietObserver{}); err != nil {
 		t.Fatal(err)
 	}
 	for {

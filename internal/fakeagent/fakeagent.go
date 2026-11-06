@@ -73,8 +73,18 @@ const EnvConfigOptions = "SKYLANDS_FAKE_AGENT_CONFIG_OPTIONS"
 // The values the fake agent's config options take, the first of each
 // being what a session starts with.
 var (
-	Modes  = []string{"auto", "ask"}
+	Modes  = []string{"auto", "ask", "plan"}
 	Models = []string{"fake-small", "fake-large"}
+)
+
+// SwitchModeTo and SwitchModelTo, followed by a value and as a whole
+// prompt, make the fake agent change its own mode or model to it, as an
+// agent does through one of its commands, and announce the change with
+// current_mode_update, for a mode, and config_option_update. It answers
+// with its settings, as for SettingsQuestion.
+const (
+	SwitchModeTo  = "switch your mode to "
+	SwitchModelTo = "switch your model to "
 )
 
 // BigEdit, anywhere in a prompt, makes the fake agent's edit carry a long
@@ -89,6 +99,10 @@ const BigOutput = "big output"
 // SettingsQuestion, as a whole prompt, makes the fake agent answer with
 // its session's mode and model, as "mode=<mode> model=<model>".
 const SettingsQuestion = "what are your settings?"
+
+// PlanTitle is the fake agent's answer to a title request in plan mode,
+// like the names Claude Code gives its plans there.
+const PlanTitle = "give this conversation a tingly parrot"
 
 // EnvRequireMeta, when set to 1, makes the fake agent refuse to open or
 // load a session that comes without _meta, as an agent would that needs
@@ -311,8 +325,20 @@ func (a *agent) configOptions(s *session) *[]acp.SessionConfigOption {
 }
 
 // SetSessionConfigOption changes a session's mode or model to a value the
-// agent offers.
-func (a *agent) SetSessionConfigOption(_ context.Context, req *acp.SetSessionConfigOptionRequest) (*acp.SetSessionConfigOptionResponse, error) {
+// agent offers, and announces the options it then has before answering,
+// as real agents do.
+func (a *agent) SetSessionConfigOption(ctx context.Context, req *acp.SetSessionConfigOptionRequest) (*acp.SetSessionConfigOptionResponse, error) {
+	resp, err := a.setConfigOption(req)
+	if err != nil {
+		return nil, err
+	}
+	if err := a.conn.SessionUpdate(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: acp.ConfigOptionUpdateSessionUpdate(resp.ConfigOptions)}); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func (a *agent) setConfigOption(req *acp.SetSessionConfigOptionRequest) (*acp.SetSessionConfigOptionResponse, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	s, ok := a.sessions[req.SessionID]
@@ -337,6 +363,26 @@ func (a *agent) SetSessionConfigOption(_ context.Context, req *acp.SetSessionCon
 		*field = value
 	}
 	return &acp.SetSessionConfigOptionResponse{ConfigOptions: *a.configOptions(s)}, nil
+}
+
+// switchOwn changes one of a session's config options on the agent's own
+// account and announces it: with current_mode_update first for a mode,
+// then config_option_update.
+func (a *agent) switchOwn(ctx context.Context, id acp.SessionId, s *session, field *string, values []string, value string, mode bool) error {
+	a.mu.Lock()
+	if a.config == "" || !slices.Contains(values, value) {
+		a.mu.Unlock()
+		return fmt.Errorf("cannot switch to %q", value)
+	}
+	*field = value
+	options := *a.configOptions(s)
+	a.mu.Unlock()
+	if mode {
+		if err := a.conn.SessionUpdate(ctx, &acp.SessionNotification{SessionID: id, Update: acp.CurrentModeUpdateSessionUpdate(acp.SessionModeId(value))}); err != nil {
+			return err
+		}
+	}
+	return a.conn.SessionUpdate(ctx, &acp.SessionNotification{SessionID: id, Update: acp.ConfigOptionUpdateSessionUpdate(options)})
 }
 
 // systemPromptText is a session's system prompt as text. Only append mode
@@ -400,7 +446,17 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	send := func(u acp.SessionUpdate) error {
 		return a.conn.SessionUpdate(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: u})
 	}
-	if promptText(req) == SettingsQuestion {
+	if mode, ok := strings.CutPrefix(promptText(req), SwitchModeTo); ok {
+		if err := a.switchOwn(ctx, req.SessionID, s, &s.mode, Modes, mode, true); err != nil {
+			return nil, err
+		}
+	}
+	if model, ok := strings.CutPrefix(promptText(req), SwitchModelTo); ok {
+		if err := a.switchOwn(ctx, req.SessionID, s, &s.model, Models, model, false); err != nil {
+			return nil, err
+		}
+	}
+	if text := promptText(req); text == SettingsQuestion || strings.HasPrefix(text, SwitchModeTo) || strings.HasPrefix(text, SwitchModelTo) {
 		a.mu.Lock()
 		answer := "mode=" + s.mode + " model=" + s.model
 		a.mu.Unlock()
@@ -434,8 +490,15 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
 	}
 	if asked := promptText(req); titles.IsRequest(asked) {
-		// A title request gets a title and nothing else, like a well-behaved agent.
+		// A title request gets a title and nothing else, like a well-behaved
+		// agent, except in plan mode, where it names a plan the way Claude
+		// Code does.
 		title := titles.Fake(titles.RequestedFor(asked))
+		a.mu.Lock()
+		if s.mode == "plan" {
+			title = PlanTitle
+		}
+		a.mu.Unlock()
 		if err := send(acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(title))); err != nil {
 			return nil, err
 		}

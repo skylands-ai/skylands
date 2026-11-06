@@ -63,11 +63,15 @@ type ToolCall struct {
 // Session is one agent run on one repository, as the citadel projects it
 // from session events.
 type Session struct {
-	Host      string `json:"host"`
-	ID        string `json:"id"`
-	RepoID    string `json:"repoId"`
-	Agent     string `json:"agent"`
+	Host   string `json:"host"`
+	ID     string `json:"id"`
+	RepoID string `json:"repoId"`
+	Agent  string `json:"agent"`
+	// Model is the model the session runs on, empty for the agent's own
+	// default, and Mode the mode it is in, empty for the first its
+	// adapter lists. Both follow the session's changes.
 	Model     string `json:"model,omitempty"`
+	Mode      string `json:"mode,omitempty"`
 	AgentName string `json:"agentName,omitempty"`
 	Prompt    string `json:"prompt"`
 	// Branch is what the agent works on: its own, cut from Base, or the
@@ -178,7 +182,7 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 	case v1.EventSessionStarted:
 		var d v1.SessionStarted
 		if ev.Decode(&d) == nil {
-			s := &Session{Host: host, ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Rules: append([]v1.Rule{}, d.Rules...), RulesBy: d.RulesBy, RulesApprover: d.RulesApprover, RulesLapsed: d.RulesLapsed, Status: "running", StartedAt: ev.Time, ActiveAt: ev.Time, Recent: []ToolCall{}, Files: map[string]string{}, Pending: []Permission{}, Questions: []Question{}}
+			s := &Session{Host: host, ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Mode: d.Mode, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Rules: append([]v1.Rule{}, d.Rules...), RulesBy: d.RulesBy, RulesApprover: d.RulesApprover, RulesLapsed: d.RulesLapsed, Status: "running", StartedAt: ev.Time, ActiveAt: ev.Time, Recent: []ToolCall{}, Files: map[string]string{}, Pending: []Permission{}, Questions: []Question{}}
 			p.byID[d.SessionID] = s
 			changed = s
 		}
@@ -216,6 +220,22 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 		if ev.Decode(&d) == nil {
 			if s, ok := p.byID[d.SessionID]; ok {
 				s.Title = d.Title
+				changed = s
+			}
+		}
+	case v1.EventSessionModeChanged:
+		var d v1.SessionModeChanged
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.Mode = d.Mode
+				changed = s
+			}
+		}
+	case v1.EventSessionModelChanged:
+		var d v1.SessionModelChanged
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.Model = d.Model
 				changed = s
 			}
 		}

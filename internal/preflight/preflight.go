@@ -68,10 +68,12 @@ type Check struct {
 	// command isn't on PATH, or Node isn't there to run it.
 	Missing bool
 	// On a models check: whether a session opened to read the agent's
-	// models, what it offered, and the one the session started on.
+	// models, what it offered, and the one the session started on, and
+	// the modes the adapter lists as the agent names them.
 	ModelsRead   bool
 	Models       []v1.AgentModel
 	DefaultModel string
+	Modes        []v1.AgentMode
 }
 
 // Minimum versions. Sessions remove their worktrees with "git worktree
@@ -366,7 +368,7 @@ func Availability(checks []Check, r agents.Registry) []v1.AgentAvailability {
 			}
 		}
 		if c, ok := byName["models "+name]; ok {
-			a.ModelsRead, a.Models, a.DefaultModel = c.ModelsRead, c.Models, c.DefaultModel
+			a.ModelsRead, a.Models, a.DefaultModel, a.Modes = c.ModelsRead, c.Models, c.DefaultModel, c.Modes
 			if c.Status != OK {
 				a.Notes = append(a.Notes, note(c))
 			}
@@ -537,7 +539,7 @@ func probeDir() (string, error) {
 // would not open a session to say is a warning: its sessions may not
 // start either.
 func modelsCheck(ad agents.Adapter, p agents.Probe) Check {
-	c := Check{Name: "models " + ad.Name, Agent: ad.Name, ModelsRead: p.ModelsRead, Models: p.Models, DefaultModel: p.DefaultModel}
+	c := Check{Name: "models " + ad.Name, Agent: ad.Name, ModelsRead: p.ModelsRead, Models: p.Models, DefaultModel: p.DefaultModel, Modes: p.Modes}
 	switch {
 	case !p.ModelsRead:
 		c.Status, c.Found = Warn, "could not open a session to read them: "+firstLine(p.ModelsErr.Error())

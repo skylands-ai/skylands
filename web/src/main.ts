@@ -106,6 +106,8 @@ const inboxActions: InboxActions = {
   },
   prompt: (x, text) => sessionCommand(x.host, x.id, 'prompt', { text }),
   cancel: (x) => sessionCommand(x.host, x.id, 'cancel', {}),
+  setMode: (x, mode) => sessionCommand(x.host, x.id, 'mode', { mode }),
+  setModel: (x, model) => sessionCommand(x.host, x.id, 'model', { model }),
   stop: (x) => sessionCommand(x.host, x.id, 'stop', {}),
   redraw: () => store.update({}),
   approve: (x, p, optionId, inputHash) => {

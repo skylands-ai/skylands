@@ -42,19 +42,42 @@ type Run struct {
 	// system is the adapter's instructions as ACP's session system prompt,
 	// or nil when there are none or the agent does not take them.
 	system *acp.SystemPrompt
+	// modes are the adapter's Modes, the ones a session may be in.
+	modes []string
 	// mode and model are what every session the agent opens or loads is
 	// set to through its config options; empty leaves the agent's own.
+	// They follow the conversation as a person or the agent changes it.
 	mode, model string
+	// options are the conversation's config options as the agent last
+	// gave them, and asking holds the value of a change the run has in
+	// flight, by category, so the agent's confirming it is not taken for a
+	// change of the agent's own.
+	options []acp.SessionConfigOption
+	asking  map[acp.SessionConfigOptionCategory]string
 	// meta is the adapter's Meta, which goes with every session the agent
 	// opens or loads.
 	meta acp.Meta
+	// ctx lives as long as the agent process.
+	ctx context.Context
 }
+
+// Settings are what a session's agent is set to through its ACP config
+// options: Mode, one its adapter lists, or the first when empty, and
+// Model, or the agent's own default when empty.
+type Settings struct {
+	Mode  string
+	Model string
+}
+
+// ErrModeNotListed means a session was asked to be in a mode its adapter
+// does not list, which might let the agent act without asking.
+var ErrModeNotListed = errors.New("the mode is not one the adapter lists")
 
 // Start launches the adapter's agent in cwd, initializes it, and opens a
 // session. The process lives until Close, or until ctx is cancelled. The
-// session is set to the adapter's mode and to model, when either is set.
-func Start(ctx context.Context, ad Adapter, cwd, model string, obs Observer) (*Run, error) {
-	r, init, err := launch(ctx, ad, cwd, model, obs)
+// session is set to the mode and model in s, as Settings describes.
+func Start(ctx context.Context, ad Adapter, cwd string, s Settings, obs Observer) (*Run, error) {
+	r, init, err := launch(ctx, ad, cwd, s, obs)
 	if err != nil {
 		return nil, err
 	}
@@ -63,11 +86,12 @@ func Start(ctx context.Context, ad Adapter, cwd, model string, obs Observer) (*R
 		_ = r.Close()
 		return nil, r.fail("open session", err)
 	}
-	if err := r.settle(ctx, sess.SessionID, sess.ConfigOptions); err != nil {
+	options, err := r.settle(ctx, sess.SessionID, sess.ConfigOptions)
+	if err != nil {
 		_ = r.Close()
 		return nil, r.fail("set up the session", err)
 	}
-	r.session = sess.SessionID
+	r.adopt(sess.SessionID, options)
 	name, version := identity(ad, init)
 	obs.Spawned(name, version, string(sess.SessionID))
 	return r, nil
@@ -80,8 +104,8 @@ func Start(ctx context.Context, ad Adapter, cwd, model string, obs Observer) (*R
 // a new session opens and transcript goes in front of its first prompt,
 // and how is ResumedBySeed. Whatever the agent replays while loading stays
 // out of the observer: it is history the daemon already has.
-func Resume(ctx context.Context, ad Adapter, cwd, model, agentSessionID, transcript string, obs Observer) (r *Run, how string, err error) {
-	r, init, err := launch(ctx, ad, cwd, model, obs)
+func Resume(ctx context.Context, ad Adapter, cwd string, s Settings, agentSessionID, transcript string, obs Observer) (r *Run, how string, err error) {
+	r, init, err := launch(ctx, ad, cwd, s, obs)
 	if err != nil {
 		return nil, "", err
 	}
@@ -99,11 +123,12 @@ func Resume(ctx context.Context, ad Adapter, cwd, model, agentSessionID, transcr
 			if loaded != nil {
 				options = loaded.ConfigOptions
 			}
-			if err := r.settle(ctx, id, options); err != nil {
+			settled, err := r.settle(ctx, id, options)
+			if err != nil {
 				_ = r.Close()
 				return nil, "", r.fail("set up the loaded session", err)
 			}
-			r.session = id
+			r.adopt(id, settled)
 			obs.Spawned(name, version, agentSessionID)
 			return r, ResumedByLoad, nil
 		}
@@ -118,11 +143,12 @@ func Resume(ctx context.Context, ad Adapter, cwd, model, agentSessionID, transcr
 		_ = r.Close()
 		return nil, "", r.fail("open session", err)
 	}
-	if err := r.settle(ctx, sess.SessionID, sess.ConfigOptions); err != nil {
+	options, err := r.settle(ctx, sess.SessionID, sess.ConfigOptions)
+	if err != nil {
 		_ = r.Close()
 		return nil, "", r.fail("set up the session", err)
 	}
-	r.session = sess.SessionID
+	r.adopt(sess.SessionID, options)
 	r.seed = seedText(transcript)
 	obs.Spawned(name, version, string(sess.SessionID))
 	return r, ResumedBySeed, nil
@@ -169,9 +195,16 @@ func seedText(transcript string) string {
 
 // launch starts the agent process and initializes it, leaving the session
 // to the caller.
-func launch(ctx context.Context, ad Adapter, cwd, model string, obs Observer) (*Run, *acp.InitializeResponse, error) {
+func launch(ctx context.Context, ad Adapter, cwd string, s Settings, obs Observer) (*Run, *acp.InitializeResponse, error) {
 	if len(ad.Command) == 0 {
 		return nil, nil, fmt.Errorf("adapter %q has no command", ad.Name)
+	}
+	mode := s.Mode
+	switch {
+	case mode == "" && len(ad.Modes) > 0:
+		mode = ad.Modes[0]
+	case mode != "" && !slices.Contains(ad.Modes, mode):
+		return nil, nil, fmt.Errorf("%w: %s (%s)", ErrModeNotListed, mode, listed(ad.Modes))
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(ctx, ad.Command[0], ad.Command[1:]...)
@@ -204,7 +237,9 @@ func launch(ctx context.Context, ad Adapter, cwd, model string, obs Observer) (*
 		cancel()
 		return nil, nil, fmt.Errorf("start %s agent: %w", ad.Name, err)
 	}
-	r := &Run{name: ad.Name, cwd: cwd, client: client, cancel: cancel, stderr: stderr, transport: transport, seq: h.seq, handler: h, mode: ad.Mode, model: model, meta: ad.Meta}
+	r := &Run{name: ad.Name, cwd: cwd, client: client, cancel: cancel, stderr: stderr, transport: transport, seq: h.seq, handler: h,
+		modes: ad.Modes, mode: mode, model: s.Model, asking: map[acp.SessionConfigOptionCategory]string{}, meta: ad.Meta, ctx: ctx}
+	h.settings = r.reported
 
 	init, err := client.Initialize(ctx, &acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersion(1),
@@ -237,27 +272,203 @@ func systemPrompt(ad Adapter, init *acp.InitializeResponse) *acp.SystemPrompt {
 // is found by its ACP category, so no agent's own name for it is needed.
 // The mode is what keeps an agent asking before it acts, so a session
 // whose mode cannot be set, or does not read back as set, fails.
-func (r *Run) settle(ctx context.Context, id acp.SessionId, given *[]acp.SessionConfigOption) error {
+func (r *Run) settle(ctx context.Context, id acp.SessionId, given *[]acp.SessionConfigOption) ([]acp.SessionConfigOption, error) {
+	r.mu.Lock()
+	mode, model := r.mode, r.model
+	r.mu.Unlock()
+	return r.settleTo(ctx, id, given, mode, model)
+}
+
+// settleTo is settle with the mode and model given.
+func (r *Run) settleTo(ctx context.Context, id acp.SessionId, given *[]acp.SessionConfigOption, mode, model string) ([]acp.SessionConfigOption, error) {
 	var options []acp.SessionConfigOption
 	if given != nil {
 		options = *given
 	}
-	if r.mode != "" {
-		after, err := r.setOption(ctx, id, options, acp.SessionConfigOptionCategoryMode, r.mode)
+	if mode != "" {
+		after, err := r.setOption(ctx, id, options, acp.SessionConfigOptionCategoryMode, mode)
 		if err != nil {
-			return fmt.Errorf("set the agent's mode to %s: %w", r.mode, err)
+			return nil, fmt.Errorf("set the agent's mode to %s: %w", mode, err)
 		}
-		if o, ok := optionFor(after, acp.SessionConfigOptionCategoryMode); !ok || optionValue(o) != r.mode {
-			return fmt.Errorf("the agent did not confirm its mode is %s", r.mode)
+		if o, ok := optionFor(after, acp.SessionConfigOptionCategoryMode); !ok || optionValue(o) != mode {
+			return nil, fmt.Errorf("the agent did not confirm its mode is %s", mode)
 		}
 		options = after
 	}
-	if r.model != "" {
-		if _, err := r.setOption(ctx, id, options, acp.SessionConfigOptionCategoryModel, r.model); err != nil {
-			return fmt.Errorf("set the agent's model to %s: %w", r.model, err)
+	if model != "" {
+		after, err := r.setOption(ctx, id, options, acp.SessionConfigOptionCategoryModel, model)
+		if err != nil {
+			return nil, fmt.Errorf("set the agent's model to %s: %w", model, err)
 		}
+		options = after
+	}
+	return options, nil
+}
+
+// adopt makes id the conversation, with the options it was settled on.
+// What the agent reported while it was being settled is handled first, so
+// none of it is taken for a change the agent made itself.
+func (r *Run) adopt(id acp.SessionId, options []acp.SessionConfigOption) {
+	r.drain()
+	r.mu.Lock()
+	r.session, r.options = id, options
+	r.mu.Unlock()
+}
+
+// SetMode sets the conversation's mode to one the adapter lists. The
+// agent must confirm it, since the mode is what keeps it asking.
+func (r *Run) SetMode(ctx context.Context, mode string) error {
+	if !slices.Contains(r.modes, mode) {
+		return fmt.Errorf("%w: %s (%s)", ErrModeNotListed, mode, listed(r.modes))
+	}
+	if err := r.change(ctx, acp.SessionConfigOptionCategoryMode, mode); err != nil {
+		return fmt.Errorf("set the agent's mode to %s: %w", mode, err)
 	}
 	return nil
+}
+
+// SetModel sets the conversation's model.
+func (r *Run) SetModel(ctx context.Context, model string) error {
+	if model == "" {
+		return errors.New("no model given")
+	}
+	if err := r.change(ctx, acp.SessionConfigOptionCategoryModel, model); err != nil {
+		return fmt.Errorf("set the agent's model to %s: %w", model, err)
+	}
+	return nil
+}
+
+// change sets the conversation's option in category to value and keeps
+// the options the agent then gives. A mode must read back as set.
+func (r *Run) change(ctx context.Context, category acp.SessionConfigOptionCategory, value string) error {
+	r.mu.Lock()
+	if r.closed || r.session == "" {
+		r.mu.Unlock()
+		return errors.New("the agent is closed")
+	}
+	id, options := r.session, r.options
+	r.asking[category] = value
+	r.mu.Unlock()
+	after, err := r.setOption(ctx, id, options, category, value)
+	// Whatever the agent reported before it answered is handled while the
+	// change is still known to be the run's own.
+	r.drain()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.asking, category)
+	if err != nil {
+		return err
+	}
+	if category == acp.SessionConfigOptionCategoryMode {
+		if o, ok := optionFor(after, category); !ok || optionValue(o) != value {
+			return fmt.Errorf("the agent did not confirm its mode is %s", value)
+		}
+		r.mode = value
+	} else {
+		r.model = value
+	}
+	r.options = after
+	return nil
+}
+
+// reported handles the agent's saying, unasked, what its options are now,
+// or what its mode is. A mode or model that differs from what the run
+// last knew, and is not a change the run asked for, is the agent's own
+// change, which the observer hears about. A mode the adapter does not
+// list is set back to the conversation's last listed one.
+func (r *Run) reported(id acp.SessionId, options []acp.SessionConfigOption, mode string) {
+	type change struct {
+		category acp.SessionConfigOptionCategory
+		value    string
+	}
+	r.mu.Lock()
+	if r.closed || r.session == "" || id != r.session {
+		r.mu.Unlock()
+		return
+	}
+	before := r.options
+	if options != nil {
+		r.options = options
+	} else {
+		r.options = withValue(r.options, acp.SessionConfigOptionCategoryMode, mode)
+	}
+	var changes []change
+	restore := ""
+	for _, category := range []acp.SessionConfigOptionCategory{acp.SessionConfigOptionCategoryMode, acp.SessionConfigOptionCategoryModel} {
+		was, now := currentValue(before, category), currentValue(r.options, category)
+		if now == "" || now == was || now == r.asking[category] {
+			continue
+		}
+		changes = append(changes, change{category, now})
+		switch {
+		case category == acp.SessionConfigOptionCategoryModel:
+			r.model = now
+		case len(r.modes) == 0 || slices.Contains(r.modes, now):
+			r.mode = now
+		default:
+			restore = r.mode
+		}
+	}
+	obs := r.handler.obs
+	r.mu.Unlock()
+	for _, c := range changes {
+		if c.category == acp.SessionConfigOptionCategoryMode {
+			obs.ModeChanged(c.value, v1.ChangedByAgent)
+		} else {
+			obs.ModelChanged(c.value)
+		}
+	}
+	if restore != "" {
+		go r.restore(restore)
+	}
+}
+
+// restore sets the conversation back to mode after the agent left the
+// modes the adapter lists. If it can't, the observer is told, since the
+// agent may now act without asking.
+func (r *Run) restore(mode string) {
+	err := r.change(r.ctx, acp.SessionConfigOptionCategoryMode, mode)
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	switch {
+	case closed || r.ctx.Err() != nil:
+	case err != nil:
+		slog.Warn("agents: could not set the agent's mode back", "agent", r.name, "mode", mode, "err", err)
+		r.handler.obs.ModeLost(fmt.Errorf("set the agent's mode back to %s: %w", mode, err))
+	default:
+		slog.Info("agents: set the agent's mode back", "agent", r.name, "mode", mode)
+		r.handler.obs.ModeChanged(mode, v1.ChangedByDaemon)
+	}
+}
+
+// currentValue is the current value of the first option in category, or
+// empty when there is none.
+func currentValue(options []acp.SessionConfigOption, category acp.SessionConfigOptionCategory) string {
+	if o, ok := optionFor(options, category); ok {
+		return optionValue(o)
+	}
+	return ""
+}
+
+// withValue is options with the first option in category set to value.
+func withValue(options []acp.SessionConfigOption, category acp.SessionConfigOptionCategory, value string) []acp.SessionConfigOption {
+	out := slices.Clone(options)
+	for i, o := range out {
+		if o.Category != nil && *o.Category == category {
+			out[i].CurrentValue = acp.SessionConfigValueId(value)
+			break
+		}
+	}
+	return out
+}
+
+// listed says which modes an adapter lists.
+func listed(modes []string) string {
+	if len(modes) == 0 {
+		return "the adapter lists none"
+	}
+	return "the adapter lists " + strings.Join(modes, ", ")
 }
 
 // setOption sets the session's option in category to value, unless it is
@@ -394,9 +605,17 @@ func (r *Run) Title(ctx context.Context, request string, timeout time.Duration) 
 	}
 	r.handler.aside(sess.SessionID)
 	defer r.handler.collected(sess.SessionID)
-	// The side session asks before acting, and runs on the chosen model,
-	// the same as the conversation.
-	if err := r.settle(ctx, sess.SessionID, sess.ConfigOptions); err != nil {
+	// The side session asks before acting, in the first mode the adapter
+	// lists, and runs on the conversation's model. It isn't put in the
+	// conversation's mode: in Claude Code's plan mode the agent answers a
+	// title request with a name for a plan.
+	r.mu.Lock()
+	mode, model := r.mode, r.model
+	r.mu.Unlock()
+	if len(r.modes) > 0 {
+		mode = r.modes[0]
+	}
+	if _, err := r.settleTo(ctx, sess.SessionID, sess.ConfigOptions, mode, model); err != nil {
 		return "", fmt.Errorf("set up a side session: %w", err)
 	}
 	done := make(chan struct{})
@@ -471,8 +690,8 @@ func (r *Run) fail(step string, err error) error {
 
 // RunPrompt launches the adapter's agent, sends one prompt, and stops the
 // agent when the turn ends.
-func RunPrompt(ctx context.Context, ad Adapter, cwd, prompt, model string, obs Observer) (string, error) {
-	r, err := Start(ctx, ad, cwd, model, obs)
+func RunPrompt(ctx context.Context, ad Adapter, cwd, prompt string, s Settings, obs Observer) (string, error) {
+	r, err := Start(ctx, ad, cwd, s, obs)
 	if err != nil {
 		return "", err
 	}

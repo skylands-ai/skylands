@@ -95,6 +95,19 @@ export interface AgentAvailability {
   models?: AgentModel[]
   /** The model a new session started on. */
   defaultModel?: string
+  /**
+   * The modes a session may be in, as the agent names them: the ones its
+   * adapter lists, which keep it asking before it acts, the first being
+   * where a session starts. None means the agent has no mode setting.
+   */
+  modes?: AgentMode[]
+}
+
+/** One mode a session may be in: the id its mode is set to, and what the agent calls it. */
+export interface AgentMode {
+  id: string
+  name?: string
+  description?: string
 }
 
 /** One model an agent offers: the id a session's model is set to, and what the agent calls it. */
@@ -248,7 +261,10 @@ export interface Session {
   id: string
   repoId: string
   agent: string
+  /** The model the session runs on, absent for the agent's own default. */
   model?: string
+  /** The mode the session is in, absent for the first its adapter lists. */
+  mode?: string
   agentName?: string
   prompt: string
   /** What the agent works on: its own branch, cut from base, or the checkout's when inCheckout is set. */

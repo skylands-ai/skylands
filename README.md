@@ -274,6 +274,18 @@ error lists the ones it offers. A
 model alias such as `fable` in your Claude Code settings may not work under the
 adapter, so pick a full model id in the chip if a session fails on its model.
 
+For an agent with more than one mode, a Mode chip beside the model chip
+picks the mode the session starts in, as the agent names it: Claude Code's
+Manual or Plan, or goose's approve or chat. Every mode it lists keeps the
+agent asking before it acts, as [Approvals](#approvals) describes. While the
+agent waits for your reply, the conversation's header has the same chips,
+which change the session's mode and model from the next prompt on, and on
+the host `skylands session mode <id> <mode>` and `skylands session model
+<id> <model>` do the same. When the agent changes its own model, as one of
+its commands can, the header follows. Each change is noted in the
+conversation, and a session that comes back after a daemon restart is set
+to its latest mode and model.
+
 Codex runs the same way, through its ACP adapter from npm at the version
 pinned in `internal/daemon/agents/codex.go`, and needs a Codex login on that
 machine: run `npx -y @agentclientprotocol/codex-acp@2.5.0 login`, or `codex
@@ -305,11 +317,17 @@ from then on, except what a deny rule refuses. A request nobody answers in 30 mi
 expires, and the agent is told it was cancelled; ending the session
 cancels whatever it was asking.
 
-The daemon sets every Claude Code session to its Manual mode, through
-Claude Code's mode setting over ACP, whatever `permissions.defaultMode`
-Claude Code's settings name, and turns its bypass mode off for the
-session; a session whose mode can't be set doesn't start.
-In Manual, Claude Code asks before making changes, except a call that an
+Each agent may be in only the modes that keep it asking before it acts,
+which the daemon sets through the agent's mode setting over ACP: a session
+whose mode can't be set doesn't start. If the agent moves itself to any
+other mode, the daemon sets it back, and stops a session it can't set
+back; the conversation notes both.
+
+The daemon sets every Claude Code session to its Manual mode, or to Plan
+when you choose it, whatever `permissions.defaultMode` Claude Code's
+settings name, and turns its bypass mode off for the session. Plan makes
+no changes until you approve its plan, on a card whose Allow once answer
+leaves Plan for Manual. In Manual, Claude Code asks before making changes, except a call that an
 allow rule in its own settings matches: `permissions.allow` in
 `~/.claude/settings.json`, or in the repository's `.claude/settings.json`
 or `.claude/settings.local.json`. Claude Code runs such a call without
@@ -332,7 +350,8 @@ report it.
 
 goose approves every tool call itself in its default mode, so the daemon
 sets every goose session to its approve mode, in which goose asks before
-every tool call it hasn't been told in its own settings to always allow.
+every tool call it hasn't been told in its own settings to always allow,
+or to its chat mode when you choose it, in which goose runs no tools.
 goose doesn't say what kind of call each one is, a read or an edit, so the
 host's rules can't let its reads pass on their own: every goose call waits
 for a person unless a rule or "Trust this session" lets it through.

@@ -59,6 +59,10 @@ type Probe struct {
 	ModelsRead   bool
 	Models       []v1.AgentModel
 	DefaultModel string
+	// Modes are the modes the adapter lists, as the agent names them in
+	// the same session, in the adapter's order. A listed mode the agent
+	// doesn't offer is left out.
+	Modes []v1.AgentMode
 	// ModelsErr is why no session opened to read the models, when they
 	// were asked for and the agent did not say it was logged out.
 	ModelsErr error
@@ -80,7 +84,7 @@ type ProbeOptions struct {
 // reads its models when asked, and stops it. No prompt is sent, so no
 // model is asked anything.
 func ProbeAgent(ctx context.Context, ad Adapter, cwd string, opts ProbeOptions) (Probe, error) {
-	r, init, err := launch(ctx, ad, cwd, "", quietObserver{})
+	r, init, err := launch(ctx, ad, cwd, Settings{}, quietObserver{})
 	if err != nil {
 		return Probe{}, err
 	}
@@ -121,6 +125,9 @@ func (r *Run) readModels(ctx context.Context, cwd string, init *acp.InitializeRe
 	if sess.ConfigOptions != nil {
 		options = *sess.ConfigOptions
 	}
+	if o, ok := optionFor(options, acp.SessionConfigOptionCategoryMode); ok {
+		p.Modes = listedModes(r.modes, optionModels(o))
+	}
 	o, ok := optionFor(options, acp.SessionConfigOptionCategoryModel)
 	if !ok {
 		return nil
@@ -128,6 +135,21 @@ func (r *Run) readModels(ctx context.Context, cwd string, init *acp.InitializeRe
 	p.DefaultModel = optionValue(o)
 	p.Models = optionModels(o)
 	return nil
+}
+
+// listedModes are the choices of an agent's mode setting that the adapter
+// lists, in the adapter's order.
+func listedModes(listed []string, offered []v1.AgentModel) []v1.AgentMode {
+	var out []v1.AgentMode
+	for _, id := range listed {
+		for _, m := range offered {
+			if m.ID == id {
+				out = append(out, v1.AgentMode(m))
+				break
+			}
+		}
+	}
+	return out
 }
 
 // optionModels are a model option's choices, in or out of groups.
@@ -161,6 +183,9 @@ func (quietObserver) Plan([]v1.PlanEntry)            {}
 func (quietObserver) Usage(uint64, uint64)           {}
 func (quietObserver) Tokens(string, v1.TokenUsage)   {}
 func (quietObserver) Message(string)                 {}
+func (quietObserver) ModeChanged(string, string)     {}
+func (quietObserver) ModelChanged(string)            {}
+func (quietObserver) ModeLost(error)                 {}
 func (quietObserver) Question(context.Context, Question) Answer {
 	return Answer{Cancelled: true}
 }

@@ -55,6 +55,27 @@ func (f *fakeAPI) CancelTurn(_ context.Context, id, _ string) (SessionInfo, erro
 	}
 	return SessionInfo{}, session.ErrUnknownSession
 }
+func (f *fakeAPI) SetMode(_ context.Context, id, _, mode string) (SessionInfo, error) {
+	for i := range f.sessions {
+		if f.sessions[i].ID == id {
+			if mode != "plan" && mode != "default" {
+				return SessionInfo{}, session.ErrModeNotListed
+			}
+			f.sessions[i].Mode = mode
+			return f.sessions[i], nil
+		}
+	}
+	return SessionInfo{}, session.ErrUnknownSession
+}
+func (f *fakeAPI) SetModel(_ context.Context, id, _, model string) (SessionInfo, error) {
+	for i := range f.sessions {
+		if f.sessions[i].ID == id {
+			f.sessions[i].Model = model
+			return f.sessions[i], nil
+		}
+	}
+	return SessionInfo{}, session.ErrUnknownSession
+}
 func (f *fakeAPI) RemoveSession(_ context.Context, id, _ string, force bool) (RemoveResult, error) {
 	for i := range f.sessions {
 		if f.sessions[i].ID == id {
@@ -190,6 +211,18 @@ func TestServerAndClient(t *testing.T) {
 		t.Errorf("CancelTurn = %+v, %v", s, err)
 	}
 	api.sessions[0].Status = "idle"
+	if s, err := c.SetMode(ctx, "s1", "plan"); err != nil || s.Mode != "plan" {
+		t.Errorf("SetMode = %+v, %v", s, err)
+	}
+	if _, err := c.SetMode(ctx, "s1", "bypassPermissions"); err == nil || !strings.Contains(err.Error(), "not one the adapter lists") {
+		t.Errorf("set an unlisted mode: err = %v", err)
+	}
+	if s, err := c.SetModel(ctx, "s1", "opus"); err != nil || s.Model != "opus" {
+		t.Errorf("SetModel = %+v, %v", s, err)
+	}
+	if _, err := c.SetModel(ctx, "nope", "opus"); err == nil || !strings.Contains(err.Error(), "no such session") {
+		t.Errorf("set the model of an unknown session: err = %v", err)
+	}
 	if s, err := c.StopSession(ctx, "s1"); err != nil || s.Status != "ended" {
 		t.Errorf("StopSession = %+v, %v", s, err)
 	}

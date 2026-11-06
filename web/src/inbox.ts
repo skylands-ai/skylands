@@ -3,12 +3,12 @@ import type { FetchCache, Fetched } from './fetchcache'
 import type { LiveText } from './live'
 import { renderMarkdown } from './markdown'
 import { agentGlyph, timeNode } from './panels/parts'
-import type { Permission, Question, QuestionField, Session } from './protocol'
+import type { AgentAvailability, Permission, Question, QuestionField, Session } from './protocol'
 import { replyBox } from './reply'
 import { inputsVersion, requestInput } from './requestinput'
 import { canSign as canSignIn, myApprover } from './approvers'
 import { HOST_DEFAULTS, proposeRule, ruleText, rulesSheet } from './rules'
-import { agentLabel, isOpen, sessionLabel, sessionStatus, tokensBreakdown, tokensLabel, tokensText } from './status'
+import { agentLabel, isOpen, modelText, sessionLabel, sessionStatus, tokensBreakdown, tokensLabel, tokensText } from './status'
 import { conversationList, isUnread, isWaiting, sumTokens, type State } from './store'
 import { chipDeps, toolChip } from './toolchip'
 
@@ -25,6 +25,9 @@ export interface InboxActions {
   prompt(s: Session, text: string): Promise<string>
   /** Interrupts the turn in progress and keeps the session. */
   cancel(s: Session): Promise<string>
+  /** Sets an idle session's mode, or its model. Resolves with an error message, or empty. */
+  setMode(s: Session, mode: string): Promise<string>
+  setModel(s: Session, model: string): Promise<string>
   stop(s: Session): Promise<string>
   /** Draws the inbox again, as when a request's whole input arrives. */
   redraw(): void
@@ -74,7 +77,7 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live
   // Once the agent is not mid-turn, where its changes stand is read from the
   // host, and read again after each event, such as a commit.
   const changes = open && open.status !== 'running' && !open.worktreeRemoved ? cache.get('changes', open.host, open.id, 0, Date.parse(open.updatedAt)) : undefined
-  const deps = [s.sessions, s.repos, s.viewed, s.inbox, s.inboxFilter, open, inputsVersion(), s.approvers, s.me, s.world, fetched?.at, fetched?.loading, fetched?.error, fetched?.text, changes?.at, changes?.loading, changes?.error, changes?.changes, rulesToggles, ...(open ? chipDeps(open, cache) : [])]
+  const deps = [s.sessions, s.repos, s.viewed, s.inbox, s.inboxFilter, open, inputsVersion(), s.approvers, s.me, s.world, fetched?.at, fetched?.loading, fetched?.error, fetched?.text, changes?.at, changes?.loading, changes?.error, changes?.changes, rulesToggles, open ? settingsKey(s, open) : '', ...(open ? chipDeps(open, cache) : [])]
   if (lastDeps && lastDeps.length === deps.length && lastDeps.every((d, i) => d === deps[i])) return
   lastDeps = deps
 
@@ -367,6 +370,54 @@ function questionCard(s: State, x: Session, q: Question, actions: InboxActions):
   ])
 }
 
+/** What the island says about the session's agent: the modes and models it offers. */
+function agentOf(s: State, x: Session): AgentAvailability | undefined {
+  return s.islands[x.host]?.agents?.find((a) => a.name === x.agent)
+}
+
+/** What the setting chips show for the open session, so the conversation is rebuilt when it changes. */
+function settingsKey(s: State, x: Session): string {
+  const a = agentOf(s, x)
+  return JSON.stringify([a?.modes ?? [], a?.models ?? [], a?.modelsRead ?? false])
+}
+
+/**
+ * The open session's mode and model, as chips that change them while the
+ * agent waits for a reply. The mode chip lists the modes the adapter
+ * lists, and shows only when there is more than one; the model chip lists
+ * the models the island's login offers, with the session's own kept.
+ */
+function settingChips(s: State, x: Session, actions: InboxActions): HTMLElement[] {
+  const a = agentOf(s, x)
+  const idle = x.status === 'idle'
+  const why = idle ? '' : 'Changes once the agent is waiting for you'
+  const chip = (label: string, current: string, options: { id: string; name?: string; description?: string }[], set: (v: string) => Promise<string>): HTMLElement => {
+    const sel = el('select', { 'aria-label': label, disabled: idle ? null : 'true', title: why || null }) as HTMLSelectElement
+    sel.replaceChildren(...options.map((o) => el('option', { value: o.id, text: label === 'Model' ? modelText(o) : o.name || o.id, title: o.description || null })))
+    sel.value = current
+    const box = el('label', { class: 'chip' }, [label, sel])
+    sel.addEventListener('change', async () => {
+      sel.disabled = true
+      const err = await set(sel.value)
+      sel.disabled = false
+      if (err) {
+        sel.value = current
+        box.title = err
+      }
+    })
+    return box
+  }
+  const out: HTMLElement[] = []
+  const modes = a?.modes ?? []
+  if (modes.length > 1) out.push(chip('Mode', x.mode || modes[0].id, modes, (v) => actions.setMode(x, v)))
+  const models = a?.models ?? []
+  if (models.length) {
+    const options = models.some((m) => m.id === x.model) ? models : [{ id: x.model ?? '', name: x.model ? x.model : `Agent’s default${a?.defaultModel ? ` (${a.defaultModel})` : ''}` }, ...models]
+    out.push(chip('Model', x.model ?? '', options, (v) => actions.setModel(x, v)))
+  }
+  return out
+}
+
 /** The switch that lets a session's tool calls through without asking, unless a deny rule refuses them. */
 function trustSwitch(s: State, x: Session, actions: InboxActions): HTMLElement {
   const input = el('input', { type: 'checkbox', 'aria-label': 'Trust this session' }) as HTMLInputElement
@@ -581,6 +632,7 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
     el('span', { class: 'muted', text: `${x.turns} ${x.turns === 1 ? 'turn' : 'turns'}` }),
     el('span', { class: 'muted', title: tokensBreakdown(x.tokens) || null, text: tokensLabel(x.tokens) }),
     el('div', { class: 'acts' }, [
+      ...(isOpen(x) ? settingChips(s, x, actions) : []),
       isOpen(x) ? trustSwitch(s, x, actions) : null,
       el('button', {
         type: 'button',

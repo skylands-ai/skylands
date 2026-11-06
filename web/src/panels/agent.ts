@@ -1,7 +1,7 @@
 import { el } from '../dom'
 import type { FetchCache, Fetched } from '../fetchcache'
 import type { Island, Repo, Session } from '../protocol'
-import { agentLabel, clockText, sessionLabel, sessionStatus } from '../status'
+import { agentLabel, clockText, modeName, sessionLabel, sessionStatus } from '../status'
 import { backButton, factsBox, header, hint, section, timeNode, tokensNode } from './parts'
 
 function pct(used?: number, size?: number): string {
@@ -48,6 +48,7 @@ export function renderAgentPanel(
     ['Status', status[0]],
     ['Agent', s.agentName && s.agentName !== agentLabel(s.agent) ? `${agentLabel(s.agent)} (${s.agentName})` : agentLabel(s.agent)],
     ['Turns', String(s.turns)],
+    ...(s.mode ? ([['Mode', modeName(island, s)]] as [string, string][]) : []),
     ['Branch', s.inCheckout ? `${s.branch}, in the checkout` : s.base ? `${s.branch}, from ${s.base}` : s.branch],
     ['Started', timeNode(s.startedAt)],
     running ? ['Last activity', timeNode(s.activeAt)] : s.status === 'idle' ? ['Idle since', timeNode(s.activeAt)] : ['Ended', s.endedAt ? timeNode(s.endedAt) : 'unknown'],
