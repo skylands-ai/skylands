@@ -36,6 +36,9 @@ type Adapter struct {
 	// leaves the agent's own. A session the agent will not set it for does
 	// not start.
 	Mode string
+	// Meta goes in the _meta of every session the agent opens or loads,
+	// for an agent that takes settings there that ACP has no field for.
+	Meta acp.Meta
 	// Login tells a person how to log the agent in, for an agent that
 	// reports its login.
 	Login string
@@ -65,7 +68,7 @@ const ClaudeAdapterPackage = "@agentclientprotocol/claude-agent-acp@0.100.0"
 
 // DefaultRegistry holds the fake agent built into the skylands binary, the
 // Claude Code and Codex adapters from npm, and goose as installed on the
-// host.
+// host. Each real agent is set to a mode in which it asks before acting.
 func DefaultRegistry() Registry {
 	exe, err := os.Executable()
 	if err != nil {
@@ -74,6 +77,7 @@ func DefaultRegistry() Registry {
 	return Registry{
 		"fake": {Name: "fake", Provider: "local", Command: []string{exe, "fakeagent"}, BuiltIn: true},
 		"claude": {Name: "claude", Provider: "claude", Command: []string{"npx", "-y", ClaudeAdapterPackage},
+			Mode: claudeMode, Meta: claudeMeta(),
 			Login: "run claude and log in with /login, or set ANTHROPIC_API_KEY"},
 		"codex": {Name: "codex", Provider: "codex", Command: []string{"npx", "-y", CodexAdapterPackage},
 			Mode: codexMode, Instructions: codexInstructions,

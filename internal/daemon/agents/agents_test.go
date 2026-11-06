@@ -397,15 +397,23 @@ func TestRunPromptReportsAMissingAgent(t *testing.T) {
 	}
 }
 
-// TestClaudeAdapterIsPinned keeps the Claude Code adapter at an exact
-// version, so a new npm release never reaches a session unannounced.
-func TestClaudeAdapterIsPinned(t *testing.T) {
+// TestClaudeAdapter keeps the Claude Code adapter at an exact version, so
+// a new npm release never reaches a session unannounced, and in the mode
+// where it asks before making changes, with bypass out of reach.
+func TestClaudeAdapter(t *testing.T) {
 	exact := regexp.MustCompile(`^@agentclientprotocol/claude-agent-acp@\d+\.\d+\.\d+$`)
 	if !exact.MatchString(ClaudeAdapterPackage) {
 		t.Errorf("ClaudeAdapterPackage = %q, want the package at an exact x.y.z version", ClaudeAdapterPackage)
 	}
-	cmd := DefaultRegistry()["claude"].Command
-	if len(cmd) == 0 || cmd[len(cmd)-1] != ClaudeAdapterPackage {
+	ad := DefaultRegistry()["claude"]
+	if cmd := ad.Command; len(cmd) == 0 || cmd[len(cmd)-1] != ClaudeAdapterPackage {
 		t.Errorf("claude adapter command = %q, want it to run %s", cmd, ClaudeAdapterPackage)
+	}
+	if ad.Mode != "default" || len(ad.Env) != 0 {
+		t.Errorf("claude mode = %q and env = %q, want default sessions set over ACP alone", ad.Mode, ad.Env)
+	}
+	meta, _ := json.Marshal(ad.Meta)
+	if want := `{"claudeCode":{"options":{"allowDangerouslySkipPermissions":false}}}`; string(meta) != want {
+		t.Errorf("claude meta = %s, want %s", meta, want)
 	}
 }

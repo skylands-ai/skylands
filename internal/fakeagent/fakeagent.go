@@ -90,6 +90,19 @@ const BigOutput = "big output"
 // its session's mode and model, as "mode=<mode> model=<model>".
 const SettingsQuestion = "what are your settings?"
 
+// EnvRequireMeta, when set to 1, makes the fake agent refuse to open or
+// load a session that comes without _meta, as an agent would that needs
+// a setting only _meta carries.
+const EnvRequireMeta = "SKYLANDS_FAKE_AGENT_REQUIRE_META"
+
+// MetaQuestion, as a whole prompt, makes the fake agent answer with the
+// _meta its session was opened or loaded with, as JSON, or NoMeta.
+const MetaQuestion = "what was your session's meta?"
+
+// NoMeta is the fake agent's answer to MetaQuestion for a session that
+// came without _meta.
+const NoMeta = "(none)"
+
 // EnvHang, when set to 1, makes the fake agent one that will not stop: it
 // ignores SIGTERM and SIGINT and keeps running after its stdin closes.
 const EnvHang = "SKYLANDS_FAKE_AGENT_HANG"
@@ -129,7 +142,8 @@ func Run(ctx context.Context) error {
 	}
 	return acp.RunAgent(ctx, &acp.StdioTransport{}, func(conn *acp.AgentConnection) any {
 		return &agent{conn: conn, delay: delay, noLoad: os.Getenv(EnvNoLoad) == "1", auth: os.Getenv(EnvAuth),
-			systemPrompt: os.Getenv(EnvSystemPrompt) == "1", config: os.Getenv(EnvConfigOptions), sessions: map[acp.SessionId]*session{}}
+			systemPrompt: os.Getenv(EnvSystemPrompt) == "1", config: os.Getenv(EnvConfigOptions), requireMeta: os.Getenv(EnvRequireMeta) == "1",
+			sessions: map[acp.SessionId]*session{}}
 	})
 }
 
@@ -165,6 +179,9 @@ type session struct {
 	instructions string
 	// mode and model are the session's config options, when it has them.
 	mode, model string
+	// meta is the _meta the session was opened or loaded with, as JSON,
+	// or empty for none.
+	meta string
 }
 
 type agent struct {
@@ -177,6 +194,8 @@ type agent struct {
 	systemPrompt bool
 	// config is EnvConfigOptions: empty for no config options.
 	config string
+	// requireMeta refuses a session that comes without _meta.
+	requireMeta bool
 	// canAsk means the client fills in forms, so the agent may ask a person
 	// a question.
 	canAsk   bool
@@ -220,7 +239,10 @@ func (a *agent) LoadSession(ctx context.Context, req *acp.LoadSessionRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	s := a.newSession(req.Cwd, instructions)
+	s, err := a.newSession(req.Cwd, instructions, req.Meta)
+	if err != nil {
+		return nil, err
+	}
 	a.mu.Lock()
 	a.sessions[req.SessionID] = s
 	options := a.configOptions(s)
@@ -237,7 +259,10 @@ func (a *agent) NewSession(_ context.Context, req *acp.NewSessionRequest) (*acp.
 		return nil, err
 	}
 	id := acp.SessionId(nuid.Next())
-	s := a.newSession(req.Cwd, instructions)
+	s, err := a.newSession(req.Cwd, instructions, req.Meta)
+	if err != nil {
+		return nil, err
+	}
 	a.mu.Lock()
 	a.sessions[id] = s
 	options := a.configOptions(s)
@@ -247,12 +272,21 @@ func (a *agent) NewSession(_ context.Context, req *acp.NewSessionRequest) (*acp.
 
 // newSession is a session at the first value of each config option, which
 // is also where a loaded one comes back.
-func (a *agent) newSession(cwd, instructions string) *session {
+func (a *agent) newSession(cwd, instructions string, meta acp.Meta) (*session, error) {
 	s := &session{cwd: cwd, instructions: instructions}
 	if a.config != "" {
 		s.mode, s.model = Modes[0], Models[0]
 	}
-	return s
+	if len(meta) > 0 {
+		b, err := json.Marshal(meta)
+		if err != nil {
+			return nil, err
+		}
+		s.meta = string(b)
+	} else if a.requireMeta {
+		return nil, fmt.Errorf("this agent needs _meta to open or load a session")
+	}
+	return s, nil
 }
 
 // configOptions are a session's config options as ACP describes them, or
@@ -381,6 +415,18 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		a.mu.Unlock()
 		if answer == "" {
 			answer = NoInstructions
+		}
+		if err := send(acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(answer))); err != nil {
+			return nil, err
+		}
+		return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
+	}
+	if promptText(req) == MetaQuestion {
+		a.mu.Lock()
+		answer := s.meta
+		a.mu.Unlock()
+		if answer == "" {
+			answer = NoMeta
 		}
 		if err := send(acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(answer))); err != nil {
 			return nil, err
