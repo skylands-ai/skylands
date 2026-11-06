@@ -68,6 +68,8 @@ export interface State extends Nav {
   inboxFilter: 'open' | 'all'
   /** How the 3D world is drawn, as chosen in this browser. */
   worldTheme: WorldThemeId
+  /** Whether this browser notifies when an agent asks for approval or has a question. */
+  notify: boolean
 }
 
 const VIEWED_KEY = 'skylands.viewed'
@@ -108,11 +110,21 @@ function loadWorldTheme(): WorldThemeId {
   }
 }
 
+const NOTIFY_KEY = 'skylands.notify'
+
+function loadNotify(): boolean {
+  try {
+    return localStorage.getItem(NOTIFY_KEY) === 'on'
+  } catch {
+    return false
+  }
+}
+
 type Listener = (s: State) => void
 
 /** One place for everything the page renders from. Every change notifies every listener. */
 export class Store {
-  state: State = { link: 'connecting', server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), inbox: null, inboxFilter: loadFilter(), worldTheme: loadWorldTheme() }
+  state: State = { link: 'connecting', server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), inbox: null, inboxFilter: loadFilter(), worldTheme: loadWorldTheme(), notify: loadNotify() }
   private listeners: Listener[] = []
 
   subscribe(fn: Listener): void {
@@ -188,6 +200,17 @@ export class Store {
       // Same as above.
     }
     this.update({ worldTheme })
+  }
+
+  /** Turns notifications on or off in this browser, and remembers which. */
+  setNotify(notify: boolean): void {
+    try {
+      if (notify) localStorage.setItem(NOTIFY_KEY, 'on')
+      else localStorage.removeItem(NOTIFY_KEY)
+    } catch {
+      // Same as above.
+    }
+    this.update({ notify })
   }
 
   /** Re-renders without changing anything, for times that tick. */
