@@ -31,6 +31,7 @@ import { connectToCitadel } from './ws'
 import { api } from './signin'
 import { approverActions, canSign, keepThisBrowser, loadThisBrowser, signAnswer, signChange, signFor, signPrompt, signRepoRules, signSessionRules, signTrust } from './approvers'
 import { pullRequestHash, textHash } from './decision'
+import { browserNotices, Notifier, notifySupport } from './notify'
 
 const stage = byId<HTMLElement>('stage')
 const canvas = byId<HTMLCanvasElement>('world')
@@ -261,7 +262,7 @@ function panelDeps(s: State, stale: boolean): unknown[] {
     case 'island':
       return ['island', island, stale, stale ? s.lastContact : 0, ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
     default:
-      return ['world', s.server, s.world, s.link, s.worldTheme, waitingCount(s), s.approvers, s.me, s.persisted, s.invite, s.revoking, s.approverError, s.invite ? Date.now() > Date.parse(s.invite.expires) : false, ...islandList(s)]
+      return ['world', s.server, s.world, s.link, s.worldTheme, s.notify, notifySupport() === 'ok' ? Notification.permission : '', waitingCount(s), s.approvers, s.me, s.persisted, s.invite, s.revoking, s.approverError, s.invite ? Date.now() > Date.parse(s.invite.expires) : false, ...islandList(s)]
   }
 }
 
@@ -337,7 +338,30 @@ function renderPanelContent(s: State, stale: boolean): void {
       }
       break
   }
-  renderWorldPanel(panelEl, s, nav.select, (id) => store.setWorldTheme(id), approverActs, () => void keepThisBrowser(store))
+  renderWorldPanel(panelEl, s, nav.select, (id) => store.setWorldTheme(id), (on) => void turnNotifications(on), approverActs, () => void keepThisBrowser(store))
+}
+
+/** Opens a conversation in the inbox, as clicking its notification does. */
+function openConversation(id: string): void {
+  store.update({ inbox: id })
+  store.setView('inbox')
+}
+
+const notifier = new Notifier(
+  browserNotices(() => store.state.notify),
+  openConversation,
+)
+
+/** Turns notifications on, asking the browser's permission first if it hasn't been asked, or off. */
+async function turnNotifications(on: boolean): Promise<void> {
+  if (on && notifySupport() === 'ok' && Notification.permission === 'default') {
+    try {
+      await Notification.requestPermission()
+    } catch {
+      // A refusal or a dismissed prompt leaves the permission as it was.
+    }
+  }
+  store.setNotify(on && notifySupport() === 'ok' && Notification.permission === 'granted')
 }
 
 store.subscribe((s0) => {
@@ -388,6 +412,7 @@ store.subscribe((s0) => {
     world.setTheme(s.worldTheme)
   }
   renderPanel(s, stale)
+  notifier.observe(s)
 })
 
 // A handle for debugging and screenshots: skylands.world.rig.flyTo(...).

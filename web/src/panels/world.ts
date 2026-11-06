@@ -3,6 +3,7 @@ import type { Island, ServerInfo, WorldInfo } from '../protocol'
 import { citadelStatus, islandCounts, islandStatus, isStale, shortId } from '../status'
 import { islandList, waitingCount, type State } from '../store'
 import { WORLD_THEMES, type WorldThemeId } from '../worldthemes'
+import { notifySupport } from '../notify'
 import type { ApproverActions } from '../approvers'
 import { approversSection } from './approvers'
 import { copyButton, factsBox, foldSection, header, hint, note, section } from './parts'
@@ -34,6 +35,37 @@ function themeSwitch(current: WorldThemeId, choose: (id: WorldThemeId) => void):
       WORLD_THEMES.map((t) =>
         el('button', { type: 'button', class: 'btn small', 'aria-pressed': t.id === current ? 'true' : 'false', text: t.name, onclick: () => choose(t.id) }),
       ),
+    ),
+  ])
+}
+
+/**
+ * The switch that turns on notifications in this browser: when an agent
+ * asks for approval or has a question while the page is out of sight.
+ * Turning it on asks the browser's permission. Browsers notify only for a
+ * page with a secure context.
+ */
+function notifySwitch(on: boolean, choose: (on: boolean) => void): HTMLElement {
+  const support = notifySupport()
+  if (support === 'unsupported') return section('Notifications', [note('This browser can\u2019t show notifications from a page.')])
+  if (support === 'insecure') {
+    return section('Notifications', [note('Browsers show notifications only from a page opened over HTTPS, or at localhost or 127.0.0.1. Open the citadel at one of those to turn them on.')])
+  }
+  const permission = Notification.permission
+  const shown = on && permission === 'granted'
+  return section('Notifications', [
+    el(
+      'div',
+      { class: 'modes', role: 'group', 'aria-label': 'Notifications' },
+      [
+        el('button', { type: 'button', class: 'btn small', 'aria-pressed': shown ? 'true' : 'false', text: 'On', onclick: () => choose(true) }),
+        el('button', { type: 'button', class: 'btn small', 'aria-pressed': shown ? 'false' : 'true', text: 'Off', onclick: () => choose(false) }),
+      ],
+    ),
+    note(
+      permission === 'denied'
+        ? 'This browser blocks notifications from this page. Allow them in its settings for this site, then turn them on here.'
+        : 'Notifies on this computer when an agent asks for approval or has a question, while this page is in the background.',
     ),
   ])
 }
@@ -118,7 +150,7 @@ function islandTable(islands: Island[], stale: boolean, select: (id: string) => 
 }
 
 /** The world-level panel: the citadel itself, the world's theme, its islands, and the NATS server it is on. */
-export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: string) => void, setTheme: (id: WorldThemeId) => void, approvers: ApproverActions, keepStorage: () => void): void {
+export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: string) => void, setTheme: (id: WorldThemeId) => void, setNotify: (on: boolean) => void, approvers: ApproverActions, keepStorage: () => void): void {
   panel.textContent = ''
   const stale = isStale(s)
   const { reachable, total } = islandCounts(s)
@@ -140,6 +172,7 @@ export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: stri
     ]),
   )
   panel.appendChild(themeSwitch(s.worldTheme, setTheme))
+  panel.appendChild(notifySwitch(s.notify, setNotify))
 
   const islands = islandList(s)
   panel.appendChild(

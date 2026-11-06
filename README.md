@@ -387,6 +387,17 @@ from then on, except what a deny rule refuses. A request nobody answers in 30 mi
 expires, and the agent is told it was cancelled; ending the session
 cancels whatever it was asking.
 
+To hear about a request while the page is in the background, turn on
+Notifications in the citadel's panel, and allow them when the browser
+asks. When an agent asks for approval or has a question, the browser shows
+a notification that names the agent, the repository, and the island, such
+as "Claude Code in storefront on workstation wants to run a command", but
+never the command or other input. Clicking it opens the conversation, and
+it closes once the request is answered, in that browser or anywhere else.
+An agent that stops for a reply doesn't notify. Browsers notify only from
+a page opened over HTTPS, or at `localhost` or `127.0.0.1`; see [Open the
+world on your phone](#open-the-world-on-your-phone) for an HTTPS address.
+
 Each agent may be in only the modes that keep it asking before it acts,
 which the daemon sets through the agent's mode setting over ACP: a session
 whose mode can't be set doesn't start. If the agent moves itself to any
