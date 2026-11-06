@@ -38,6 +38,11 @@ type Adapter struct {
 	// not start. While a session runs, a mode the agent moves to that
 	// isn't listed is set back. None leaves the agent's own mode alone.
 	Modes []string
+	// Withheld are slash commands the agent announces that act outside the
+	// session's tool calls, on the host, the agent's own configuration, or
+	// the account, which no approval reaches. A prompt starting with one is
+	// refused, as is one starting with a command the agent didn't announce.
+	Withheld []string
 	// Meta goes in the _meta of every session the agent opens or loads,
 	// for an agent that takes settings there that ACP has no field for.
 	Meta acp.Meta
@@ -79,10 +84,10 @@ func DefaultRegistry() Registry {
 	return Registry{
 		"fake": {Name: "fake", Provider: "local", Command: []string{exe, "fakeagent"}, BuiltIn: true},
 		"claude": {Name: "claude", Provider: "claude", Command: []string{"npx", "-y", ClaudeAdapterPackage},
-			Modes: claudeModes, Meta: claudeMeta(),
+			Modes: claudeModes, Withheld: claudeWithheld, Meta: claudeMeta(),
 			Login: "run claude and log in with /login, or set ANTHROPIC_API_KEY"},
 		"codex": {Name: "codex", Provider: "codex", Command: []string{"npx", "-y", CodexAdapterPackage},
-			Modes: codexModes, Instructions: codexInstructions,
+			Modes: codexModes, Withheld: codexWithheld, Instructions: codexInstructions,
 			Login: "run npx -y " + CodexAdapterPackage + " login, or codex login if the Codex CLI is installed"},
 		"goose": {Name: "goose", Provider: "goose", Command: []string{"goose", "acp"}, Modes: gooseModes, Install: gooseInstall},
 	}
@@ -228,6 +233,48 @@ type handler struct {
 	// settings hears what the agent says its options or its mode are now,
 	// unasked.
 	settings func(id acp.SessionId, options []acp.SessionConfigOption, mode string)
+	// commands are the slash commands the agent last announced, by
+	// session, and announced is closed for a session once it has.
+	commands  map[acp.SessionId][]v1.AgentCommand
+	announced map[acp.SessionId]chan struct{}
+}
+
+// announce keeps the commands the agent announced for a session.
+func (h *handler) announce(id acp.SessionId, commands []acp.AvailableCommand) {
+	out := make([]v1.AgentCommand, 0, len(commands))
+	for _, c := range commands {
+		cmd := v1.AgentCommand{Name: c.Name, Description: c.Description}
+		if c.Input != nil {
+			cmd.Hint = c.Input.Hint
+		}
+		out = append(out, cmd)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.commands == nil {
+		h.commands = map[acp.SessionId][]v1.AgentCommand{}
+	}
+	h.commands[id] = out
+	ch := h.announcedFor(id)
+	select {
+	case <-ch:
+	default:
+		close(ch)
+	}
+}
+
+// announcedFor is closed once the agent has announced a session's
+// commands. The caller holds h.mu.
+func (h *handler) announcedFor(id acp.SessionId) chan struct{} {
+	if h.announced == nil {
+		h.announced = map[acp.SessionId]chan struct{}{}
+	}
+	ch, ok := h.announced[id]
+	if !ok {
+		ch = make(chan struct{})
+		h.announced[id] = ch
+	}
+	return ch
 }
 
 // aside starts collecting the text of a session instead of reporting it.
@@ -261,6 +308,12 @@ func (h *handler) Update(_ context.Context, n *acp.SessionNotification) error {
 
 func (h *handler) update(n *acp.SessionNotification) {
 	u := n.Update
+	// Commands are kept for every session, including one being loaded,
+	// whose other updates are history the daemon already has.
+	if u.SessionUpdate == acp.SessionUpdateTypeAvailableCommandsUpdate {
+		h.announce(n.SessionID, u.AvailableCommands)
+		return
+	}
 	h.mu.Lock()
 	b := h.side[n.SessionID]
 	h.mu.Unlock()

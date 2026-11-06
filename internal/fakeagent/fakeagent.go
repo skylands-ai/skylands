@@ -77,6 +77,14 @@ var (
 	Models = []string{"fake-small", "fake-large"}
 )
 
+// Commands are the slash commands the fake agent announces for every
+// session, a moment after it opens or loads, as real agents do. As a
+// prompt, a command gets the answer "ran /<name>" and the text after it.
+var Commands = []acp.AvailableCommand{
+	{Name: "review", Description: "Review the changes", Input: &acp.AvailableCommandInput{Hint: "what to look at"}},
+	{Name: "config", Description: "Change a setting directly"},
+}
+
 // SwitchModeTo and SwitchModelTo, followed by a value and as a whole
 // prompt, make the fake agent change its own mode or model to it, as an
 // agent does through one of its commands, and announce the change with
@@ -264,6 +272,7 @@ func (a *agent) LoadSession(ctx context.Context, req *acp.LoadSessionRequest) (*
 	if err := a.conn.SessionUpdate(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(ReplayedLine))}); err != nil {
 		return nil, err
 	}
+	go a.announceCommands(req.SessionID)
 	return &acp.LoadSessionResponse{ConfigOptions: options}, nil
 }
 
@@ -281,7 +290,15 @@ func (a *agent) NewSession(_ context.Context, req *acp.NewSessionRequest) (*acp.
 	a.sessions[id] = s
 	options := a.configOptions(s)
 	a.mu.Unlock()
+	go a.announceCommands(id)
 	return &acp.NewSessionResponse{SessionID: id, ConfigOptions: options}, nil
+}
+
+// announceCommands tells the client the session's slash commands, a
+// moment after the session opens.
+func (a *agent) announceCommands(id acp.SessionId) {
+	time.Sleep(a.delay)
+	_ = a.conn.SessionUpdate(context.Background(), &acp.SessionNotification{SessionID: id, Update: acp.AvailableCommandsUpdateSessionUpdate(Commands)})
 }
 
 // newSession is a session at the first value of each config option, which
@@ -445,6 +462,18 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	}
 	send := func(u acp.SessionUpdate) error {
 		return a.conn.SessionUpdate(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: u})
+	}
+	if text := strings.TrimSpace(promptText(req)); strings.HasPrefix(text, "/") {
+		name, rest, _ := strings.Cut(text[1:], " ")
+		for _, c := range Commands {
+			if c.Name == name {
+				answer := strings.TrimSpace("ran /" + name + " " + rest)
+				if err := send(acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(answer))); err != nil {
+					return nil, err
+				}
+				return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
+			}
+		}
 	}
 	if mode, ok := strings.CutPrefix(promptText(req), SwitchModeTo); ok {
 		if err := a.switchOwn(ctx, req.SessionID, s, &s.mode, Modes, mode, true); err != nil {

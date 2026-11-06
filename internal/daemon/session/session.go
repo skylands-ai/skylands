@@ -264,6 +264,8 @@ var (
 	ErrInCheckout      = errors.New("the session works in the checkout itself, so it has no branch or worktree of its own")
 	ErrNoWorktree      = errors.New("the worktree has been removed")
 	ErrModeNotListed   = agents.ErrModeNotListed
+	ErrCommandWithheld = agents.ErrCommandWithheld
+	ErrCommandUnknown  = agents.ErrCommandUnknown
 	ErrNothingToCommit = errors.New("there is nothing to commit")
 	ErrUncommitted     = errors.New("the worktree has uncommitted changes; commit them first")
 	ErrNothingToMerge  = errors.New("the branch has no commits its base lacks")
@@ -1033,6 +1035,9 @@ func (m *Manager) Prompt(ctx context.Context, cmd v1.SendPrompt) (Session, error
 	if strings.TrimSpace(cmd.Text) == "" {
 		return *s, ErrEmptyPrompt
 	}
+	if err := l.run.CheckPrompt(ctx, cmd.Text, CommandWait); err != nil {
+		return *s, err
+	}
 	if err := m.record(ctx, cmd.SessionID, cmd.ID, v1.EventPromptSent, v1.PromptSent{SessionID: cmd.SessionID, Text: cmd.Text}); err != nil {
 		return Session{}, err
 	}
@@ -1209,6 +1214,9 @@ func (m *Manager) Start(ctx context.Context, cmd v1.StartSession) (Session, erro
 	if !ok {
 		return Session{}, fmt.Errorf("%w: %s", ErrUnknownAgent, cmd.Agent)
 	}
+	if err := adapter.CheckPrompt(cmd.Prompt); err != nil {
+		return Session{}, err
+	}
 	mode := cmd.Mode
 	switch {
 	case mode == "" && len(adapter.Modes) > 0:
@@ -1262,6 +1270,15 @@ func (m *Manager) begin(id string, adapter agents.Adapter, worktree, prompt stri
 	obs := &observer{m: m, id: id, t: m.transcript(id)}
 	run, err := agents.Start(m.ctx, adapter, worktree, settings, obs)
 	if err != nil {
+		if m.ctx.Err() == nil {
+			m.failed(id, err)
+		}
+		return
+	}
+	// A first prompt that starts with a command the agent didn't announce
+	// is refused, as a later one is, now that the agent is up to say.
+	if err := run.CheckPrompt(m.ctx, prompt, CommandWait); err != nil {
+		_ = run.Close()
 		if m.ctx.Err() == nil {
 			m.failed(id, err)
 		}

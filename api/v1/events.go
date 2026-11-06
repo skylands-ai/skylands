@@ -471,6 +471,9 @@ const (
 	// FetchRequestInput returns the whole input of a waiting request, as a
 	// RequestInput. The request names it by RequestID.
 	FetchRequestInput = "requestinput"
+	// FetchCommands returns the slash commands a live session's agent
+	// announced, less the ones its adapter withholds, as a CommandsResult.
+	FetchCommands = "commands"
 )
 
 // ToolCallDetail is everything the host kept about one tool call: what the
@@ -1053,4 +1056,21 @@ type SetSessionModel struct {
 	ID        string `json:"id"`
 	SessionID string `json:"sessionId"`
 	Model     string `json:"model"`
+}
+
+// AgentCommand is one slash command an agent announced for a session: its
+// name without the slash, what it does, and, when it takes input, a hint
+// at what to type after it.
+type AgentCommand struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Hint        string `json:"hint,omitempty"`
+}
+
+// CommandsResult is the answer to a commands fetch. Announced says whether
+// the agent has announced its commands yet; until it has, Commands is
+// empty.
+type CommandsResult struct {
+	Announced bool           `json:"announced"`
+	Commands  []AgentCommand `json:"commands"`
 }

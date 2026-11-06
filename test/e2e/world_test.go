@@ -138,9 +138,9 @@ func (w *world) startDaemonIn(host, socketPath, dataDir string) (stop func()) {
 			Host:            host, NATSURL: w.hub.LeafURL(), DataDir: dataDir, SocketPath: socketPath, Version: "v0.1.0",
 			Adapters: agents.Registry{
 				"fake": {Name: "fake", Provider: "local", Command: fakeCmd, Env: fakeEnv},
-				// moded offers a mode and a model setting, and lists two
-				// of its modes.
-				"moded": {Name: "moded", Provider: "local", Command: fakeCmd, Env: append(append([]string(nil), fakeEnv...), fakeagent.EnvConfigOptions+"=1"), Modes: []string{"ask", "plan"}},
+				// moded offers a mode and a model setting, lists two of its
+				// modes, and withholds one of its commands.
+				"moded": {Name: "moded", Provider: "local", Command: fakeCmd, Env: append(append([]string(nil), fakeEnv...), fakeagent.EnvConfigOptions+"=1"), Modes: []string{"ask", "plan"}, Withheld: []string{"config"}},
 			},
 		})
 	}()
@@ -666,6 +666,31 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 	b.wait(t, "the new mode and model to show", 10*time.Second, func(v view) bool {
 		s, ok := v.sessions[moded]
 		return ok && s.Mode == "ask" && s.Model == "fake-large"
+	})
+
+	// The agent's commands are listed less the withheld one, which is
+	// refused as a prompt, as is one the agent didn't announce.
+	cresp, err := http.Get(w.webURL + "/api/sessions/ws/" + moded + "/commands")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cbody, _ := io.ReadAll(cresp.Body)
+	_ = cresp.Body.Close()
+	if body := string(cbody); cresp.StatusCode != http.StatusOK || !strings.Contains(body, `"announced":true`) || !strings.Contains(body, `"name":"review"`) || strings.Contains(body, `"config"`) {
+		t.Errorf("commands: %d %s", cresp.StatusCode, body)
+	}
+	if code, out := post2("/api/sessions/ws/"+moded+"/prompt", `{"text":"/config x=1"}`); code != http.StatusBadRequest || !strings.Contains(fmt.Sprint(out["error"]), "doesn't run this command") {
+		t.Errorf("a withheld command: %d %v", code, out)
+	}
+	if code, out := post2("/api/sessions/ws/"+moded+"/prompt", `{"text":"/clear"}`); code != http.StatusBadRequest || !strings.Contains(fmt.Sprint(out["error"]), "isn't one of the commands") {
+		t.Errorf("an unannounced command: %d %v", code, out)
+	}
+	if code, out := post2("/api/sessions/ws/"+moded+"/prompt", `{"text":"/review the diff"}`); code != http.StatusOK {
+		t.Errorf("an announced command: %d %v", code, out)
+	}
+	b.wait(t, "the command's turn to end", 30*time.Second, func(v view) bool {
+		s, ok := v.sessions[moded]
+		return ok && s.Status == "idle" && s.Turns == 2
 	})
 	if code, out := post2("/api/sessions/ws/"+moded+"/stop", `{}`); code != http.StatusOK {
 		t.Fatalf("stop the session in plan: %d %v", code, out)

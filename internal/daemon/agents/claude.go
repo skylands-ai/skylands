@@ -19,6 +19,19 @@ import "github.com/spachava753/acp-sdk/acp"
 // preflight warns about.
 var claudeModes = []string{"default", "plan"}
 
+// claudeWithheld are Claude Code's commands that act outside the
+// session's tool calls: remote-control opens the session to claude.ai and
+// the Claude app; config sets Claude Code's settings directly; schedule,
+// ultrareview, and loop start cloud agents or recurring runs, some of
+// them paid; and the rest change the account or Claude Code's
+// configuration. Checked against the commands Claude Code announced in a
+// live session under the pinned adapter; check them again when the pin
+// moves, since Claude Code's commands come with it.
+var claudeWithheld = []string{
+	"remote-control", "config", "schedule", "ultrareview", "loop",
+	"design", "design-consent", "design-revoke", "usage-credits", "import", "auto-mode-setup",
+}
+
 // claudeMeta goes with every session Claude Code opens or loads. It takes
 // bypassPermissions out of the session's modes, so nothing can switch the
 // session to it, Claude Code included, whatever its settings allow.

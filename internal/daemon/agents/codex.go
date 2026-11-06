@@ -24,6 +24,13 @@ const CodexAdapterPackage = "@agentclientprotocol/codex-acp@2.5.0"
 // asks about.
 var codexModes = []string{"read-only"}
 
+// codexWithheld are Codex's commands that act outside the session's tool
+// calls: logout signs the host's Codex out, ending it for every Codex
+// session on the island. Checked against the adapter's built-in commands
+// at the pinned version. Codex itself comes in within a range the
+// adapter declares, so check again when either moves.
+var codexWithheld = []string{"logout"}
+
 // codexInstructions go after Codex's own developer instructions, including
 // any in the person's Codex config. Without them Codex's model tends to
 // report a command its sandbox stopped as blocked, rather than ask to run

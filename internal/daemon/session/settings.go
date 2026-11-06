@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/nats-io/nuid"
 
@@ -131,4 +132,27 @@ func (o *observer) listed(mode string) bool {
 		}
 	}
 	return len(adapter.Modes) == 0
+}
+
+// CommandWait is how long a prompt that starts with a slash command waits
+// for the agent to announce its commands, which it does just after a
+// session opens.
+const CommandWait = 5 * time.Second
+
+// Commands are the slash commands a live session's agent announced, less
+// the ones its adapter withholds, for a person to pick from. A session
+// whose agent isn't up has none.
+func (m *Manager) Commands(id string) (v1.CommandsResult, error) {
+	m.mu.Lock()
+	_, ok := m.sessions[id]
+	l := m.live[id]
+	m.mu.Unlock()
+	if !ok {
+		return v1.CommandsResult{}, fmt.Errorf("%w: %s", ErrUnknownSession, id)
+	}
+	if l == nil {
+		return v1.CommandsResult{Commands: []v1.AgentCommand{}}, nil
+	}
+	commands, announced := l.run.Commands()
+	return v1.CommandsResult{Announced: announced, Commands: commands}, nil
 }
