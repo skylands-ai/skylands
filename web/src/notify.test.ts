@@ -91,12 +91,12 @@ describe('Notifier', () => {
 
   it('opens the conversation when clicked, and closes the notification', () => {
     const r = new Recorder()
-    const opened: string[] = []
-    const n = new Notifier(r, (id) => opened.push(id))
+    const opened: unknown[] = []
+    const n = new Notifier(r, (route) => opened.push(route))
     n.observe(world([]))
     n.observe(world([session('s1', { pending: [request('q1')] })]))
     r.clicks.get('request:q1')!()
-    expect(opened).toEqual(['s1'])
+    expect(opened).toEqual([{ host: 'workstation', session: 's1', item: { kind: 'request', id: 'q1' } }])
     expect(r.open).toEqual([])
   })
 

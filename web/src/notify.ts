@@ -1,4 +1,5 @@
 import type { Session } from './protocol'
+import type { InboxRoute } from './route'
 import type { State } from './store'
 import { agentLabel } from './status'
 
@@ -10,7 +11,8 @@ import { agentLabel } from './status'
 export interface Waiting {
   /** The request or question it is, which tags the notification so another tab's replaces it. */
   tag: string
-  session: string
+  /** Where it is in the inbox, which clicking the notification opens. */
+  route: InboxRoute
   title: string
   body: string
 }
@@ -40,7 +42,7 @@ function wants(kind: string | undefined): string {
 }
 
 /** Who is waiting, and where: "Claude Code in storefront on workstation". */
-function who(s: State, x: Session): string {
+export function who(s: State, x: Session): string {
   return `${agentLabel(x.agent)} in ${s.repos[x.repoId]?.name ?? x.repoId} on ${x.host}`
 }
 
@@ -52,8 +54,14 @@ function who(s: State, x: Session): string {
 export function waitingItems(s: State): Waiting[] {
   const out: Waiting[] = []
   for (const x of Object.values(s.sessions)) {
-    for (const p of x.pending) out.push({ tag: `request:${p.requestId}`, session: x.id, title: `${who(s, x)} ${wants(p.kind)}`, body: 'Approve or deny it in Skylands.' })
-    for (const q of x.questions) out.push({ tag: `question:${q.questionId}`, session: x.id, title: `${who(s, x)} has a question`, body: 'Answer it in Skylands.' })
+    for (const p of x.pending) {
+      const route: InboxRoute = { host: x.host, session: x.id, item: { kind: 'request', id: p.requestId } }
+      out.push({ tag: `request:${p.requestId}`, route, title: `${who(s, x)} ${wants(p.kind)}`, body: 'Approve or deny it in Skylands.' })
+    }
+    for (const q of x.questions) {
+      const route: InboxRoute = { host: x.host, session: x.id, item: { kind: 'question', id: q.questionId } }
+      out.push({ tag: `question:${q.questionId}`, route, title: `${who(s, x)} has a question`, body: 'Answer it in Skylands.' })
+    }
   }
   return out
 }
@@ -86,7 +94,7 @@ export class Notifier {
 
   constructor(
     private notices: Notices,
-    private open: (session: string) => void,
+    private open: (route: InboxRoute) => void,
   ) {}
 
   observe(s: State): void {
@@ -108,7 +116,7 @@ export class Notifier {
       const n = this.notices.show(w, () => {
         n.close()
         this.shown.delete(w.tag)
-        this.open(w.session)
+        this.open(w.route)
       })
       this.shown.set(w.tag, n)
     }
