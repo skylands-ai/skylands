@@ -1,5 +1,6 @@
 import type { StoredApprover } from './approver'
 import type { ApproverInfo, Island, Repo, ServerInfo, Session, TokenUsage, WorldInfo } from './protocol'
+import type { InboxRoute } from './route'
 import { isWorldTheme, type WorldThemeId } from './worldthemes'
 
 /** The browser's link to its citadel over the WebSocket. */
@@ -70,6 +71,10 @@ export interface State extends Nav {
   worldTheme: WorldThemeId
   /** Whether this browser notifies when an agent asks for approval or has a question. */
   notify: boolean
+  /** Whether the screen is a phone's: narrow, or short as a phone on its side. Only what waits on a person is shown. */
+  phone: boolean
+  /** What the phone's view shows, from the page's address. */
+  route: InboxRoute
 }
 
 const VIEWED_KEY = 'skylands.viewed'
@@ -124,7 +129,7 @@ type Listener = (s: State) => void
 
 /** One place for everything the page renders from. Every change notifies every listener. */
 export class Store {
-  state: State = { link: 'connecting', server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), inbox: null, inboxFilter: loadFilter(), worldTheme: loadWorldTheme(), notify: loadNotify() }
+  state: State = { link: 'connecting', server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), inbox: null, inboxFilter: loadFilter(), worldTheme: loadWorldTheme(), notify: loadNotify(), phone: false, route: {} }
   private listeners: Listener[] = []
 
   subscribe(fn: Listener): void {
@@ -283,6 +288,27 @@ export function pendingCount(s: State): number {
   let n = 0
   for (const x of Object.values(s.sessions)) n += x.pending.length + x.questions.length
   return n
+}
+
+/** A tool call waiting for approval, or a question waiting for an answer. */
+export interface PendingItem {
+  x: Session
+  kind: 'request' | 'question'
+  id: string
+  at: string
+  /** What it asks: the tool call's title, or the question. */
+  title: string
+}
+
+/** What waits on a person across the world, or in one session, newest first. */
+export function pendingItems(s: State, session?: string): PendingItem[] {
+  const out: PendingItem[] = []
+  for (const x of Object.values(s.sessions)) {
+    if (session && x.id !== session) continue
+    for (const p of x.pending) out.push({ x, kind: 'request', id: p.requestId, at: p.at, title: p.title })
+    for (const q of x.questions) out.push({ x, kind: 'question', id: q.questionId, at: q.at, title: q.message })
+  }
+  return out.sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
 }
 
 export function waitingCount(s: State): number {

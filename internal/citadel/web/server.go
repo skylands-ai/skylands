@@ -222,11 +222,10 @@ func sendJSON(ctx context.Context, c *websocket.Conn, m Message) error {
 	return c.Write(ctx, websocket.MessageText, data)
 }
 
-// staticHandler serves the built client, or the placeholder when there is
-// no build.
 // pages sends a page asked for through another loopback name to the
-// canonical one, the world's page to setup while there is no world, and
-// /setup to the setup page.
+// canonical one, the world's page to setup while there is no world, /setup
+// to the setup page, and the inbox's links to the world's page, which
+// opens at what they name.
 func (s *Server) pages(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet || r.Method == http.MethodHead {
@@ -234,17 +233,29 @@ func (s *Server) pages(next http.Handler) http.Handler {
 				http.Redirect(w, r, to, http.StatusTemporaryRedirect)
 				return
 			}
-			if (r.URL.Path == "/" || r.URL.Path == "/index.html") && s.cfg.NeedsSetup != nil && s.cfg.NeedsSetup() {
+			inbox := isInboxPath(r.URL.Path)
+			if (r.URL.Path == "/" || r.URL.Path == "/index.html" || inbox) && s.cfg.NeedsSetup != nil && s.cfg.NeedsSetup() {
 				http.Redirect(w, r, "/setup", http.StatusFound)
 				return
 			}
-			if r.URL.Path == "/setup" {
+			switch {
+			case r.URL.Path == "/setup":
 				r = r.Clone(r.Context())
 				r.URL.Path = "/setup.html"
+			case inbox:
+				// "/", not "/index.html", which the file server redirects.
+				r = r.Clone(r.Context())
+				r.URL.Path = "/"
 			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isInboxPath says whether path is one of the inbox's links: /inbox, or a
+// session, request, or question under it, which a notification opens.
+func isInboxPath(path string) bool {
+	return path == "/inbox" || strings.HasPrefix(path, "/inbox/")
 }
 
 // loopbackRedirect is where to send a page request that reached the
@@ -279,6 +290,8 @@ func isLoopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// staticHandler serves the built client, or the placeholder when there is
+// no build.
 func (s *Server) staticHandler() http.Handler {
 	if s.cfg.Dist != nil {
 		if _, err := fs.Stat(s.cfg.Dist, "index.html"); err == nil {
