@@ -207,6 +207,15 @@ tailnet.
 4. Add the phone: press "Add an approver", and scan the code. The link
    opens at the citadel's `--url`, as "Opens at" shows.
 
+On a phone, the page shows only what's waiting on you: each tool call
+waiting for approval and each question, newest first, naming the agent,
+the repository, and the island. Tap one to see the exact input and Allow
+once or Deny, or the question's form; the phone's key signs the answer.
+It doesn't load the 3D world. Any window narrower than 700 pixels, or
+shorter than 500 as a phone on its side is, gets this view. Each item has
+its own link, such as `/inbox/<island>/<session>/requests/<request>`,
+which opens it on a phone and its conversation on a laptop.
+
 Another reverse proxy works the same way if it passes the browser's `Host`
 header through, as `tailscale serve` does, along with WebSocket upgrades.
 Through one that rewrites `Host`, the citadel refuses what a page asks of

@@ -115,7 +115,7 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live
  * keep the answer as a rule for this session or for every session on the
  * repository, with the pattern the request suggests, edited as you like.
  */
-function approvalCard(s: State, x: Session, p: Permission, actions: InboxActions): HTMLElement {
+export function approvalCard(s: State, x: Session, p: Permission, actions: InboxActions): HTMLElement {
   // The whole input, which the person sees and approves by its hash. Until
   // it is here and its hash checks out, nothing can be allowed.
   const view = requestInput(x.host, x.id, p, actions.redraw)
@@ -326,7 +326,7 @@ function questionControl(q: Question, f: QuestionField, read: Map<string, () => 
 }
 
 /** A question the agent is waiting on: its message, a control per field, and the answer or the refusal. */
-function questionCard(s: State, x: Session, q: Question, actions: InboxActions): HTMLElement {
+export function questionCard(s: State, x: Session, q: Question, actions: InboxActions): HTMLElement {
   const note = el('span', { class: 'sub' })
   // Only an approver's browser can answer: the daemon checks its signature.
   const signs = canSignIn(s)

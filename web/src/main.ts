@@ -18,7 +18,7 @@ import { renderIslandPanel } from './panels/island'
 import { renderTerracePanel } from './panels/terrace'
 import { renderWorldPanel } from './panels/world'
 import { agentLabel, citadelLabelStatus, clockText, durationText, islandStatus, isStale, secondsSince } from './status'
-import { islandList, isWaiting, level, pendingCount, reposOn, sessionsOn, Store, waitingCount, type State } from './store'
+import { islandList, isWaiting, level, pendingCount, pendingItems, reposOn, sessionsOn, Store, waitingCount, type State } from './store'
 import { growLive, lapsedText, renderInbox, type InboxActions } from './inbox'
 import { LiveText } from './live'
 import { refreshOpenChips } from './toolchip'
@@ -26,12 +26,14 @@ import { renderMarkdown } from './markdown'
 import { providerOf } from './world/airship'
 import type { AgentState } from './world/agents'
 import type { AgentCommand, Rule } from './protocol'
-import { World } from './world/world'
+import type { World } from './world/world'
 import { connectToCitadel } from './ws'
 import { api } from './signin'
 import { approverActions, canSign, keepThisBrowser, loadThisBrowser, signAnswer, signChange, signFor, signPrompt, signRepoRules, signSessionRules, signTrust } from './approvers'
 import { pullRequestHash, textHash } from './decision'
 import { browserNotices, Notifier, notifySupport } from './notify'
+import { renderPhone, type PhoneActions } from './phone'
+import { inboxPath, parseInboxPath, type InboxRoute } from './route'
 
 const stage = byId<HTMLElement>('stage')
 const canvas = byId<HTMLCanvasElement>('world')
@@ -46,6 +48,8 @@ const inboxEl = byId<HTMLElement>('inbox')
 const modeWorld = byId<HTMLButtonElement>('modeWorld')
 const modeInbox = byId<HTMLButtonElement>('modeInbox')
 const inboxCount = byId<HTMLElement>('inboxCount')
+const appEl = byId<HTMLElement>('app')
+const phoneEl = byId<HTMLElement>('phone')
 
 const store = new Store()
 const approverActs = approverActions(store)
@@ -66,12 +70,32 @@ const link = connectToCitadel(store, (_host, id, piece) => {
   })
 })
 
+// The 3D world is loaded and built only for a screen that shows it, so a
+// phone never downloads it.
 let world: World | null = null
-try {
-  world = new World(stage, canvas, labelsEl, store.state.worldTheme)
-} catch (err) {
-  console.error('world: WebGL unavailable', err)
-  stage.appendChild(el('div', { class: 'nogl', text: 'This view needs WebGL, and it isn’t available in this browser right now.' }))
+let worldAsked = false
+async function ensureWorld(): Promise<void> {
+  if (worldAsked) return
+  worldAsked = true
+  let made: World
+  try {
+    const { World } = await import('./world/world')
+    try {
+      made = new World(stage, canvas, labelsEl, store.state.worldTheme)
+    } catch (err) {
+      console.error('world: WebGL unavailable', err)
+      stage.appendChild(el('div', { class: 'nogl', text: 'This view needs WebGL, and it isn’t available in this browser right now.' }))
+      return
+    }
+  } catch (err) {
+    console.error('world: could not load', err)
+    stage.appendChild(el('div', { class: 'nogl', text: `The 3D world couldn’t be loaded: ${(err as Error).message}. Reload the page to try again.` }))
+    return
+  }
+  world = made
+  world.onNav = (n) => store.update(n)
+  world.start()
+  store.touch()
 }
 
 // Navigation goes through the world when it runs, so the camera moves, and
@@ -347,10 +371,85 @@ function openConversation(id: string): void {
   store.setView('inbox')
 }
 
-const notifier = new Notifier(
-  browserNotices(() => store.state.notify),
-  openConversation,
-)
+// A phone's screen gets only what waits on a person: a window is a phone's
+// when it is narrow, or short, as a phone on its side is.
+const phoneQuery = matchMedia('(max-width: 700px), (max-height: 500px)')
+
+/**
+ * Lays the page out for its screen, and opens it where its address says.
+ * On a phone the address follows the view. The desktop keeps none, so a
+ * link into the inbox opens its conversation there and leaves "/".
+ */
+function fitScreen(): void {
+  const route = parseInboxPath(location.pathname)
+  if (phoneQuery.matches) {
+    store.update({ phone: true, route: route ?? {} })
+    return
+  }
+  store.update({ phone: false })
+  if (route) {
+    history.replaceState(null, '', '/')
+    store.update({ inbox: route.session ?? null })
+    store.setView('inbox')
+  }
+  void ensureWorld()
+}
+
+/** Moves the phone's view to a route, as a new entry in the browser's history. */
+function go(route: InboxRoute): void {
+  history.pushState({ from: location.pathname }, '', inboxPath(route))
+  store.update({ route })
+}
+
+/** Back to the list of what's waiting: the entry before, when that was it, or the list in place. */
+function back(): void {
+  const from = (history.state as { from?: string } | null)?.from
+  if (from === '/' || from === '/inbox') {
+    history.back()
+    return
+  }
+  history.replaceState(null, '', '/inbox')
+  store.update({ route: {} })
+}
+
+window.addEventListener('popstate', () => {
+  if (store.state.phone) store.update({ route: parseInboxPath(location.pathname) ?? {} })
+})
+phoneQuery.addEventListener('change', fitScreen)
+
+/** An answer sent from the phone's view goes back to the list. */
+function thenBack(err: string): string {
+  if (!err && store.state.phone) back()
+  return err
+}
+
+const phoneActions: PhoneActions = {
+  ...inboxActions,
+  approve: (x, p, optionId, inputHash) => inboxActions.approve(x, p, optionId, inputHash).then(thenBack),
+  deny: (x, p) => inboxActions.deny(x, p).then(thenBack),
+  answer: (x, q, answers) => inboxActions.answer(x, q, answers).then(thenBack),
+  decline: (x, q) => inboxActions.decline(x, q).then(thenBack),
+  go,
+  back,
+}
+
+const notifier = new Notifier(browserNotices(() => store.state.notify), (route) => (store.state.phone ? go(route) : openConversation(route.session ?? '')))
+
+/** The phone's page: what's waiting, and the header's link to the citadel. */
+function renderPhoneLayout(s: State): void {
+  appEl.classList.toggle('phone', s.phone)
+  phoneEl.hidden = !s.phone
+  if (!s.phone) return
+  inboxEl.hidden = true
+  stage.hidden = true
+  panelEl.hidden = true
+  world?.setPaused(true)
+  const n = pendingItems(s).length
+  document.title = n ? `(${n}) Skylands` : 'Skylands'
+  renderHeader(crumbsEl, connectedEl, linkEl, s, nav)
+  link.watch(null, null)
+  renderPhone(phoneEl, s, s.route, phoneActions)
+}
 
 /** Turns notifications on, asking the browser's permission first if it hasn't been asked, or off. */
 async function turnNotifications(on: boolean): Promise<void> {
@@ -364,7 +463,14 @@ async function turnNotifications(on: boolean): Promise<void> {
   store.setNotify(on && notifySupport() === 'ok' && Notification.permission === 'granted')
 }
 
+fitScreen()
+
 store.subscribe((s0) => {
+  renderPhoneLayout(s0)
+  if (s0.phone) {
+    notifier.observe(s0)
+    return
+  }
   // Reading a conversation in the inbox counts as having seen everything in
   // it so far. Following its airship in the world does not: no message is
   // shown there.
@@ -416,20 +522,22 @@ store.subscribe((s0) => {
 })
 
 // A handle for debugging and screenshots: skylands.world.rig.flyTo(...).
-;(window as unknown as { skylands: unknown }).skylands = { world, store, renderMarkdown }
+;(window as unknown as { skylands: unknown }).skylands = {
+  get world() {
+    return world
+  },
+  store,
+  renderMarkdown,
+}
 
 modeWorld.addEventListener('click', () => store.setView('world'))
 modeInbox.addEventListener('click', () => store.setView('inbox'))
 
-if (world) {
-  world.onNav = (n) => store.update(n)
-  window.addEventListener('keydown', (e) => {
-    const t = e.target as HTMLElement | null
-    const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
-    if (!typing && e.key === 'Escape') world?.up()
-  })
-  world.start()
-}
+window.addEventListener('keydown', (e) => {
+  const t = e.target as HTMLElement | null
+  const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+  if (!typing && e.key === 'Escape' && !store.state.phone) world?.up()
+})
 
 // Times tick in place. Nothing is rebuilt for the clock. A running agent's
 // diff, and its conversation in the inbox, are re-fetched every couple of
@@ -438,6 +546,7 @@ setInterval(() => {
   const s = store.state
   refreshTimes(panelEl)
   refreshTimes(inboxEl)
+  refreshTimes(phoneEl)
   if (s.link === 'lost') renderVeil(s)
   const ag = s.view === 'world' && level(s) === 'agent' && s.agent ? s.sessions[s.agent] : undefined
   if (ag && ag.status === 'running') cache.get('diff', ag.host, ag.id, 2000)

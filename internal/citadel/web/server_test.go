@@ -60,6 +60,33 @@ func TestServesBuiltClient(t *testing.T) {
 	}
 }
 
+// TestServesInboxLinks serves the world's page at the inbox's links, which
+// a notification opens, and sends them to setup while there is no world.
+func TestServesInboxLinks(t *testing.T) {
+	dist := &fstest.MapFS{"index.html": {Data: []byte("<title>built client</title>")}, "setup.html": {Data: []byte("<title>setup</title>")}}
+	ts := newTestServer(t, dist)
+	for _, path := range []string{"/inbox", "/inbox/", "/inbox/workstation/S1", "/inbox/workstation/S1/requests/R1", "/inbox/workstation/S1/questions/Q1"} {
+		if code, body := get(t, ts.URL+path); code != http.StatusOK || !strings.Contains(body, "built client") {
+			t.Errorf("GET %s = %d %q, want 200 with the world's page", path, code, body)
+		}
+	}
+	if code, _ := get(t, ts.URL+"/inboxes"); code != http.StatusNotFound {
+		t.Errorf("GET /inboxes = %d, want 404", code)
+	}
+
+	unset := httptest.NewServer(New(Config{Dist: dist, NeedsSetup: func() bool { return true }}).Handler())
+	defer unset.Close()
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Get(unset.URL + "/inbox/workstation/S1/requests/R1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/setup" {
+		t.Errorf("an inbox link before setup = %d to %q, want 302 to /setup", resp.StatusCode, resp.Header.Get("Location"))
+	}
+}
+
 func TestServesPlaceholderWithoutBuild(t *testing.T) {
 	ts := newTestServer(t, nil)
 	code, body := get(t, ts.URL+"/")
