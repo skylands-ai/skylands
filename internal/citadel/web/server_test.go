@@ -60,6 +60,29 @@ func TestServesBuiltClient(t *testing.T) {
 	}
 }
 
+// TestServesWebAppFiles serves the manifest as one, and the service worker
+// fresh, so an upgraded citadel's worker replaces the old one.
+func TestServesWebAppFiles(t *testing.T) {
+	ts := newTestServer(t, &fstest.MapFS{
+		"index.html":           {Data: []byte("<title>built client</title>")},
+		"manifest.webmanifest": {Data: []byte(`{"name":"Skylands"}`)},
+		"sw.js":                {Data: []byte("self.addEventListener('fetch', () => {})")},
+	})
+	for path, want := range map[string]string{"/manifest.webmanifest": "application/manifest+json", "/sw.js": "text/javascript"} {
+		resp, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if ct := resp.Header.Get("Content-Type"); resp.StatusCode != http.StatusOK || !strings.HasPrefix(ct, want) {
+			t.Errorf("GET %s = %d %q, want 200 %s", path, resp.StatusCode, ct, want)
+		}
+		if cc := resp.Header.Get("Cache-Control"); cc != "no-cache" {
+			t.Errorf("GET %s Cache-Control = %q, want no-cache", path, cc)
+		}
+	}
+}
+
 // TestServesInboxLinks serves the world's page at the inbox's links, which
 // a notification opens, and sends them to setup while there is no world.
 func TestServesInboxLinks(t *testing.T) {

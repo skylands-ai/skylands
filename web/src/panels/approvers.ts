@@ -7,13 +7,37 @@ import { isOpen } from '../status'
 import type { State } from '../store'
 import { copyButton, factsBox, foldSection, hint, timeNode } from './parts'
 
+/** What this browser can do about keeping its key: ask to keep its storage, and install the citadel as an app. */
+export interface BrowserActions {
+  keep(): void
+  install(): void
+}
+
+/**
+ * The offer to install the citadel as an app, where the browser makes one,
+ * or word that it was just installed. The app's own window shows neither.
+ */
+function installOffer(s: State, install: () => void): HTMLElement | null {
+  switch (s.install) {
+    case 'offered':
+      return el('div', { class: 'install-app' }, [
+        el('button', { type: 'button', class: 'btn small', text: 'Install as an app', onclick: install }),
+        hint('Skylands then opens in its own window, like the other apps on this computer, and approves with the same key as this browser.'),
+      ])
+    case 'installed':
+      return hint('Skylands is installed as an app on this computer. Open it like any other app. It approves with the same key as this browser.')
+    default:
+      return null
+  }
+}
+
 /**
  * The Approvers section of the citadel's panel: every browser that can
  * approve what agents do in this world, a link that makes another browser
  * one, and revocation. Every change is signed in this browser with its
  * approver key, so only an approver can make one.
  */
-export function approversSection(s: State, actions: ApproverActions, keepStorage: () => void): HTMLElement | null {
+export function approversSection(s: State, actions: ApproverActions, browser: BrowserActions): HTMLElement | null {
   if (!s.world?.ready || !s.approvers) return null
   const byKey = new Map(s.approvers.map((a) => [a.key, a]))
   const nameOf = (key: string | undefined): string => (key === 'owner' ? 'the owner key' : (byKey.get(key ?? '')?.name ?? 'an unknown approver'))
@@ -39,11 +63,12 @@ export function approversSection(s: State, actions: ApproverActions, keepStorage
           'This browser’s storage',
           s.persisted
             ? 'Kept'
-            : el('span', { class: 'keyval' }, [el('span', { text: 'Best effort' }), el('button', { type: 'button', class: 'copy', text: 'Ask to keep', onclick: keepStorage })]),
+            : el('span', { class: 'keyval' }, [el('span', { text: 'Best effort' }), el('button', { type: 'button', class: 'copy', text: 'Ask to keep', onclick: browser.keep })]),
         ],
       ]),
     )
     if (s.persisted === false) kids.push(hint('The browser may clear this key if it runs short of space. Your recovery file, or another approver, brings it back.'))
+    kids.push(installOffer(s, browser.install))
   } else {
     kids.push(notAnApprover(me, nameOf))
   }

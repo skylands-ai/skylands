@@ -5,7 +5,7 @@ import { islandList, waitingCount, type State } from '../store'
 import { WORLD_THEMES, type WorldThemeId } from '../worldthemes'
 import { notifySupport } from '../notify'
 import type { ApproverActions } from '../approvers'
-import { approversSection } from './approvers'
+import { approversSection, type BrowserActions } from './approvers'
 import { copyButton, factsBox, foldSection, header, hint, note, section } from './parts'
 
 function natsFacts(s: ServerInfo | null, link: State['link']): [string, string][] {
@@ -150,7 +150,7 @@ function islandTable(islands: Island[], stale: boolean, select: (id: string) => 
 }
 
 /** The world-level panel: the citadel itself, the world's theme, its islands, and the NATS server it is on. */
-export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: string) => void, setTheme: (id: WorldThemeId) => void, setNotify: (on: boolean) => void, approvers: ApproverActions, keepStorage: () => void): void {
+export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: string) => void, setTheme: (id: WorldThemeId) => void, setNotify: (on: boolean) => void, approvers: ApproverActions, browser: BrowserActions): void {
   panel.textContent = ''
   const stale = isStale(s)
   const { reachable, total } = islandCounts(s)
@@ -184,7 +184,7 @@ export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: stri
     ),
   )
 
-  const appr = approversSection(s, approvers, keepStorage)
+  const appr = approversSection(s, approvers, browser)
   if (appr) panel.appendChild(appr)
 
   panel.appendChild(
