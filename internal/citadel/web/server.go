@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -61,6 +62,12 @@ type Server struct {
 }
 
 // New builds a server from cfg. Call Run or Serve to start it.
+func init() {
+	// The web app's manifest. Go doesn't know the extension, and a browser
+	// reads a manifest served as text only grudgingly, if at all.
+	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
+}
+
 func New(cfg Config) *Server {
 	s := &Server{cfg: cfg, hub: newHub()}
 	mux := http.NewServeMux()

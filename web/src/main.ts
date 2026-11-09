@@ -32,6 +32,7 @@ import { api } from './signin'
 import { approverActions, canSign, keepThisBrowser, loadThisBrowser, signAnswer, signChange, signFor, signPrompt, signRepoRules, signSessionRules, signTrust } from './approvers'
 import { pullRequestHash, textHash } from './decision'
 import { browserNotices, Notifier, notifySupport } from './notify'
+import { installApp, watchInstall } from './install'
 import { renderPhone, type PhoneActions } from './phone'
 import { inboxPath, parseInboxPath, type InboxRoute } from './route'
 
@@ -286,7 +287,7 @@ function panelDeps(s: State, stale: boolean): unknown[] {
     case 'island':
       return ['island', island, stale, stale ? s.lastContact : 0, ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
     default:
-      return ['world', s.server, s.world, s.link, s.worldTheme, s.notify, notifySupport() === 'ok' ? Notification.permission : '', waitingCount(s), s.approvers, s.me, s.persisted, s.invite, s.revoking, s.approverError, s.invite ? Date.now() > Date.parse(s.invite.expires) : false, ...islandList(s)]
+      return ['world', s.server, s.world, s.link, s.worldTheme, s.notify, s.install, notifySupport() === 'ok' ? Notification.permission : '', waitingCount(s), s.approvers, s.me, s.persisted, s.invite, s.revoking, s.approverError, s.invite ? Date.now() > Date.parse(s.invite.expires) : false, ...islandList(s)]
   }
 }
 
@@ -362,7 +363,7 @@ function renderPanelContent(s: State, stale: boolean): void {
       }
       break
   }
-  renderWorldPanel(panelEl, s, nav.select, (id) => store.setWorldTheme(id), (on) => void turnNotifications(on), approverActs, () => void keepThisBrowser(store))
+  renderWorldPanel(panelEl, s, nav.select, (id) => store.setWorldTheme(id), (on) => void turnNotifications(on), approverActs, browserActs)
 }
 
 /** Opens a conversation in the inbox, as clicking its notification does. */
@@ -431,6 +432,18 @@ const phoneActions: PhoneActions = {
   decline: (x, q) => inboxActions.decline(x, q).then(thenBack),
   go,
   back,
+}
+
+// The browser's offer to install the citadel as an app, and the button that takes it up.
+watchInstall((install) => store.update({ install }))
+const browserActs = {
+  keep: () => void keepThisBrowser(store),
+  install: () =>
+    void installApp().then((installed) => {
+      // Installing says so through the browser's own event. Declined, the
+      // offer is spent until the browser makes another.
+      if (!installed) store.update({ install: 'no' })
+    }),
 }
 
 const notifier = new Notifier(browserNotices(() => store.state.notify), (route) => (store.state.phone ? go(route) : openConversation(route.session ?? '')))

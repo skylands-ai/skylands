@@ -170,6 +170,17 @@ browser at once. Until the world is set up there's no approver to sign in
 as, and the citadel lets anyone who reaches it in, so set it up before you
 let others reach it.
 
+In Chrome, Edge, and other browsers built on Chromium, the Approvers
+section offers "Install as an app". Installed, Skylands opens in its own
+window, like the other apps on the computer, and approves with the same
+key as the browser it was installed from; the browser is also more likely
+to keep that key for good. Safari isn't offered it: an app it installs,
+with Add to Dock on a Mac or Add to Home Screen on an iPhone, keeps its
+storage apart from Safari's, so it would start without the key.
+Installing needs the page opened over HTTPS, or at `localhost` or
+`127.0.0.1`. When the citadel can't be reached, the app shows a page
+saying so.
+
 ### Open the world on your phone
 
 A phone can't open the address a laptop reaches the citadel at, such as

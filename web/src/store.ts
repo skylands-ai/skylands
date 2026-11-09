@@ -1,5 +1,6 @@
 import type { StoredApprover } from './approver'
 import type { ApproverInfo, Island, Repo, ServerInfo, Session, TokenUsage, WorldInfo } from './protocol'
+import type { InstallState } from './install'
 import type { InboxRoute } from './route'
 import { isWorldTheme, type WorldThemeId } from './worldthemes'
 
@@ -75,6 +76,8 @@ export interface State extends Nav {
   phone: boolean
   /** What the phone's view shows, from the page's address. */
   route: InboxRoute
+  /** Whether the citadel runs here as an installed app, or can be installed. */
+  install: InstallState
 }
 
 const VIEWED_KEY = 'skylands.viewed'
@@ -129,7 +132,7 @@ type Listener = (s: State) => void
 
 /** One place for everything the page renders from. Every change notifies every listener. */
 export class Store {
-  state: State = { link: 'connecting', server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), inbox: null, inboxFilter: loadFilter(), worldTheme: loadWorldTheme(), notify: loadNotify(), phone: false, route: {} }
+  state: State = { link: 'connecting', server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), inbox: null, inboxFilter: loadFilter(), worldTheme: loadWorldTheme(), notify: loadNotify(), phone: false, route: {}, install: 'no' }
   private listeners: Listener[] = []
 
   subscribe(fn: Listener): void {

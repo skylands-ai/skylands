@@ -1,0 +1,17 @@
+{
+  "id": "/",
+  "name": "Skylands",
+  "short_name": "Skylands",
+  "description": "Watch and approve what coding agents do across your machines.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#E6EDF4",
+  "theme_color": "#FFFFFF",
+  "icons": [
+    { "src": "/icons/skylands-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/skylands-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/skylands-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/skylands.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
