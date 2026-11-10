@@ -2,18 +2,19 @@
   "name": "skylands-docs",
   "private": true,
   "type": "module",
-  "version": "0.0.0",
+  "version": "0.0.4",
   "description": "The Skylands documentation site, docs.skylands.ai. Built with Starlight into dist/ and published to GitHub Pages.",
   "engines": {
     "node": ">=22.23.4"
   },
   "scripts": {
-    "dev": "astro dev",
+    "dev": "astro dev --force",
     "build": "astro build",
     "preview": "astro preview",
     "astro": "astro"
   },
   "dependencies": {
+    "@astrojs/markdown-remark": "^7.3.6",
     "@astrojs/starlight": "^0.42.9",
     "@fontsource/barlow": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
