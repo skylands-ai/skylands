@@ -48,8 +48,11 @@ done
 [[ -n $up ]] || fail "devworld did not come up within 30 seconds"
 cat "$dir/status"
 
-page=$(curl -fsS "http://$web/")
-script=$(grep -o 'src="/assets/index-[^"]*\.js"' <<<"$page" | head -1 | cut -d'"' -f2) ||
+# A world that isn't set up sends / to the setup page, which a binary
+# without the client answers with a 404. Each page's script is named for
+# its Vite input, such as /assets/setup-<hash>.js, so match any of them.
+page=$(curl -fsSL "http://$web/") || fail "/ does not serve the built web client"
+script=$(grep -o 'src="/assets/[^"]*\.js"' <<<"$page" | head -1 | cut -d'"' -f2) ||
   fail "/ does not serve the built web client"
 curl -fsS -o /dev/null "http://$web$script" || fail "the client's script $script does not load"
 
