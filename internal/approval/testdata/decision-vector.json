@@ -201,6 +201,24 @@
         "approver": "UASVQ5GGLE7MCRC3RD6ZWNTBKVQT2T4MM72OTFAASHYZJBB5VZWFJQNI",
         "sig": "43VnwfXWYVJQJ0K4LjFHrjrkcEZmMkf2Qt4AWQ5wezmBOwrMbvpSN9AIuNTd2IL0UuwQa1dmUKbC3OMXn2GWAA"
       }
+    },
+    {
+      "decision": {
+        "v": 1,
+        "kind": "change",
+        "world": "ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O",
+        "host": "workstation",
+        "session": "Ses5ion-éh",
+        "revision": 6,
+        "action": "remove",
+        "text": ""
+      },
+      "canonical": "{\"action\":\"remove\",\"host\":\"workstation\",\"kind\":\"change\",\"revision\":6,\"session\":\"Ses5ion-éh\",\"text\":\"\",\"v\":1,\"world\":\"ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O\"}",
+      "digest": "140e70a255c7ee1fa363887e57f75687f8ae08c83cd5de06637bdb83e400b6fb",
+      "signature": {
+        "approver": "UASVQ5GGLE7MCRC3RD6ZWNTBKVQT2T4MM72OTFAASHYZJBB5VZWFJQNI",
+        "sig": "IANypuR6SEt23tntOEHKfaWyUUQr3Lm2_NwGcYI8-G4tcOe7NHfkNEk3Lv1rcxLbuR6DTE5MVv8RWxy4ht7dDg"
+      }
     }
   ],
   "form": {

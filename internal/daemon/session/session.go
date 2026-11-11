@@ -82,13 +82,15 @@ type Session struct {
 	InCheckout bool
 	// Commit is the latest commit made through Skylands, and Commits counts
 	// them. MergedInto and MergedCommit record the latest merge, and
-	// PullRequest the pull request opened from the branch.
+	// PullRequest the pull request opened from the branch. BranchKept says
+	// the branch stayed when the worktree was removed.
 	Commit          string
 	Commits         int
 	MergedInto      string
 	MergedCommit    string
 	PullRequest     string
 	WorktreeRemoved bool
+	BranchKept      bool
 	Status          Status
 	StopReason      string
 	Error           string
@@ -208,6 +210,7 @@ type Decided struct {
 // Repos finds registered repositories, which the Host aggregate provides.
 type Repos interface {
 	Repo(id string) (host.Repo, bool)
+	Repos() []host.Repo
 }
 
 // Config describes where a manager keeps worktrees and transcripts and what
@@ -1713,7 +1716,7 @@ func (m *Manager) apply(ev v1.Event) {
 		var d v1.WorktreeRemoved
 		if ev.Decode(&d) == nil {
 			if s := touch(d.SessionID); s != nil {
-				s.WorktreeRemoved = true
+				s.WorktreeRemoved, s.BranchKept = true, !d.BranchDeleted
 				if ev.CommandID != "" {
 					m.handled[ev.CommandID] = d.SessionID
 				}

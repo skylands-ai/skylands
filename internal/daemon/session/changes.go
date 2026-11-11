@@ -226,11 +226,40 @@ func (m *Manager) OpenPullRequest(ctx context.Context, cmd v1.OpenPullRequest) (
 func (m *Manager) Remove(ctx context.Context, commandID, id string, force bool) (s Session, branchDeleted bool, err error) {
 	m.cmdMu.Lock()
 	defer m.cmdMu.Unlock()
+	s, handled, err := m.forRemoval(commandID, id)
+	if err != nil || handled {
+		return s, s.WorktreeRemoved && !s.BranchKept, err
+	}
+	return m.remove(ctx, commandID, s, force, "", "")
+}
+
+// RemoveWorktree handles RemoveWorktree, a removal through the citadel:
+// Remove without force, signed by an approver over the session's
+// revision, which it doesn't move, since nothing can be done with the
+// worktree once it is gone.
+func (m *Manager) RemoveWorktree(ctx context.Context, cmd v1.RemoveWorktree) (s Session, branchDeleted bool, err error) {
+	m.cmdMu.Lock()
+	defer m.cmdMu.Unlock()
+	s, handled, err := m.forRemoval(cmd.ID, cmd.SessionID)
+	if err != nil || handled {
+		return s, s.WorktreeRemoved && !s.BranchKept, err
+	}
+	approver, signature, err := m.signedChange(ctx, s, cmd.Revision, cmd.Signature, approval.ChangeRemove, "")
+	if err != nil {
+		return s, false, err
+	}
+	return m.remove(ctx, cmd.ID, s, false, approver, signature)
+}
+
+// forRemoval finds the session a removal is for, which must be over and
+// have a worktree of its own. handled says the command id is in the
+// history already, or the worktree is gone, so there is nothing to do.
+func (m *Manager) forRemoval(commandID, id string) (s Session, handled bool, err error) {
 	m.mu.Lock()
-	if handled, ok := m.handled[commandID]; ok && commandID != "" {
-		s := *m.sessions[handled]
+	if done, ok := m.handled[commandID]; ok && commandID != "" {
+		s := *m.sessions[done]
 		m.mu.Unlock()
-		return s, false, nil
+		return s, true, nil
 	}
 	cur, ok := m.sessions[id]
 	if !ok {
@@ -239,20 +268,32 @@ func (m *Manager) Remove(ctx context.Context, commandID, id string, force bool) 
 	}
 	s = *cur
 	m.mu.Unlock()
-	if s.Status == StatusRunning || s.Status == StatusIdle {
+	switch {
+	case s.Status == StatusRunning || s.Status == StatusIdle:
 		return s, false, ErrOpen
-	}
-	if s.InCheckout {
+	case s.InCheckout:
 		return s, false, ErrInCheckout
 	}
-	if s.WorktreeRemoved {
-		return s, false, nil
-	}
+	return s, s.WorktreeRemoved, nil
+}
+
+// remove deletes the worktree and branch of a session forRemoval found,
+// and records who asked when the citadel did. The caller holds cmdMu.
+func (m *Manager) remove(ctx context.Context, commandID string, s Session, force bool, approver, signature string) (Session, bool, error) {
 	repo, ok := m.cfg.Repos.Repo(s.RepoID)
 	if !ok {
 		return s, false, fmt.Errorf("%w: %s", ErrUnknownRepo, s.RepoID)
 	}
 	if _, err := os.Stat(s.Worktree); err == nil {
+		if !force {
+			changed, err := changedFiles(ctx, s.Worktree)
+			if err != nil {
+				return s, false, err
+			}
+			if len(changed) > 0 {
+				return s, false, ErrUncommitted
+			}
+		}
 		args := []string{"worktree", "remove"}
 		if force {
 			args = append(args, "--force")
@@ -269,8 +310,8 @@ func (m *Manager) Remove(ctx context.Context, commandID, id string, force bool) 
 		flag = "-D"
 	}
 	_, branchErr := git(ctx, repo.Path, "branch", flag, s.Branch)
-	branchDeleted = branchErr == nil
-	if err := m.record(ctx, s.ID, commandID, v1.EventWorktreeRemoved, v1.WorktreeRemoved{SessionID: s.ID, BranchDeleted: branchDeleted}); err != nil {
+	branchDeleted := branchErr == nil
+	if err := m.record(ctx, s.ID, commandID, v1.EventWorktreeRemoved, v1.WorktreeRemoved{SessionID: s.ID, BranchDeleted: branchDeleted, Approver: approver, Signature: signature}); err != nil {
 		return Session{}, false, err
 	}
 	if branchDeleted {
@@ -294,7 +335,8 @@ type Pruned struct {
 
 // Prune removes the worktrees and branches that finished sessions left
 // behind, keeping any with uncommitted changes or unmerged commits, and
-// reports each one.
+// reports each one. Then it drops git's records of worktrees whose
+// folders are gone, as PruneWorktreeRecords does.
 func (m *Manager) Prune(ctx context.Context) []Pruned {
 	var out []Pruned
 	for _, s := range m.List() {
@@ -308,7 +350,27 @@ func (m *Manager) Prune(ctx context.Context) []Pruned {
 		}
 		out = append(out, Pruned{Session: after, Removed: true, BranchDeleted: branchDeleted})
 	}
+	m.PruneWorktreeRecords(ctx)
 	return out
+}
+
+// PruneWorktreeRecords runs git worktree prune in every registered
+// repository, which drops the records of worktrees whose folders are gone,
+// such as those of a throwaway world whose data directory was deleted.
+// git keeps every worktree whose folder is still there, so nothing any
+// daemon is using goes. The branches such worktrees had are left alone.
+func (m *Manager) PruneWorktreeRecords(ctx context.Context) {
+	for _, r := range m.cfg.Repos.Repos() {
+		before, _ := git(ctx, r.Path, "worktree", "list", "--porcelain")
+		if _, err := git(ctx, r.Path, "worktree", "prune"); err != nil {
+			slog.Warn("session: could not prune worktree records", "repo", r.Name, "err", err)
+			continue
+		}
+		after, _ := git(ctx, r.Path, "worktree", "list", "--porcelain")
+		if n := strings.Count(before, "\nworktree ") - strings.Count(after, "\nworktree "); n > 0 {
+			slog.Info("session: pruned the records of worktrees whose folders are gone", "repo", r.Name, "records", n)
+		}
+	}
 }
 
 // signedChange checks a signed commit, merge, or pull request: its

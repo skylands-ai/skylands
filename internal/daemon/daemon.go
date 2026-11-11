@@ -201,6 +201,9 @@ func Run(ctx context.Context, cfg Config) error {
 		return err
 	}
 	defer sessions.Wait()
+	// Worktrees deleted by hand, or with a throwaway world's data
+	// directory, leave records in their repositories until git is told.
+	sessions.PruneWorktreeRecords(ctx)
 	if cfg.StopWhenIdle != nil {
 		go func() {
 			if whenIdle(ctx, cfg.StopWhenIdle, func() bool { return working(sessions) }, idlePoll) {
@@ -606,6 +609,19 @@ func (c *commands) handle(ctx context.Context, msg *nats.Msg) {
 			return
 		}
 		c.replyResult(msg, map[string]any{"sessionId": s.ID, "pullRequest": s.PullRequest})
+	case v1.CommandRemoveWorktree:
+		var cmd v1.RemoveWorktree
+		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+			c.reply(msg, v1.Reply{Error: "bad RemoveWorktree: " + err.Error()})
+			return
+		}
+		cmd.SessionID = sessionID
+		s, branchDeleted, err := c.sessions.RemoveWorktree(ctx, cmd)
+		if err != nil {
+			c.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		c.replyResult(msg, map[string]any{"sessionId": s.ID, "worktreeRemoved": s.WorktreeRemoved, "branchDeleted": branchDeleted})
 	default:
 		c.reply(msg, v1.Reply{Error: "unknown command " + commandType})
 	}

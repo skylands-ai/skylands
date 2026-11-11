@@ -15,6 +15,7 @@ import { renderAgentPanel, type AgentActions } from './panels/agent'
 import { renderFilePanel } from './panels/file'
 import { refreshTimes } from './panels/parts'
 import { renderIslandPanel } from './panels/island'
+import { type PruneOptions, pruneVersion } from './panels/prune'
 import { renderTerracePanel } from './panels/terrace'
 import { renderWorldPanel } from './panels/world'
 import { agentLabel, citadelLabelStatus, clockText, durationText, islandStatus, isStale, secondsSince } from './status'
@@ -200,6 +201,12 @@ const inboxActions: InboxActions = {
     if (signed.error) return Promise.resolve(signed.error)
     return sessionCommand(x.host, x.id, 'pull-request', { revision, signature: signed.signature })
   },
+  removeWorktree: (x) => {
+    const revision = x.revision ?? 0
+    const signed = signChange(store.state, x, 'remove', '', revision)
+    if (signed.error) return Promise.resolve(signed.error)
+    return sessionCommand(x.host, x.id, 'remove-worktree', { revision, signature: signed.signature })
+  },
   setSessionRules: (x, rules) => {
     const signed = signSessionRules(store.state, x, rules)
     if (typeof signed.signature === 'string') return Promise.resolve(signed.signature)
@@ -207,6 +214,11 @@ const inboxActions: InboxActions = {
   },
   setRepoRules: (host, repoId, rules) => setRepoRules(host, repoId, rules),
   refresh: () => store.touch(),
+}
+
+/** How a panel removes what ended sessions left behind on its host or repository. */
+function pruneOptions(s: State, scope: string, down: boolean): PruneOptions {
+  return { scope, canSign: canSign(s), down, remove: (x) => inboxActions.removeWorktree(x), redraw: () => store.touch() }
 }
 
 /** Replaces a repository's rules, signed over the revision this browser shows. */
@@ -283,9 +295,9 @@ function panelDeps(s: State, stale: boolean): unknown[] {
     case 'file':
       return ['file', repo, island, s.file]
     case 'terrace':
-      return ['terrace', repo, island, stale, s.viewed, s.approvers, s.me, s.world, ...(repo ? sessionsOn(s, repo.id) : [])]
+      return ['terrace', repo, island, stale, s.viewed, s.approvers, s.me, s.world, pruneVersion(), ...(repo ? sessionsOn(s, repo.id) : [])]
     case 'island':
-      return ['island', island, stale, stale ? s.lastContact : 0, ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
+      return ['island', island, stale, stale ? s.lastContact : 0, s.approvers, s.me, s.world, pruneVersion(), ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
     default:
       return ['world', s.server, s.world, s.link, s.worldTheme, s.notify, s.install, notifySupport() === 'ok' ? Notification.permission : '', waitingCount(s), s.approvers, s.me, s.persisted, s.invite, s.revoking, s.approverError, s.invite ? Date.now() > Date.parse(s.invite.expires) : false, ...islandList(s)]
   }
@@ -351,6 +363,7 @@ function renderPanelContent(s: State, stale: boolean): void {
           (rules) => setRepoRules(island.host, repo.id, rules),
           canSign(s),
           lapsedText(s, repo.rulesApprover, repo.rulesBy),
+          pruneOptions(s, `${island.host}/${repo.id}`, stale || !island.reachable),
         )
         return
       }
@@ -358,7 +371,7 @@ function renderPanelContent(s: State, stale: boolean): void {
     case 'island':
       if (island) {
         const sessions = Object.values(s.sessions).filter((x) => x.host === island.host)
-        renderIslandPanel(panelEl, island, reposOn(s, island.host), stale, s.lastContact, sessions, (terrace) => nav.land(island.host, terrace))
+        renderIslandPanel(panelEl, island, reposOn(s, island.host), stale, s.lastContact, sessions, (terrace) => nav.land(island.host, terrace), pruneOptions(s, island.host, stale || !island.reachable))
         return
       }
       break

@@ -108,7 +108,7 @@ export interface PromptDecision {
   prompt: string
 }
 
-/** A commit, merge, or pull request from a session's changes, at its revision. */
+/** A commit, merge, pull request, or removal of a session's worktree, at its revision. */
 export interface ChangeDecision {
   v: number
   kind: 'change'
@@ -116,8 +116,8 @@ export interface ChangeDecision {
   host: string
   session: string
   revision: number
-  action: 'commit' | 'merge' | 'pull-request'
-  /** textHash of a commit's message, pullRequestHash of a pull request's title and body, and "" for a merge. */
+  action: 'commit' | 'merge' | 'pull-request' | 'remove'
+  /** textHash of a commit's message, pullRequestHash of a pull request's title and body, and "" for a merge or a removal. */
   text: string
 }
 

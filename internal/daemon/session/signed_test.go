@@ -123,6 +123,32 @@ func TestPromptsAndChangesMustBeSigned(t *testing.T) {
 		t.Errorf("a pull request signed over another title: err = %v", err)
 	}
 
+	// Once the session is over, removing its worktree is signed too, over
+	// the session's revision, which ending it doesn't move.
+	if _, err := m.Stop(f.ctx, v1.StopAgent{ID: "c9", SessionID: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, "s1", StatusEnded)
+	ended, _ := m.Get("s1")
+	for _, tc := range []struct {
+		name     string
+		revision int
+		sig      *v1.DecisionSignature
+		want     error
+	}{
+		{"unsigned", ended.Revision, nil, approval.ErrUnsigned},
+		{"at an old revision", ended.Revision - 1, sign(changeAs(ended.Revision-1, approval.ChangeRemove, "")), ErrStale},
+		{"signed as a merge", ended.Revision, sign(changeAs(ended.Revision, approval.ChangeMerge, "")), approval.ErrBadSignature},
+	} {
+		if _, _, err := m.RemoveWorktree(f.ctx, v1.RemoveWorktree{ID: "r-" + tc.name, SessionID: "s1", Revision: tc.revision, Signature: tc.sig}); !errors.Is(err, tc.want) {
+			t.Errorf("a removal %s: err = %v, want %v", tc.name, err, tc.want)
+		}
+	}
+	removed, branchDeleted, err := m.RemoveWorktree(f.ctx, v1.RemoveWorktree{ID: "r1", SessionID: "s1", Revision: ended.Revision, Signature: sign(changeAs(ended.Revision, approval.ChangeRemove, ""))})
+	if err != nil || !removed.WorktreeRemoved || !branchDeleted {
+		t.Fatalf("RemoveWorktree = %+v, %v, %v; want the merged branch gone with the worktree", removed, branchDeleted, err)
+	}
+
 	// Each records who signed it.
 	signedBy := map[string]int{}
 	if err := f.store.Replay(f.ctx, v1.IslandStreamName("ws"), []string{v1.SessionEventFilter("ws")}, func(_ uint64, ev v1.Event) error {
@@ -138,10 +164,7 @@ func TestPromptsAndChangesMustBeSigned(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if signedBy[v1.EventPromptSent] != 2 || signedBy[v1.EventChangesCommitted] != 1 || signedBy[v1.EventChangesMerged] != 1 {
+	if signedBy[v1.EventPromptSent] != 2 || signedBy[v1.EventChangesCommitted] != 1 || signedBy[v1.EventChangesMerged] != 1 || signedBy[v1.EventWorktreeRemoved] != 1 {
 		t.Errorf("events signed by the approver = %v", signedBy)
-	}
-	if _, err := m.Stop(f.ctx, v1.StopAgent{ID: "c9", SessionID: "s1"}); err != nil {
-		t.Fatal(err)
 	}
 }
