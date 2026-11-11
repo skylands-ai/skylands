@@ -1,0 +1,27 @@
+name: Feature request
+description: Propose something Skylands doesn't do yet, or a change to how it works.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Changes to the event types in `api/v1` or the NATS subjects need agreement here before anyone starts on them.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you're trying to do, and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+      description: How it would work, from the point of view of someone using it.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Other approaches you considered, and what you do now instead.

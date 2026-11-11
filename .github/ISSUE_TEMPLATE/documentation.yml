@@ -1,0 +1,24 @@
+name: Documentation problem
+description: Something on docs.skylands.ai or in the repository's docs is wrong, missing, or unclear.
+labels: ["documentation"]
+body:
+  - type: input
+    id: page
+    attributes:
+      label: Page
+      description: The page's address, or the file in the repository.
+      placeholder: https://docs.skylands.ai/getting-started/installation/
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's wrong
+      description: What the page says, and what happened or what you expected instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `skylands version`, if the problem involves running a command.
