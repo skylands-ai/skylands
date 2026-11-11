@@ -2,15 +2,18 @@ import { el } from './dom'
 import { approvalCard, questionCard, type InboxActions } from './inbox'
 import { who } from './notify'
 import { timeNode } from './panels/parts'
+import { notifySupport } from './notify'
+import { notifySwitch } from './panels/world'
 import { inputsVersion } from './requestinput'
 import { inboxPath, type InboxRoute } from './route'
 import { isStale, sessionLabel } from './status'
 import { pendingItems, type PendingItem, type State } from './store'
 
-/** What the phone view does beyond answering: going to another route, and back to the list. */
+/** What the phone view does beyond answering: going to another route, back to the list, and turning notifications on or off. */
 export interface PhoneActions extends InboxActions {
   go(route: InboxRoute): void
   back(): void
+  setNotify(on: boolean): void
 }
 
 function routeOf(i: PendingItem): InboxRoute {
@@ -66,6 +69,7 @@ function list(s: State, route: InboxRoute, actions: PhoneActions): HTMLElement[]
     out.push(el('p', { class: 'phone-empty', text: route.session ? 'Nothing in this conversation is waiting on you.' : 'Nothing is waiting on you. When an agent asks for approval or has a question, it shows here.' }))
   }
   out.push(el('div', { class: 'phone-cards' }, items.map((i) => card(s, i, actions))))
+  if (!route.session) out.push(el('div', { class: 'phone-notify' }, [notifySwitch(s, actions.setNotify)]))
   return out
 }
 
@@ -105,7 +109,10 @@ export function renderPhone(root: HTMLElement, s: State, route: InboxRoute, acti
   // One item's view is rebuilt only for news of its own session, so a
   // half-filled question survives other sessions' news; the count on its
   // way back is kept up to date in place.
-  const deps = route.item ? ['item', route, x, x ? s.repos[x.repoId] : undefined, s.approvers, s.me, s.world, s.link, inputsVersion()] : ['list', route, s.sessions, s.repos, s.approvers, s.me, s.link]
+  const permission = notifySupport() === 'ok' ? Notification.permission : ''
+  const deps = route.item
+    ? ['item', route, x, x ? s.repos[x.repoId] : undefined, s.approvers, s.me, s.world, s.link, inputsVersion()]
+    : ['list', route, s.sessions, s.repos, s.approvers, s.me, s.link, s.world, s.notify, s.push, s.pushError, permission]
   const back = root.querySelector<HTMLElement>('.phone-back')
   if (back) back.textContent = backText(s)
   if (lastDeps && lastDeps.length === deps.length && lastDeps.every((d, i) => d === deps[i])) return

@@ -25,6 +25,14 @@ export function connectToCitadel(store: Store, onLive: (host: string, id: string
     ws.send(JSON.stringify(watched ? { type: 'watch', ...watched } : { type: 'unwatch' }))
   }
 
+  // Whether the page is in sight, which holds the citadel's pushes to this
+  // browser for a moment, in case they're answered here.
+  const tellSight = (): void => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    ws.send(JSON.stringify({ type: document.visibilityState === 'visible' ? 'visible' : 'hidden' }))
+  }
+  document.addEventListener('visibilitychange', tellSight)
+
   const retry = (): void => {
     store.update({ link: 'lost' })
     setTimeout(() => void connect(), retryDelay)
@@ -45,6 +53,7 @@ export function connectToCitadel(store: Store, onLive: (host: string, id: string
       store.update({ link: 'connected', lastContact: Date.now() })
       // A reconnection picks the watch back up.
       if (watched) tell()
+      tellSight()
     })
     ws.addEventListener('message', (ev: MessageEvent<string>) => {
       const m = JSON.parse(ev.data) as Message

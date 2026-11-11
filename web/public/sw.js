@@ -1,5 +1,6 @@
 // The citadel's service worker. Chrome offers to install a page as an app
-// only when a service worker with a fetch handler controls it.
+// only when a service worker with a fetch handler controls it, and the
+// citadel's pushes arrive here.
 //
 // It caches nothing: every request goes to the citadel, so an upgraded
 // citadel is never served from a stale copy. The API, the assets, and the
@@ -32,5 +33,56 @@ self.addEventListener('fetch', (event) => {
   if (event.request.mode !== 'navigate') return
   event.respondWith(
     fetch(event.request).catch(() => new Response(UNREACHABLE, { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } })),
+  )
+})
+
+// A push names who is waiting and where, and links to the item in the
+// inbox. Its tag is the page's own notification's, so each replaces the
+// other, and a second push for the same item replaces the first quietly.
+// Every push shows a notification, as browsers require.
+self.addEventListener('push', (event) => {
+  let n = {}
+  try {
+    n = event.data ? event.data.json() : {}
+  } catch {
+    // Not JSON: show the generic notification below.
+  }
+  event.waitUntil(
+    self.registration.showNotification(typeof n.title === 'string' ? n.title : 'Something in Skylands is waiting on you', {
+      body: typeof n.body === 'string' ? n.body : '',
+      tag: typeof n.tag === 'string' ? n.tag : undefined,
+      icon: '/icons/skylands-192.png',
+      data: { url: sameOrigin(n.url) },
+    }),
+  )
+})
+
+// The link a push opens: its own, on this citadel, or the inbox.
+function sameOrigin(url) {
+  try {
+    const u = new URL(url, self.location.origin)
+    if (u.origin === self.location.origin) return u.href
+  } catch {
+    // Fall through.
+  }
+  return new URL('/inbox', self.location.origin).href
+}
+
+// Clicking a notification opens its item: in a page already open here,
+// which moves there without loading again, or in a new one.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const url = sameOrigin(event.notification.data && event.notification.data.url)
+  event.waitUntil(
+    (async () => {
+      const pages = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+      const page = pages.find((c) => new URL(c.url).origin === self.location.origin)
+      if (page) {
+        await page.focus()
+        page.postMessage({ type: 'open', url })
+        return
+      }
+      await self.clients.openWindow(url)
+    })(),
   )
 })

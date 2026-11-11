@@ -26,6 +26,8 @@ export interface WorldInfo {
   leafUrl?: string
   /** The address people open the citadel at, when it was given one with --url. */
   url?: string
+  /** The world's push key, which a browser subscribes to push notifications with, while this citadel sends them. */
+  pushKey?: string
   /** NATS settings the world needs that are missing. */
   problems?: string[]
   natsSettingsUrl?: string

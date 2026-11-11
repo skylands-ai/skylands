@@ -48,6 +48,10 @@ type Config struct {
 	// SignedIn, if set, says who a WebSocket request signed in as, which
 	// Drop is later asked about, or the status and reason to refuse it with.
 	SignedIn func(r *http.Request) (who string, status int, why string)
+	// InSight, if set, is told when a browser signed in as who says its
+	// page is in sight, and the function it returns is called when the page
+	// is hidden or the WebSocket closes.
+	InSight func(who string) (gone func())
 }
 
 // StatusSignIn closes a browser's WebSocket when what it signed in as no
@@ -166,6 +170,22 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		unwatch = stop
 	}
 	defer setWatch(nil)
+	var (
+		sightMu sync.Mutex
+		unsight func()
+	)
+	setSight := func(visible bool) {
+		sightMu.Lock()
+		defer sightMu.Unlock()
+		switch {
+		case visible && unsight == nil && s.cfg.InSight != nil:
+			unsight = s.cfg.InSight(who)
+		case !visible && unsight != nil:
+			unsight()
+			unsight = nil
+		}
+	}
+	defer setSight(false)
 	go func() {
 		defer cancel()
 		for {
@@ -195,6 +215,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				setWatch(stop)
 			case "unwatch":
 				setWatch(nil)
+			case "visible", "hidden":
+				setSight(in.Type == "visible")
 			}
 		}
 	}()

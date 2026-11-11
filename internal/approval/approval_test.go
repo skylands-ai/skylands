@@ -70,3 +70,33 @@ func TestOpenOwnerApprover(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenPushSubscription(t *testing.T) {
+	owner, approver, ownerPub, approverPub := keys(t)
+	sub := v1.PushSubscription{Type: "push", World: ownerPub, Origin: "https://skylands.example", Endpoint: "https://push.example/abc",
+		P256dh: "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4", Auth: "BTBZMqHH6r4Tts7J_aSIgg", Created: Now()}
+	good, _ := Sign(approver, sub)
+	if p, err := OpenPushSubscription(good, ownerPub); err != nil || p.Endpoint != sub.Endpoint || good.Signer != approverPub {
+		t.Fatalf("OpenPushSubscription = %+v, %v", p, err)
+	}
+
+	byOwner, _ := Sign(owner, sub)
+	_, _, otherPub, _ := keys(t)
+	forOther := sub
+	forOther.World = otherPub
+	otherWorld, _ := Sign(approver, forOther)
+	plain := sub
+	plain.Endpoint = "http://push.example/abc"
+	notHTTPS, _ := Sign(approver, plain)
+	noKeys := sub
+	noKeys.P256dh = ""
+	keyless, _ := Sign(approver, noKeys)
+	wrongType := sub
+	wrongType.Type = "signin"
+	typed, _ := Sign(approver, wrongType)
+	for name, s := range map[string]v1.Signed{"signed by the owner key": byOwner, "another world": otherWorld, "http endpoint": notHTTPS, "no p256dh key": keyless, "wrong type": typed} {
+		if _, err := OpenPushSubscription(s, ownerPub); err == nil {
+			t.Errorf("%s: OpenPushSubscription accepted it", name)
+		}
+	}
+}

@@ -491,6 +491,17 @@ func isActivity(eventType string) bool {
 	return false
 }
 
+// Get returns the session id, if the projection has it.
+func (p *Sessions) Get(id string) (Session, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s, ok := p.byID[id]
+	if !ok {
+		return Session{}, false
+	}
+	return cloneSession(s), true
+}
+
 // List returns every session, newest first.
 func (p *Sessions) List() []Session {
 	p.mu.Lock()

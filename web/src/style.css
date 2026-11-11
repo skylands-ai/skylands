@@ -377,6 +377,8 @@ button.row{ color:inherit; font:inherit; }
 .phone-back{ align-self:flex-start; padding:6px 0; font-size:15px; font-weight:600; color:var(--accent); text-decoration:none; }
 .phone-where{ font-size:13px; }
 .phone-empty{ margin:32px 8px; color:var(--muted); text-align:center; font-size:15px; }
+.phone-notify{ margin-top:auto; padding-top:12px; border-top:1px solid var(--line); }
+.phone-notify .btn{ min-height:40px; padding:0 18px; }
 .phone-stale{ padding:10px 12px; border-radius:8px; background:var(--surface-2); color:var(--warn); font-size:13px; }
 .phone-inbox .approval{ max-width:100%; }
 .phone-inbox .approval .btn{ min-height:44px; padding:0 16px; }

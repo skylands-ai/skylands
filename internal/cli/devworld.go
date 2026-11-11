@@ -34,6 +34,7 @@ type devworldOptions struct {
 	host       string
 	socketPath string
 	url        string
+	noPush     bool
 }
 
 func newDevworldUpCmd() *cobra.Command {
@@ -74,6 +75,7 @@ func devworldUpFlags(f *pflag.FlagSet, o *devworldOptions) {
 	f.StringVar(&o.dataDir, "data-dir", defaultDataDir(), "directory for the JetStream stores and daemon state")
 	f.StringVar(&o.httpAddr, "http", "127.0.0.1:8080", "address the web application listens on")
 	f.StringVar(&o.url, "url", "", "URL people open the citadel at, used in the links it prints, such as an HTTPS address in front of it (default http:// and --http)")
+	f.BoolVar(&o.noPush, "no-push", false, "don't send push notifications, for a citadel that mustn't call the browser vendors' push services (default: sent when --url is HTTPS)")
 	f.StringVar(&o.natsListen, "nats-listen", "127.0.0.1:4222", "address the embedded NATS server accepts clients on")
 	f.StringVar(&o.leafListen, "leaf-listen", "127.0.0.1:7422", "address the embedded NATS server accepts daemon leaf nodes on")
 	f.StringVar(&o.host, "host", daemon.DefaultHost(), "name of this machine's island")
@@ -127,6 +129,7 @@ func runDevworld(ctx context.Context, o devworldOptions, stderr io.Writer, stop 
 			HTTPAddr:  o.httpAddr,
 			PublicURL: o.url,
 			LeafURL:   srv.LeafURL(),
+			NoPush:    o.noPush,
 			OnSetupLink: func(link string) {
 				setupLink.Store(link)
 				showSetupLink(stderr, link)

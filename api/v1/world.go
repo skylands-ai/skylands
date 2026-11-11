@@ -88,6 +88,27 @@ type SignIn struct {
 	Expires string `json:"expires"`
 }
 
+// PushSubscription is the payload a browser signs with its approver key to
+// have the world's citadels push to it: the subscription its PushManager
+// made, and the citadel address it subscribed at, which a push's link
+// opens. Each subscription belongs to the approver that signed it, and
+// revoking the approver deletes it.
+type PushSubscription struct {
+	// Type is "push".
+	Type  string `json:"type"`
+	World string `json:"world"`
+	// Origin is the citadel's address, its --url, such as
+	// "https://skylands.example.com".
+	Origin string `json:"origin"`
+	// Endpoint is the push service's URL for this browser, and P256dh and
+	// Auth its keys, in unpadded base64url, as PushSubscription.toJSON
+	// gives them.
+	Endpoint string `json:"endpoint"`
+	P256dh   string `json:"p256dh"`
+	Auth     string `json:"auth"`
+	Created  string `json:"created"`
+}
+
 // ApproversSubjectPrefix is where a world's approver registry is stored,
 // each record on a subject of its own: ".approver.KEY" for an entry the
 // owner key signs, ".voucher.CLAIM" for a voucher, ".vouched.CLAIM" for

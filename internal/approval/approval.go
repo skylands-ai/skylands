@@ -11,6 +11,7 @@ import (
 	"github.com/nats-io/nkeys"
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
+	"github.com/skylands-ai/skylands/internal/webpush"
 )
 
 // Verify checks that a signed message was signed by its signer.
@@ -189,6 +190,31 @@ func OpenSignIn(s v1.Signed, owner string) (v1.SignIn, error) {
 		return in, errors.New("the sign-in is not signed by an approver key")
 	}
 	return in, nil
+}
+
+// OpenPushSubscription verifies a push subscription signed by an approver
+// key, for the world owner names. Whether its signer is an approver, and
+// whether its origin is the citadel's, are the citadel's to decide.
+func OpenPushSubscription(s v1.Signed, owner string) (v1.PushSubscription, error) {
+	var p v1.PushSubscription
+	if err := open(s, &p); err != nil {
+		return p, err
+	}
+	if p.Type != "push" {
+		return p, fmt.Errorf("a push subscription has type %q", p.Type)
+	}
+	if p.World != owner {
+		return p, errors.New("the push subscription is for another world")
+	}
+	if !nkeys.IsValidPublicUserKey(s.Signer) {
+		return p, errors.New("the push subscription is not signed by an approver key")
+	}
+	sub := webpush.Subscription{Endpoint: p.Endpoint}
+	sub.Keys.P256dh, sub.Keys.Auth = p.P256dh, p.Auth
+	if err := sub.Check(); err != nil {
+		return p, err
+	}
+	return p, nil
 }
 
 // open verifies s and decodes its payload into v.
