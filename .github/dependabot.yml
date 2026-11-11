@@ -14,6 +14,9 @@ updates:
     groups:
       go:
         patterns: ["*"]
+        # acp-sdk is a 0.x module whose minor releases change its API, and
+        # the daemon drives every agent through it, so it comes on its own.
+        exclude-patterns: ["github.com/spachava753/acp-sdk"]
         update-types: [minor, patch]
 
   - package-ecosystem: npm
