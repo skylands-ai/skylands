@@ -107,3 +107,37 @@ func TestLeafExtendsTheWorld(t *testing.T) {
 		}
 	}
 }
+
+// TestStoppingAServerStillStarting stops servers partway through starting:
+// with the start cancelled at staggered moments, which run shuts down
+// itself, and as soon as they're ready. nats-server isn't safe to shut down
+// while Start is still running, which go test -race reports.
+func TestStoppingAServerStillStarting(t *testing.T) {
+	world := freePort(t)
+	starts := map[string]func(ctx context.Context) (*Server, error){
+		"world": func(ctx context.Context) (*Server, error) {
+			return Start(ctx, Config{Name: "test", ClientAddr: "127.0.0.1:0", StoreDir: t.TempDir(), Domain: "testworld"})
+		},
+		"leaf": func(ctx context.Context) (*Server, error) {
+			return StartLeaf(ctx, LeafConfig{Name: "leaf", RemoteURL: "nats-leaf://" + world, StoreDir: t.TempDir(), Domain: "box"})
+		},
+	}
+	for name, start := range starts {
+		for i := range 20 {
+			ctx, cancel := context.WithCancel(context.Background())
+			go func() {
+				time.Sleep(time.Duration(i) * 250 * time.Microsecond)
+				cancel()
+			}()
+			if s, err := start(ctx); err == nil {
+				s.Shutdown()
+			}
+			cancel()
+		}
+		s, err := start(context.Background())
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		s.Shutdown()
+	}
+}
