@@ -473,15 +473,15 @@ prune keep a dirty worktree or an unmerged branch unless forced.
 
 ## The prototype
 
-The mock UI is `docs/Skylands world.html`: one file of about 2,400 lines,
-vanilla JavaScript in a single closure, three.js r128 loaded as a global from
-a CDN, Google Fonts, and hard-coded hosts, agents, and queue data.
-Reachability is already modeled the way the design describes. Each island has
-a drift value that eases toward one when its host is unreachable, and that
-value drives the crystal, the tether material, and the sparks.
+The mock UI was one HTML file of about 2,400 lines, since ported into `web/`
+and removed: vanilla JavaScript in a single closure, three.js r128 loaded as a
+global from a CDN, Google Fonts, and hard-coded hosts, agents, and queue data.
+It already modeled reachability the way the design describes. Each island had
+a drift value that eased toward one when its host was unreachable, and that
+value drove the crystal, the tether material, and the sparks.
 
-Two things it lacks for the MVP. Islands are built once from a fixed list, so
-there is no path for a host to appear or leave. And island positions are
+Two things it lacked for the MVP. Islands were built once from a fixed list, so
+there was no path for a host to appear or leave. And island positions were
 hand-placed rather than derived from the host.
 ## Milestones
 
