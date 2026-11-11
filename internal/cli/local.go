@@ -442,8 +442,10 @@ decision, allow, ask, or deny; a tool call kind, read, edit, delete, move,
 search, execute, think, fetch, other, or * for any; and an optional
 pattern: a command pattern for execute such as "go test *", a URL pattern
 for fetch, and a path pattern for the rest, where "worktree" means
-everything inside the session's worktree. The most specific matching rule
-wins, a deny beats an allow among equals, and no match asks a person. A
+everything inside the session's worktree. A deny is final: a call any
+deny rule matches is refused. Otherwise the most specific matching rule
+wins. Among equals, a session's own rule beats one copied from its
+repository, and then an ask beats an allow. No match asks a person. A
 session copies its repository's rules when it starts.`,
 	}
 	cmd.AddCommand(newRuleListCmd(), newRuleAddCmd(), newRuleRemoveCmd())
