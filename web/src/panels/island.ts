@@ -66,12 +66,12 @@ export function renderIslandPanel(
     panel.appendChild(
       factsBox([
         ['Link, as last seen', i.reachable ? 'Connected' : 'Unreachable'],
-        ['Daemon, as last reported', `skylands ${d.version}`],
+        ['Daemon, as last reported', d.version],
         ['Last seen by the citadel', timeNode(i.lastSeen)],
       ]),
     )
   } else if (i.reachable) {
-    const daemon = el('span', {}, [`skylands ${d.version}, `, timeNode(d.started, 'up')])
+    const daemon = el('span', {}, [`${d.version}, `, timeNode(d.started, 'up')])
     panel.appendChild(
       factsBox([
         ['Link', 'Connected'],
@@ -89,7 +89,7 @@ export function renderIslandPanel(
     panel.appendChild(
       factsBox([
         ['Last seen', timeNode(i.lastSeen)],
-        ['Daemon, as last reported', `skylands ${d.version}`],
+        ['Daemon, as last reported', d.version],
         ['First seen', timeNode(i.firstSeen)],
       ]),
     )

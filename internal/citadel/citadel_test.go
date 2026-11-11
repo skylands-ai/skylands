@@ -46,7 +46,7 @@ func TestRunServesWebAndTracksIslands(t *testing.T) {
 	runCtx, stop := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(runCtx, Config{NATSURL: srv.ClientURL(), HTTPAddr: addr, PollInterval: 200 * time.Millisecond, PollWindow: 100 * time.Millisecond})
+		done <- Run(runCtx, Config{Version: "v9.8.7", NATSURL: srv.ClientURL(), HTTPAddr: addr, PollInterval: 200 * time.Millisecond, PollWindow: 100 * time.Millisecond})
 	}()
 
 	// Wait for the web server to come up.
@@ -64,6 +64,9 @@ func TestRunServesWebAndTracksIslands(t *testing.T) {
 	}
 
 	waitChecked(t, "http://"+addr)
+	if w := getWorld(t, "http://"+addr); w.Version != "v9.8.7" {
+		t.Errorf("the world's description names version %q, want the citadel's, v9.8.7", w.Version)
+	}
 	c, _, err := websocket.Dial(ctx, "ws://"+addr+"/ws", nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
@@ -155,6 +158,21 @@ func TestRunServesWebAndTracksIslands(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("Run did not stop after cancel")
 	}
+}
+
+// getWorld reads the world's description from the citadel at base.
+func getWorld(t *testing.T, base string) web.WorldInfo {
+	t.Helper()
+	var w web.WorldInfo
+	resp, err := http.Get(base + "/api/world")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if err := json.NewDecoder(resp.Body).Decode(&w); err != nil {
+		t.Fatal(err)
+	}
+	return w
 }
 
 // waitChecked waits until the citadel at base knows whether the world is

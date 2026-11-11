@@ -29,6 +29,7 @@ server as an ordinary client. Any number of
 citadels can run against one world, and they are interchangeable.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg.Version = versionString()
 			cfg.OnSetupLink = func(link string) { showSetupLink(cmd.ErrOrStderr(), link) }
 			return citadel.Run(cmd.Context(), cfg)
 		},

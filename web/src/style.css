@@ -49,6 +49,8 @@ button:focus-visible,a:focus-visible{ outline:2px solid var(--accent); outline-o
 .app{ height:100%; display:flex; flex-direction:column; }
 .bar{ display:flex; flex-wrap:wrap; align-items:center; gap:10px 18px; padding:10px 16px; background:var(--surface); border-bottom:1px solid var(--line); }
 .brand{ display:flex; align-items:center; gap:8px; font-family:Sora,"Helvetica Neue",Arial,sans-serif; font-size:18px; font-weight:700; letter-spacing:-0.01em; }
+/* The citadel's version, beside the name in every view. */
+.brand .version{ max-width:14ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:Barlow,"Helvetica Neue",Arial,sans-serif; font-size:13px; font-weight:500; letter-spacing:0; color:var(--muted); }
 .crumbs{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .crumbs .sep{ color:var(--idle); }
 .btn{ display:inline-flex; align-items:center; gap:8px; min-height:44px; padding:0 14px; border-radius:8px; background:var(--surface-2); border:1px solid var(--line); font-weight:600; }
@@ -293,6 +295,7 @@ button.row{ color:inherit; font:inherit; }
 .setup .card{ width:100%; max-width:560px; padding:28px; border-radius:12px; background:var(--surface); border:1px solid var(--line); }
 .setup h1{ margin:0 0 8px; font-family:Sora,Barlow,sans-serif; font-size:22px; }
 .setup h2{ margin:20px 0 6px; font-size:15px; }
+.setup .version{ margin:24px 0 0; font-size:13px; color:var(--muted); }
 .setup p{ margin:8px 0; }
 .setup label{ display:block; margin:14px 0 4px; font-weight:600; }
 .setup input[type=text], .setup input[type=password]{ box-sizing:border-box; width:100%; min-height:40px; padding:0 10px; border-radius:8px; border:1px solid var(--line); background:var(--surface-2); color:var(--text); font:inherit; font-size:15px; }

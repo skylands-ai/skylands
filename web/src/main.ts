@@ -43,6 +43,7 @@ const labelsEl = byId<HTMLElement>('labels')
 const panelEl = byId<HTMLElement>('panel')
 const crumbsEl = byId<HTMLElement>('crumbs')
 const connectedEl = byId<HTMLElement>('connected')
+const versionEl = byId<HTMLElement>('version')
 const linkEl = byId<HTMLElement>('link')
 const veilEl = byId<HTMLElement>('veil')
 const veilMsgEl = byId<HTMLElement>('veilmsg')
@@ -56,6 +57,14 @@ const phoneEl = byId<HTMLElement>('phone')
 const store = new Store()
 const approverActs = approverActions(store)
 void loadThisBrowser(store)
+// The world's description needs no sign-in, so the header can name the
+// citadel's version before this browser signs in, and in one that can't.
+void fetch('/api/world')
+  .then((resp) => (resp.ok ? (resp.json() as Promise<{ version?: string }>) : null))
+  .then((w) => {
+    if (w?.version) store.update({ citadelVersion: w.version })
+  })
+  .catch(() => {})
 const bar = new CommandBar()
 const cache = new FetchCache(() => store.touch())
 const live = new LiveText()
@@ -472,7 +481,7 @@ function renderPhoneLayout(s: State): void {
   world?.setPaused(true)
   const n = pendingItems(s).length
   document.title = n ? `(${n}) Skylands` : 'Skylands'
-  renderHeader(crumbsEl, connectedEl, linkEl, s, nav)
+  renderHeader(crumbsEl, connectedEl, linkEl, s, nav, versionEl)
   link.watch(null, null)
   renderPhone(phoneEl, s, s.route, phoneActions)
 }
@@ -504,7 +513,7 @@ store.subscribe((s0) => {
   const s = open ? store.markViewed(open.id, Date.parse(open.updatedAt)) : s0
   const stale = isStale(s)
   renderMode(s)
-  renderHeader(crumbsEl, connectedEl, linkEl, s, nav)
+  renderHeader(crumbsEl, connectedEl, linkEl, s, nav, versionEl)
   renderVeil(s)
   bar.update(s)
   if (s.view === 'inbox') renderInbox(inboxEl, s, cache, live, inboxActions)

@@ -59,14 +59,20 @@ function uniqueName(name: string, approvers: ApproverInfo[]): string {
 
 const timeOf = (iso: string): string => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 
+// version is the citadel's skylands version, from its world's description.
+let version: string | undefined
+
 function show(...kids: (Node | string | null)[]): void {
-  root.replaceChildren(...kids.filter((k): k is Node | string => k !== null))
+  const foot = version ? el('p', { class: 'version', title: `This citadel runs skylands ${version}`, text: `Skylands ${version}` }) : null
+  root.replaceChildren(...[...kids, foot].filter((k): k is Node | string => k !== null))
 }
 
 async function getWorld(): Promise<WorldInfo> {
   const resp = await fetch('/api/world')
   if (!resp.ok) throw new Error(`The citadel answered ${resp.status}.`)
-  return (await resp.json()) as WorldInfo
+  const w = (await resp.json()) as WorldInfo
+  version = w.version
+  return w
 }
 
 async function post(path: string, body: unknown): Promise<{ ok: boolean; status: number; error: string }> {

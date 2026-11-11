@@ -81,6 +81,9 @@ type VoucherInfo struct {
 
 // WorldInfo is the world as the citadel knows it.
 type WorldInfo struct {
+	// Version is the skylands version of the citadel serving the page,
+	// which the web client shows beside the Skylands name.
+	Version string `json:"version,omitempty"`
 	// Checked is true once the citadel has looked for the world since it
 	// reached NATS; before that, nobody can tell whether there is one.
 	Checked bool `json:"checked"`

@@ -13,6 +13,8 @@ export interface ServerInfo {
 
 /** The world as the citadel knows it. */
 export interface WorldInfo {
+  /** The skylands version of the citadel serving this page, shown beside the Skylands name. */
+  version?: string
   /** Whether the citadel has looked for the world since it reached NATS. */
   checked: boolean
   /** Whether the world has been set up. */

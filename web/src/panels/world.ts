@@ -131,7 +131,8 @@ function islandTable(islands: Island[], stale: boolean, select: (id: string) => 
   const rows = islands.map((i) => {
     const link = i.reachable ? 'Connected' : 'Unreachable'
     const platform = `${i.daemon.os}/${i.daemon.arch}`
-    const version = i.daemon.version.replace(/^v/, '')
+    // Written as the header and the island panel write it, such as v0.0.6.
+    const version = i.daemon.version
     const row = el('tr', { tabindex: '0', 'aria-label': `${i.host}, ${link}, ${platform}, ${version}`, onclick: () => select(i.host) }, [
       el('td', {}, [el('span', { class: 'dot', title: link, style: `width:10px;height:10px;background:${islandStatus(i, stale)[1]}` })]),
       el('td', { class: 'name', title: i.host, text: i.host }),
@@ -169,6 +170,7 @@ export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: stri
       ...world,
       ['Islands connected', counts],
       ['Waiting on you', `${waiting}${stale && waiting ? ', as last seen' : ''}`],
+      ...(s.world?.version ? [['Version', s.world.version] as [string, string]] : []),
     ]),
   )
   panel.appendChild(themeSwitch(s.worldTheme, setTheme))
