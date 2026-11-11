@@ -51,7 +51,7 @@ func TestDevworldSetsUpAtItsURL(t *testing.T) {
 		host: "box", socketPath: filepath.Join(shortDir(t), "d.sock"), url: "https://box.example.ts.net",
 	}
 	done := make(chan error, 1)
-	go func() { done <- runDevworld(ctx, o, &stderr) }()
+	go func() { done <- runDevworld(ctx, o, &stderr, nil) }()
 	for !strings.Contains(stderr.String(), "https://box.example.ts.net/setup#") {
 		select {
 		case err := <-done:

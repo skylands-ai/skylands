@@ -35,3 +35,26 @@ release:
   # so a release that fails the test never becomes the latest.
   draft: true
   replace_existing_draft: true
+
+# The Homebrew cask in skylands-ai/homebrew-tap. GoReleaser only writes it
+# into dist/: the release is still a draft at that point, so its download
+# URLs would not work yet. The release workflow pushes the cask to the tap
+# after the smoke test passes and the release is published.
+homebrew_casks:
+  - name: skylands
+    binaries: [skylands]
+    homepage: https://skylands.ai
+    description: Run, watch, and approve coding agents across your machines.
+    skip_upload: true
+    repository:
+      owner: skylands-ai
+      name: homebrew-tap
+      branch: main
+    # The binary is not signed or notarized, so macOS would refuse to run it
+    # while it carries the quarantine attribute Homebrew gives cask downloads.
+    hooks:
+      post:
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/skylands"]
+          end

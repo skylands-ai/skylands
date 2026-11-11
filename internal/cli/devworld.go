@@ -59,7 +59,9 @@ date, as every other command's do.`,
 			if isTerminal(stderr) {
 				slog.SetDefault(slog.New(newConsoleHandler(stderr, slog.LevelInfo)))
 			}
-			return runDevworld(cmd.Context(), o, stderr)
+			return runService(cmd.Context(), func(ctx context.Context, stop <-chan struct{}) error {
+				return runDevworld(ctx, o, stderr, stop)
+			})
 		},
 	}
 	devworldUpFlags(cmd.Flags(), &o)
@@ -91,9 +93,11 @@ func newDevworldInstallCmd() *cobra.Command {
 
 // runDevworld starts the embedded server, then runs the citadel and the
 // daemon against it, the same code paths "citadel up" and "daemon up" run,
-// until one of them stops or ctx is cancelled. The setup link, while there
-// is no world, goes to stderr apart from the log.
-func runDevworld(ctx context.Context, o devworldOptions, stderr io.Writer) error {
+// until one of them stops or ctx is cancelled. Once stop is closed, the
+// daemon stops when no agent is working on a turn, and the rest with it.
+// The setup link, while there is no world, goes to stderr apart from the
+// log.
+func runDevworld(ctx context.Context, o devworldOptions, stderr io.Writer, stop <-chan struct{}) error {
 	if err := citadel.CheckPublicURL(o.url); err != nil {
 		return err
 	}
@@ -136,6 +140,7 @@ func runDevworld(ctx context.Context, o devworldOptions, stderr io.Writer) error
 			TrustFirstWorld: true,
 			WorldDomain:     daemon.DefaultWorldDomain,
 			SetupURL:        func() string { return setupLink.Load().(string) },
+			StopWhenIdle:    stop,
 		})
 	}()
 	err = <-errc

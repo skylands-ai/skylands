@@ -85,12 +85,25 @@ type Config struct {
 	// WorldDomain is the JetStream domain of the world's NATS server, where
 	// the world's approver registry is. Empty means DefaultWorldDomain.
 	WorldDomain string
+	// StopWhenIdle, once closed, stops the daemon the way cancelling ctx
+	// does, at the first moment no agent is working on a turn, so stopping
+	// cuts no turn off. A turn waiting for a person's approval is still
+	// being worked on. Nil never stops the daemon.
+	StopWhenIdle <-chan struct{}
 }
+
+// idlePoll is how often a daemon told to stop when idle checks whether an
+// agent is still working on a turn.
+const idlePoll = 5 * time.Second
 
 // Run joins the world and runs agents until ctx is cancelled. The daemon
 // keeps running while the world's server is unreachable: its leaf node
 // retries the link on its own, and its events wait in the leaf's stream.
 func Run(ctx context.Context, cfg Config) error {
+	// Stopping when idle cancels this, which stops everything below the
+	// way cancelling the caller's ctx does.
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
 	hostName := cleanHost(cfg.Host)
 	if hostName == "" {
 		hostName = DefaultHost()
@@ -191,6 +204,14 @@ func Run(ctx context.Context, cfg Config) error {
 	// Worktrees deleted by hand, or with a throwaway world's data
 	// directory, leave records in their repositories until git is told.
 	sessions.PruneWorktreeRecords(ctx)
+	if cfg.StopWhenIdle != nil {
+		go func() {
+			if whenIdle(ctx, cfg.StopWhenIdle, func() bool { return working(sessions) }, idlePoll) {
+				slog.Info("daemon: stopping, now that no agent is working on a turn", "host", hostName)
+				stop()
+			}
+		}()
+	}
 	agg.RequireSignatures(pin.get, appr.verify)
 	// What a revoked approver approved in advance lapses as soon as the
 	// daemon reads the revocation: trust it turned on, and rule lists it
@@ -301,6 +322,38 @@ func Run(ctx context.Context, cfg Config) error {
 	case err := <-errc:
 		return err
 	}
+}
+
+// whenIdle waits for stop to close and then for busy to report false,
+// checking every poll, and reports true then. It reports false if ctx ends
+// first.
+func whenIdle(ctx context.Context, stop <-chan struct{}, busy func() bool, poll time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-stop:
+	}
+	for waited := false; busy(); waited = true {
+		if !waited {
+			slog.Info("daemon: will stop once no agent is working on a turn")
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(poll):
+		}
+	}
+	return true
+}
+
+// working reports whether an agent is working on a turn in any session.
+func working(sessions *session.Manager) bool {
+	for _, s := range sessions.List() {
+		if s.Status == session.StatusRunning {
+			return true
+		}
+	}
+	return false
 }
 
 // claimIsland takes the lock that a daemon for host holds in dataDir while

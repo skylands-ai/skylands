@@ -81,6 +81,17 @@ func (m *launchd) Uninstall(ctx context.Context, name string) error {
 	return os.Remove(path)
 }
 
+// Remove deletes the plist and leaves the job loaded: booting out the job
+// that asks would wait for it to exit. Once it exits successfully launchd
+// does not start it again, and with no plist it is gone at the next login.
+func (m *launchd) Remove(ctx context.Context, name string) error {
+	err := os.Remove(m.Path(name))
+	if errors.Is(err, fs.ErrNotExist) {
+		return ErrNotInstalled
+	}
+	return err
+}
+
 func (m *launchd) Active(ctx context.Context, name string) bool {
 	out, err := m.run(ctx, "launchctl", "print", m.target(name))
 	return err == nil && strings.Contains(out, "state = running")

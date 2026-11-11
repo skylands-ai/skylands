@@ -1,8 +1,9 @@
 name: Release
 
 # Pushing a version tag, such as v0.1.0, builds the release binaries,
-# uploads them to a draft release, smoke-tests the Linux one, and publishes
-# the release. A failed smoke test leaves the draft unpublished.
+# uploads them to a draft release, smoke-tests the Linux one, publishes the
+# release, and updates the Homebrew cask in skylands-ai/homebrew-tap. A failed
+# smoke test leaves the draft unpublished and the tap unchanged.
 on:
   push:
     tags: ["v*"]
@@ -40,3 +41,25 @@ jobs:
         run: gh release edit "$GITHUB_REF_NAME" --draft=false
         env:
           GH_TOKEN: ${{ github.token }}
+      # The cask's download URLs only work once the release is published, so
+      # the tap is updated last. A prerelease tag, such as v0.2.0-rc.1, leaves
+      # the tap alone. The workflow's own token can only write to this repo,
+      # so the push uses a token scoped to the tap.
+      - name: Update the Homebrew tap
+        if: ${{ !contains(github.ref_name, '-') }}
+        run: |
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/skylands-ai/homebrew-tap.git" tap
+          mkdir -p tap/Casks
+          cp dist/homebrew/Casks/skylands.rb tap/Casks/
+          cd tap
+          git add Casks/skylands.rb
+          if git diff --cached --quiet; then
+            echo "The tap already has this cask."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "skylands $GITHUB_REF_NAME"
+          git push
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
