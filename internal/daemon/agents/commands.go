@@ -37,10 +37,19 @@ func CommandOf(prompt string) (string, bool) {
 	return m[1], true
 }
 
-// Withholds says whether the adapter withholds the named command. Names
-// compare without regard to case, as an agent may match them that way.
-func (ad Adapter) Withholds(name string) bool {
-	return slices.ContainsFunc(ad.Withheld, func(w string) bool { return strings.EqualFold(w, name) })
+// Withholds says whether the adapter withholds the named command.
+func (ad Adapter) Withholds(name string) bool { return withheldBy(ad.Withheld, name) }
+
+// withheldBy says whether withheld holds the named command. A command an
+// agent names in words, as Gemini CLI names "extensions install", belongs
+// to its first word, which is the name CommandOf finds in a prompt, so
+// withholding "extensions" withholds every one of them. Names compare
+// without regard to case, as an agent may match them that way.
+func withheldBy(withheld []string, name string) bool {
+	if words := strings.Fields(name); len(words) > 0 {
+		name = words[0]
+	}
+	return slices.ContainsFunc(withheld, func(w string) bool { return strings.EqualFold(w, name) })
 }
 
 // CheckPrompt refuses a prompt that starts with a slash command the
@@ -104,6 +113,4 @@ func (r *Run) CheckPrompt(ctx context.Context, prompt string, wait time.Duration
 	return nil
 }
 
-func (r *Run) withholds(name string) bool {
-	return slices.ContainsFunc(r.withheld, func(w string) bool { return strings.EqualFold(w, name) })
-}
+func (r *Run) withholds(name string) bool { return withheldBy(r.withheld, name) }

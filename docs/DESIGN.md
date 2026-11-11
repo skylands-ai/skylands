@@ -430,7 +430,7 @@ Every agent runs over ACP, the Agent Client Protocol, so the daemon speaks one p
 | --- | --- |
 | Claude Code | The claude-agent-acp adapter, distributed through npm |
 | Codex CLI | The codex-acp adapter, distributed through npm |
-| Gemini CLI | Its native ACP mode |
+| Gemini CLI | Its native ACP mode, `gemini --acp`, through npm |
 | goose | Its native ACP mode, `goose acp`, as installed on the host |
 | Local models | OpenCode in ACP mode, pointed at Ollama |
 

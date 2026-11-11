@@ -47,6 +47,24 @@ description: How each agent is kept asking before it acts, and what can skip the
 - a command the sandbox stopped doesn't show in the conversation; Codex doesn't report it
 -->
 
+## Gemini CLI
+
+<!--
+- runs `npx -y @google/gemini-cli@<pinned> --acp`; nothing to install but Node
+- Default mode (asks before every tool call its policies don't allow), or Plan (read-only) when chosen
+- whatever general.defaultApprovalMode in Gemini's settings says; autoEdit and yolo never allowed
+- Gemini moves itself into Plan (enter_plan_mode, which asks first) and back to Default once a plan is allowed; the daemon follows both
+- withheld commands: /extensions (installs and runs code), /restore (rewrites files from a checkpoint), /init (writes GEMINI.md itself)
+- approval card: Gemini sends no raw input, so the card shows its title and diff, and that's what an approval signs
+- reads pass without a request (Gemini's own default policy), as they do under the host's default rules
+- no model choice from Skylands yet: it runs on GEMINI_MODEL or model.name in ~/.gemini/settings.json, else "auto"
+- login: GEMINI_API_KEY, or log in with Google once (`npx -y @google/gemini-cli@<pinned>`); an API key in your shell doesn't reach a service
+- after a daemon restart, Gemini reloads its own session only when security.auth.selectedType is set in ~/.gemini/settings.json
+  (a Google login sets it); with only GEMINI_API_KEY, the session is seeded from the transcript instead
+- Gemini's own allow rules skip the host's rules: tools.allowed in settings.json, allow rules in its policy files (~/.gemini/policies)
+  (preflight doesn't warn about these yet)
+-->
+
 ## goose
 
 <!--

@@ -112,6 +112,77 @@ func TestModeThatCannotBeSetBack(t *testing.T) {
 	}, func() string { return strings.Join(rec.changes(), "; ") })
 }
 
+// TestSessionModes settles, changes, and guards the mode of an agent that
+// offers it through ACP's session modes and announces each change in its
+// reply, as Gemini CLI does, the same way as one with a config option.
+func TestSessionModes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	const marker = "[MODE_UPDATE] "
+	cmd, env := fakeagent.TestCommand()
+	env = append(append([]string(nil), env...), fakeagent.EnvConfigOptions+"=modes", fakeagent.EnvModeMarker+"="+marker)
+	ad := Adapter{Name: "fake", Command: cmd, Env: env, Modes: []string{"ask", "plan"}, ModeMarker: marker}
+	rec := &recorder{}
+	ask := func(t *testing.T, run *Run, prompt string) string {
+		t.Helper()
+		before := len(rec.said())
+		if _, err := run.Prompt(ctx, prompt); err != nil {
+			t.Fatal(err)
+		}
+		return rec.said()[before:]
+	}
+	run, err := Start(ctx, ad, t.TempDir(), Settings{}, rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = run.Close() }()
+	if got := ask(t, run, fakeagent.SettingsQuestion); got != "mode=ask model=" {
+		t.Errorf("a new session = %s, want the first listed mode, set from the agent's first", got)
+	}
+	if err := run.SetMode(ctx, "plan"); err != nil {
+		t.Fatal(err)
+	}
+	if got := ask(t, run, fakeagent.SettingsQuestion); got != "mode=plan model=" {
+		t.Errorf("after the change = %s", got)
+	}
+	if err := run.SetModel(ctx, "fake-large"); err == nil || !strings.Contains(err.Error(), "no model setting") {
+		t.Errorf("set a model on an agent without a model setting: err = %v", err)
+	}
+	if got := rec.changes(); len(got) != 0 {
+		t.Errorf("the run's own changes were reported as the agent's: %q", got)
+	}
+
+	// The agent's own change to a listed mode is heard, and one to a mode
+	// the adapter doesn't list is set back.
+	ask(t, run, fakeagent.SwitchModeTo+"ask")
+	ask(t, run, fakeagent.SwitchModeTo+"auto")
+	want := []string{"mode=ask by=agent", "mode=auto by=agent", "mode=ask by=daemon"}
+	waitFor(t, func() bool { return reflect.DeepEqual(rec.changes(), want) }, func() string { return strings.Join(rec.changes(), "; ") })
+	if got := ask(t, run, fakeagent.SettingsQuestion); got != "mode=ask model=" {
+		t.Errorf("after the guard = %s, want the mode set back", got)
+	}
+
+	// A title is asked for in a side session, whose mode change stays out
+	// of the title.
+	title, err := run.Title(ctx, "make it faster", 10*time.Second)
+	if err != nil || title == "" || strings.Contains(title, "MODE_UPDATE") {
+		t.Errorf("Title = %q, %v", title, err)
+	}
+	if strings.Contains(rec.said(), marker) {
+		t.Errorf("the conversation got the agent's mode announcements: %q", rec.said())
+	}
+
+	// A loaded session is set to the conversation's mode again.
+	resumed, how, err := Resume(ctx, ad, t.TempDir(), Settings{Mode: "plan"}, "sess-before", "", &recorder{})
+	if err != nil || how != ResumedByLoad {
+		t.Fatalf("Resume = %q, %v", how, err)
+	}
+	defer func() { _ = resumed.Close() }()
+	if err := resumed.SetMode(ctx, "ask"); err != nil {
+		t.Errorf("change a resumed session's mode: %v", err)
+	}
+}
+
 // waitFor waits up to ten seconds for ok, and fails saying what was seen.
 func waitFor(t *testing.T, ok func() bool, seen func() string) {
 	t.Helper()

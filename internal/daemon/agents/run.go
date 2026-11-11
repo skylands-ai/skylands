@@ -88,7 +88,7 @@ func Start(ctx context.Context, ad Adapter, cwd string, s Settings, obs Observer
 		_ = r.Close()
 		return nil, r.fail("open session", err)
 	}
-	options, err := r.settle(ctx, sess.SessionID, sess.ConfigOptions)
+	options, err := r.settle(ctx, sess.SessionID, withModes(sess.ConfigOptions, sess.Modes))
 	if err != nil {
 		_ = r.Close()
 		return nil, r.fail("set up the session", err)
@@ -123,7 +123,7 @@ func Resume(ctx context.Context, ad Adapter, cwd string, s Settings, agentSessio
 			// so they are set again before anything is asked of it.
 			var options *[]acp.SessionConfigOption
 			if loaded != nil {
-				options = loaded.ConfigOptions
+				options = withModes(loaded.ConfigOptions, loaded.Modes)
 			}
 			settled, err := r.settle(ctx, id, options)
 			if err != nil {
@@ -145,7 +145,7 @@ func Resume(ctx context.Context, ad Adapter, cwd string, s Settings, agentSessio
 		_ = r.Close()
 		return nil, "", r.fail("open session", err)
 	}
-	options, err := r.settle(ctx, sess.SessionID, sess.ConfigOptions)
+	options, err := r.settle(ctx, sess.SessionID, withModes(sess.ConfigOptions, sess.Modes))
 	if err != nil {
 		_ = r.Close()
 		return nil, "", r.fail("set up the session", err)
@@ -226,7 +226,7 @@ func launch(ctx context.Context, ad Adapter, cwd string, s Settings, obs Observe
 	stderr := &tailBuffer{limit: 4096}
 	cmd.Stderr = stderr
 
-	h := &handler{ExtensionMux: acp.NewExtensionMux(), auth: make(chan AuthStatus, 1), cwd: cwd, obs: obs, calls: map[acp.ToolCallId]ToolCall{}}
+	h := &handler{ExtensionMux: acp.NewExtensionMux(), auth: make(chan AuthStatus, 1), cwd: cwd, obs: obs, calls: map[acp.ToolCallId]ToolCall{}, modeMarker: ad.ModeMarker}
 	h.seq = newSequencer(h.update)
 	if err := acp.AddExtensionNotification(h.ExtensionMux, authStatusMethod, h.authStatus); err != nil {
 		cancel()
@@ -390,7 +390,7 @@ func (r *Run) reported(id acp.SessionId, options []acp.SessionConfigOption, mode
 	}
 	before := r.options
 	if options != nil {
-		r.options = options
+		r.options = keepSessionModes(before, options)
 	} else {
 		r.options = withValue(r.options, acp.SessionConfigOptionCategoryMode, mode)
 	}
@@ -483,7 +483,20 @@ func (r *Run) setOption(ctx context.Context, id acp.SessionId, options []acp.Ses
 	if optionValue(o) == value {
 		return options, nil
 	}
-	resp, err := r.client.SetSessionConfigOption(ctx, &acp.SetSessionConfigOptionRequest{SessionID: id, ConfigID: o.ID, Value: acp.SessionConfigValueId(value)})
+	var after []acp.SessionConfigOption
+	var err error
+	if o.ID == sessionModesID {
+		// ACP's session modes have no options to give back: the agent's
+		// answering is what says the mode is set.
+		if _, err = r.client.SetSessionMode(ctx, &acp.SetSessionModeRequest{SessionID: id, ModeID: acp.SessionModeId(value)}); err == nil {
+			after = withValue(options, category, value)
+		}
+	} else {
+		var resp *acp.SetSessionConfigOptionResponse
+		if resp, err = r.client.SetSessionConfigOption(ctx, &acp.SetSessionConfigOptionRequest{SessionID: id, ConfigID: o.ID, Value: acp.SessionConfigValueId(value)}); err == nil {
+			after = resp.ConfigOptions
+		}
+	}
 	if err != nil {
 		// An agent may take a value it does not list, such as a model's
 		// full id for one it lists by alias, so the list is only a hint.
@@ -492,7 +505,52 @@ func (r *Run) setOption(ctx context.Context, id acp.SessionId, options []acp.Ses
 		}
 		return nil, err
 	}
-	return resp.ConfigOptions, nil
+	return after, nil
+}
+
+// keepSessionModes is the options an agent gave, with the mode setting
+// withModes made from its session modes kept, since an agent that offers
+// its mode that way leaves it out of the config options it reports.
+func keepSessionModes(before, given []acp.SessionConfigOption) []acp.SessionConfigOption {
+	if _, ok := optionFor(given, acp.SessionConfigOptionCategoryMode); ok {
+		return given
+	}
+	if o, ok := optionFor(before, acp.SessionConfigOptionCategoryMode); ok && o.ID == sessionModesID {
+		return append(slices.Clone(given), o)
+	}
+	return given
+}
+
+// sessionModesID names the mode setting withModes makes from an agent's
+// session modes. No agent gives an id starting with an underscore, which
+// ACP keeps for extensions.
+const sessionModesID acp.SessionConfigId = "_skylands/session_modes"
+
+// withModes is options with a mode setting made from modes, for an agent
+// that offers its mode through ACP's session modes and session/set_mode,
+// as Gemini CLI does, rather than a config option in the mode category.
+// The run then settles, changes, and guards that mode as it does any
+// other. An agent that has a mode config option keeps it alone.
+func withModes(options *[]acp.SessionConfigOption, modes *acp.SessionModeState) *[]acp.SessionConfigOption {
+	if modes == nil {
+		return options
+	}
+	var out []acp.SessionConfigOption
+	if options != nil {
+		if _, ok := optionFor(*options, acp.SessionConfigOptionCategoryMode); ok {
+			return options
+		}
+		out = slices.Clone(*options)
+	}
+	choices := make(acp.UngroupedSessionConfigSelectOptions, 0, len(modes.AvailableModes))
+	for _, m := range modes.AvailableModes {
+		choices = append(choices, acp.SessionConfigSelectOption{Value: acp.SessionConfigValueId(m.ID), Name: m.Name, Description: m.Description})
+	}
+	o := acp.SelectSessionConfigOption(sessionModesID, "Mode", acp.SessionConfigValueId(modes.CurrentModeID), acp.SessionConfigSelectOptions{Ungrouped: &choices})
+	category := acp.SessionConfigOptionCategoryMode
+	o.Category = &category
+	out = append(out, o)
+	return &out
 }
 
 // optionFor finds the first option in an ACP category.
@@ -617,7 +675,7 @@ func (r *Run) Title(ctx context.Context, request string, timeout time.Duration) 
 	if len(r.modes) > 0 {
 		mode = r.modes[0]
 	}
-	if _, err := r.settleTo(ctx, sess.SessionID, sess.ConfigOptions, mode, model); err != nil {
+	if _, err := r.settleTo(ctx, sess.SessionID, withModes(sess.ConfigOptions, sess.Modes), mode, model); err != nil {
 		return "", fmt.Errorf("set up a side session: %w", err)
 	}
 	done := make(chan struct{})
