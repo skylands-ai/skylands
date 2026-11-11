@@ -86,7 +86,7 @@ prints the version you installed, such as `skylands v__VERSION__`.
 Every machine that hosts agents needs:
 
 - **git**, for the worktree each session runs in.
-- **Node 22 or newer**, for Claude Code and Codex, whose adapters come from npm.
+- **Node 22 or newer**, for Claude Code, Codex, and Gemini CLI, which come from npm.
 - The agent binary, if there is one. For example, `goose` needs to be installed, whereas Claude, Codex, and Gemini can all be installed automatically via `npm`
 - **gh**, only to open pull requests from a conversation.
 

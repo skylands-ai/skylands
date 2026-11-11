@@ -28,6 +28,16 @@ The rest of the information in this README applies mostly to those looking to _c
 
 ## Quickstart
 
+Install Skylands with [Homebrew](https://brew.sh) on macOS or Linux:
+
+```sh
+brew tap skylands-ai/tap
+brew trust skylands-ai/tap
+brew install --cask skylands
+```
+
+The [installation page](https://docs.skylands.ai/getting-started/installation/) has the other ways to install it. Then start a world on this machine:
+
 ```sh
 skylands devworld up
 ```
