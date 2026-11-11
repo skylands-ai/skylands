@@ -43,6 +43,8 @@ Any window narrower than 700 pixels or shorter than 500 pixels gets this view, i
 
 Each item has its own link, in the form `/inbox/<island>/<session>/requests/<request>`. On a phone, it opens the item. On a laptop, it opens the item's conversation.
 
+To get notifications on the phone, turn on Notifications at the bottom of the list. See [Notifications](/operations/notifications/).
+
 ## Other Reverse Proxies
 
 Any reverse proxy works if it passes the browser's `Host` header through unchanged and supports WebSocket upgrades, as `tailscale serve` does. If a proxy rewrites `Host`, the citadel refuses the page's requests and says why.

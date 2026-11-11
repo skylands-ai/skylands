@@ -214,6 +214,8 @@ Every kind of data has one home and, where it needs one, a named copy.
 | World record: its name and owner key, signed by the owner key | The `skylands-world` bucket in the world's JetStream domain | A citadel, once, when the owner sets the world up | Each daemon pins the owner key it names |
 | Owner key | Only in the recovery file the owner downloads when setting the world up | The owner's browser, during setup | None |
 | Approver keys | Private keys stay in each approver browser's IndexedDB, for the citadel's origin, and public keys travel in approver entries | People's browsers | The `skylands-approvers` stream in the world's JetStream domain |
+| The world's push key (VAPID) and approvers' push subscriptions | The `skylands-push` bucket in the world's JetStream domain, each subscription under the approver that signed it | A citadel: the key once, create-only, and a subscription when its browser signs one | None |
+| Pages in sight, for holding pushes | The `skylands-presence` bucket in the world's JetStream domain, each entry gone a minute after it was last refreshed | The citadel holding the page's WebSocket | None |
 
 
 Each role creates the streams it needs, idempotently. A daemon creates its host stream and its mirrors of the rule and user streams at startup. A citadel creates a host's mirror in the world's domain the first time it sees that host, and creating a mirror that already exists changes nothing.
@@ -335,8 +337,19 @@ The citadel is the world's web application and observer. It never writes session
 
 - Serves the 3D client and the phone inbox, and lets a browser in once it signs in with its approver key, as [Signing in](#signing-in) describes.
 - Keeps no sessions: a browser's sign-in is a statement it signed, which any citadel checks on every request. Browsers never connect to NATS.
-- Streams projections to browsers over WebSocket and sends push notifications for waiting items.
+- Streams projections to browsers over WebSocket and sends push notifications for waiting items, as [Push notifications](#push-notifications) describes.
 - Routes each session command to its owning daemon by request-reply, and returns the daemon's answer.
+
+### Push notifications
+
+- A citadel whose `--url` is HTTPS sends Web Push, unless started with `--no-push`. It signs with the world's VAPID key and encrypts each push for its browser (RFC 8291), through the browser vendors' push services, with no Skylands-run service.
+- A browser subscribes through the service worker, only at the citadel's `--url`, since a browser subscribes once per address. It signs the subscription, with the address, using its approver key, and the citadel keeps it under that approver.
+- Each island's mirror has one durable `push` consumer, filtered to PermissionRequested and QuestionAsked, that every citadel sending pushes pulls from. A new consumer starts at new events, and the server removes one that no citadel has pulled from for an hour, so a citadel starting doesn't push the backlog.
+- Before pushing, the citadel waits for its projection to take in the event, and pushes only while the item still waits. An event older than the daemon's 30-minute request timeout isn't pushed, and a push's TTL ends with the request.
+- A push's topic comes from the event's identity, and its tag is the request's or question's, as the page's own notifications tag them, so a duplicate replaces the first.
+- A page tells its citadel when it is in sight, and that citadel keeps an entry for its approver in `skylands-presence`. A push to an approver with an entry waits 30 seconds, with the event kept from the consumer meanwhile, and goes only if the item still waits then.
+- No push closes a notification, since browsers expect every push to show one. The page closes the service worker's notifications for what no longer waits whenever it is open.
+- Revoking an approver deletes its subscriptions, and so does a 404 or 410 from the push service.
 
 ### Deployment
 
@@ -459,7 +472,7 @@ Open items:
 
 - [x] Choose the domain for Skylands: skylands.ai.
 - [ ] Set default size caps for host event streams.
-- [ ] Design Web Push for approvers' phones and browsers (#53).
+- [x] Design Web Push for approvers' phones and browsers (#53).
 
 ## Repository layout
 

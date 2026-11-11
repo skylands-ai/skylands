@@ -4,6 +4,7 @@ import { citadelStatus, islandCounts, islandStatus, isStale, shortId } from '../
 import { islandList, waitingCount, type State } from '../store'
 import { WORLD_THEMES, type WorldThemeId } from '../worldthemes'
 import { notifySupport } from '../notify'
+import { pushOrigin, pushSupport } from '../push'
 import type { ApproverActions } from '../approvers'
 import { approversSection, type BrowserActions } from './approvers'
 import { copyButton, factsBox, foldSection, header, hint, note, section } from './parts'
@@ -39,20 +40,36 @@ function themeSwitch(current: WorldThemeId, choose: (id: WorldThemeId) => void):
   ])
 }
 
+/** What the Notifications switch says it does here. */
+function notifyNote(s: State): string {
+  if (Notification.permission === 'denied') return 'This browser blocks notifications from this page. Allow them in its settings for this site, then turn them on here.'
+  if (s.pushError) return `Push notifications couldn\u2019t be turned on: ${s.pushError}`
+  const away = 'Notifies on this device when an agent asks for approval or has a question, while this page is in the background.'
+  switch (pushSupport(s)) {
+    case 'ok':
+      return 'Notifies on this device when an agent asks for approval or has a question, even with this page closed.'
+    case 'elsewhere':
+      return `${away} Open the citadel at ${pushOrigin(s)} to get them with the page closed too.`
+    default:
+      return away
+  }
+}
+
 /**
  * The switch that turns on notifications in this browser: when an agent
- * asks for approval or has a question while the page is out of sight.
- * Turning it on asks the browser's permission. Browsers notify only for a
- * page with a secure context.
+ * asks for approval or has a question. Turning it on asks the browser's
+ * permission. Where the citadel sends pushes, they come as pushes, which
+ * reach the browser with the page closed; otherwise only while the page
+ * is open and out of sight. Browsers notify only for a page with a secure
+ * context.
  */
-function notifySwitch(on: boolean, choose: (on: boolean) => void): HTMLElement {
+export function notifySwitch(s: State, choose: (on: boolean) => void): HTMLElement {
   const support = notifySupport()
   if (support === 'unsupported') return section('Notifications', [note('This browser can\u2019t show notifications from a page.')])
   if (support === 'insecure') {
     return section('Notifications', [note('Browsers show notifications only from a page opened over HTTPS, or at localhost or 127.0.0.1. Open the citadel at one of those to turn them on.')])
   }
-  const permission = Notification.permission
-  const shown = on && permission === 'granted'
+  const shown = s.notify && Notification.permission === 'granted'
   return section('Notifications', [
     el(
       'div',
@@ -62,11 +79,7 @@ function notifySwitch(on: boolean, choose: (on: boolean) => void): HTMLElement {
         el('button', { type: 'button', class: 'btn small', 'aria-pressed': shown ? 'false' : 'true', text: 'Off', onclick: () => choose(false) }),
       ],
     ),
-    note(
-      permission === 'denied'
-        ? 'This browser blocks notifications from this page. Allow them in its settings for this site, then turn them on here.'
-        : 'Notifies on this computer when an agent asks for approval or has a question, while this page is in the background.',
-    ),
+    note(notifyNote(s)),
   ])
 }
 
@@ -174,7 +187,7 @@ export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: stri
     ]),
   )
   panel.appendChild(themeSwitch(s.worldTheme, setTheme))
-  panel.appendChild(notifySwitch(s.notify, setNotify))
+  panel.appendChild(notifySwitch(s, setNotify))
 
   const islands = islandList(s)
   panel.appendChild(

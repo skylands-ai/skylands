@@ -143,6 +143,9 @@ func (c *citadel) checkWorld(nc *nats.Conn) {
 		w.checked, w.problems, w.worldKV, w.js = true, problems, worldKV, js
 	})
 	c.followApprovers(js)
+	if c.push != nil {
+		go c.push.start(c.ctx, js)
+	}
 	if signed != nil {
 		c.worldReady(*signed)
 		return
@@ -252,6 +255,7 @@ func (c *citadel) worldInfo() *web.WorldInfo {
 	if w.signed != nil {
 		info.Name, info.Owner = w.record.Name, w.record.Owner
 	}
+	info.PushKey = c.push.publicKey()
 	return info
 }
 
@@ -634,6 +638,9 @@ func (c *citadel) approversChanged() {
 	// longer counts.
 	c.web.Drop(func(who string) bool { return who != "" && reg.Valid(who) })
 	c.web.Broadcast(web.Message{Type: "approvers", Approvers: c.approverInfo()})
+	if c.push != nil {
+		go c.push.prune(reg)
+	}
 }
 
 // approverInfo is the approver registry as browsers see it: every key ever

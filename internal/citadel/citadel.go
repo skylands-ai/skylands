@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +54,15 @@ type Config struct {
 	// and one second.
 	PollInterval time.Duration
 	PollWindow   time.Duration
+	// NoPush turns push notifications off, for a citadel that mustn't call
+	// the browser vendors' push services. Without it, a citadel whose
+	// PublicURL is HTTPS sends them.
+	NoPush bool
+	// PushClient, if set, sends pushes in place of http.DefaultClient, and
+	// PushHold, if set, is how long a push waits while its approver has the
+	// world's page in sight, in place of 30 seconds. Tests set both.
+	PushClient *http.Client
+	PushHold   time.Duration
 }
 
 // citadel is one running citadel.
@@ -64,14 +74,18 @@ type citadel struct {
 	terrain  *projections.Terrain
 	sessions *projections.Sessions
 	store    *es.Store
+	// push sends push notifications, or is nil when this citadel doesn't.
+	push *pusher
 
 	mu sync.Mutex
 	// world is what the citadel knows about the world it serves.
 	world worldView
 	nc    *nats.Conn
 	// following holds the hosts whose streams this citadel mirrors and
-	// follows.
+	// follows, and applied the latest sequence of each host's stream the
+	// projections have taken in.
 	following map[string]bool
+	applied   map[string]uint64
 }
 
 // Run connects to the world and serves until ctx is cancelled. It keeps
@@ -87,7 +101,12 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.PollWindow <= 0 {
 		cfg.PollWindow = time.Second
 	}
-	c := &citadel{cfg: cfg, ctx: ctx, following: map[string]bool{}}
+	c := &citadel{cfg: cfg, ctx: ctx, following: map[string]bool{}, applied: map[string]uint64{}}
+	if on, why := pushOn(cfg, c.publicURL()); on {
+		c.push = newPusher(c)
+	} else {
+		slog.Info("citadel: push notifications off", "why", why)
+	}
 	c.islands = projections.NewIslands(c.onIsland)
 	c.terrain = projections.NewTerrain(c.onRepo)
 	c.sessions = projections.NewSessions(c.onSession)
@@ -102,7 +121,7 @@ func Run(ctx context.Context, cfg Config) error {
 		slog.Warn("web: this binary has no web client, so the browser gets a placeholder page; " +
 			"use a release binary from " + web.ReleasesURL + ", or build with make web && make build")
 	}
-	c.web = web.New(web.Config{Addr: cfg.HTTPAddr, Snapshot: c.snapshot, Dist: dist, API: c.api(), Live: c.live, NeedsSetup: c.needsSetup, Canonical: c.publicURL(), SignedIn: c.signedInAs})
+	c.web = web.New(web.Config{Addr: cfg.HTTPAddr, Snapshot: c.snapshot, Dist: dist, API: c.api(), Live: c.live, NeedsSetup: c.needsSetup, Canonical: c.publicURL(), SignedIn: c.signedInAs, InSight: c.inSight})
 
 	opts := []nats.Option{
 		nats.Name("skylands-citadel"),
@@ -272,6 +291,9 @@ func (c *citadel) followHost(host string) {
 			}
 		}
 		slog.Info("citadel: following host events", "host", host)
+		if c.push != nil {
+			c.push.follow(host)
+		}
 		err := store.Follow(c.ctx, name, []string{v1.IslandEventFilter(host), v1.SessionEventFilter(host)}, func(seq uint64, ev v1.Event) {
 			if v1.IsSessionEvent(ev.Type) {
 				c.sessions.Apply(host, ev)
@@ -279,6 +301,7 @@ func (c *citadel) followHost(host string) {
 				c.terrain.Apply(host, ev)
 				c.islands.Apply(host, ev)
 			}
+			c.markApplied(host, seq)
 		})
 		if err != nil && c.ctx.Err() == nil {
 			slog.Warn("citadel: follow host events", "host", host, "err", err)

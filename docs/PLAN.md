@@ -320,7 +320,7 @@ specifies. No events, streams, or aggregates are needed for it.
   never downloads (#59). Chrome and Edge install the citadel as an app
   that shares the browser profile's approver key; Safari isn't offered
   it, since its installed apps keep separate storage (#60). Web Push to
-  phones and closed pages is #53.
+  phones and closed pages is done (#53), below.
 - Gemini CLI is the fourth real agent (#62). It runs from npm as
   `@google/gemini-cli@0.68.0` with `--acp`. It offers its mode through
   ACP's session modes and session/set_mode, which the daemon now sets and
@@ -365,6 +365,22 @@ specifies. No events, streams, or aggregates are needed for it.
   (#62, #68, #69), and its Run on Your Own NATS Server page carries what
   docs/NATS.md says. CONTRIBUTING.md, CODE_OF_CONDUCT.md, and SECURITY.md
   are in the repository's root (#70).
+- Web Push is done (#53). A citadel whose `--url` is HTTPS sends pushes,
+  unless `--no-push`, with the world's VAPID key from the `skylands-push`
+  bucket, encrypted for each browser (RFC 8291) by `internal/webpush` on
+  the standard library. The Notifications switch, in the citadel's panel
+  and at the foot of the phone's list, subscribes the browser at the
+  citadel's `--url` only, signed with its approver key. Each island's
+  mirror has a `push` consumer that starts at new events, which every
+  such citadel pulls from: PermissionRequested and QuestionAsked push,
+  once the projection has the event and while the item still waits,
+  unless the event is older than the daemon's 30-minute request timeout,
+  which the push's TTL ends with. A push to an approver whose page is in
+  sight, kept in `skylands-presence` with a one-minute TTL, waits 30
+  seconds. Revoking an approver, or a 404 or 410 from the push service,
+  deletes its subscriptions. No push closes a notification; the page
+  closes those that no longer wait. Not yet run: a push through a real
+  push service.
 
 ## After the MVP
 
@@ -602,10 +618,9 @@ Demo: the MVP.
 NATS accounts and auth callout: a world on its own nats-server takes the
 credentials its operator issues, as docs/NATS.md describes. World-wide
 rules mirrored to every host; rules live on each host's repositories for
-now. Web Push to phones and closed pages (#53). Work orders and dynamic
-dispatch. Compaction puffs and subagent leashes, which wait for their
+now. Work orders and dynamic dispatch. Compaction puffs and subagent leashes, which wait for their
 events. Claude Code hooks, so terminal sessions appear on the island. The
 three.js upgrade.
 
-World setup, sign-in, signed approvals, the phone inbox, and packaging
-were deferred here and are done; the status above has them.
+World setup, sign-in, signed approvals, the phone inbox, Web Push, and
+packaging were deferred here and are done; the status above has them.

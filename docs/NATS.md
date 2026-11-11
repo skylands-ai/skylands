@@ -83,6 +83,9 @@ skylands daemon install --world O... \
 | Mirror `island-HOST` | The world's domain | The citadel |
 | Key-value bucket `skylands-world` | The world's domain | The citadel, once, when the world is set up |
 | Stream `skylands-approvers`, subjects `v1.world.approvers.>` | The world's domain | The citadel, once per record: approvers, their links, and revocations, each on a subject of its own. The stream takes no second message on a subject and refuses deletes and purges, so nothing written is taken back. Daemons read it through their leaf nodes |
+| Key-value bucket `skylands-push` | The world's domain | A citadel that sends push notifications: the world's push key, once, and approvers' push subscriptions |
+| Key-value bucket `skylands-presence`, in memory, with a one-minute TTL | The world's domain | A citadel that sends push notifications, while a browser has the world's page in sight |
+| Durable consumer `push` on each mirror `island-HOST` | The world's domain | Every citadel that sends push notifications pulls from it. The server removes it after an hour without one |
 
 The rest is request and reply on subjects under `v1.`, such as
 `v1.world.record`, which daemons ask to learn the world they're in.

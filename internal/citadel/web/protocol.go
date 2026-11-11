@@ -36,8 +36,9 @@ type Message struct {
 }
 
 // Inbound is what a browser sends: "watch" with Host and ID to read one
-// session's transcript as it is written, or "unwatch" to stop. A browser
-// watches at most one session at a time.
+// session's transcript as it is written, or "unwatch" to stop, and
+// "visible" or "hidden" when its page comes into sight or leaves it. A
+// browser watches at most one session at a time.
 type Inbound struct {
 	Type string `json:"type"`
 	Host string `json:"host,omitempty"`
@@ -98,6 +99,9 @@ type WorldInfo struct {
 	// URL is the address people open this citadel at, when it was given
 	// one with --url, which an invite link can name.
 	URL string `json:"url,omitempty"`
+	// PushKey is the world's VAPID public key, which a browser subscribes
+	// to push notifications with, while this citadel sends them.
+	PushKey string `json:"pushKey,omitempty"`
 	// Problems are the NATS settings the world needs that are missing.
 	Problems        []string `json:"problems,omitempty"`
 	NATSSettingsURL string   `json:"natsSettingsUrl,omitempty"`

@@ -27,6 +27,7 @@ These are documented and aren't vulnerabilities on their own, though reports of 
 
 - The devworld's embedded NATS server asks for no credentials, so any daemon that can reach its leaf listener joins the world. See [Add Islands](https://docs.skylands.ai/operations/islands/).
 - Anything NATS lets into the world's account is trusted as a daemon. See [Run on Your Own NATS Server](https://docs.skylands.ai/operations/own-nats/).
+- The world's push key and approvers' push subscriptions are kept in the world's account, so any daemon can read them and send pushes to approvers' browsers. See [Notifications](https://docs.skylands.ai/operations/notifications/).
 - An agent's own allow rules and hooks, such as those in Claude Code's or Gemini CLI's settings, let calls skip the host's rules. See [Agent Modes](https://docs.skylands.ai/operations/agent-modes/).
 - Codex runs shell commands inside its read-only sandbox without asking.
 

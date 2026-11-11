@@ -132,3 +132,14 @@ func (t *Terrain) List() []Repo {
 	})
 	return out
 }
+
+// Name is the name of the repository id on host, or "" for one it doesn't
+// know.
+func (t *Terrain) Name(host, id string) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if r := t.byHost[host][id]; r != nil {
+		return r.Name
+	}
+	return ""
+}

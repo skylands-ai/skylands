@@ -32,7 +32,8 @@ import { connectToCitadel } from './ws'
 import { api } from './signin'
 import { approverActions, canSign, keepThisBrowser, loadThisBrowser, signAnswer, signChange, signFor, signPrompt, signRepoRules, signSessionRules, signTrust } from './approvers'
 import { pullRequestHash, textHash } from './decision'
-import { browserNotices, Notifier, notifySupport } from './notify'
+import { browserNotices, Notifier, notifySupport, waitingItems } from './notify'
+import { closeStale, pushSupport, subscribePush, unsubscribePush } from './push'
 import { installApp, watchInstall } from './install'
 import { renderPhone, type PhoneActions } from './phone'
 import { inboxPath, parseInboxPath, type InboxRoute } from './route'
@@ -308,7 +309,7 @@ function panelDeps(s: State, stale: boolean): unknown[] {
     case 'island':
       return ['island', island, stale, stale ? s.lastContact : 0, s.approvers, s.me, s.world, pruneVersion(), ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
     default:
-      return ['world', s.server, s.world, s.link, s.worldTheme, s.notify, s.install, notifySupport() === 'ok' ? Notification.permission : '', waitingCount(s), s.approvers, s.me, s.persisted, s.invite, s.revoking, s.approverError, s.invite ? Date.now() > Date.parse(s.invite.expires) : false, ...islandList(s)]
+      return ['world', s.server, s.world, s.link, s.worldTheme, s.notify, s.push, s.pushError, s.install, notifySupport() === 'ok' ? Notification.permission : '', waitingCount(s), s.approvers, s.me, s.persisted, s.invite, s.revoking, s.approverError, s.invite ? Date.now() > Date.parse(s.invite.expires) : false, ...islandList(s)]
   }
 }
 
@@ -454,6 +455,7 @@ const phoneActions: PhoneActions = {
   decline: (x, q) => inboxActions.decline(x, q).then(thenBack),
   go,
   back,
+  setNotify: (on) => void turnNotifications(on),
 }
 
 // The browser's offer to install the citadel as an app, and the button that takes it up.
@@ -468,7 +470,23 @@ const browserActs = {
     }),
 }
 
-const notifier = new Notifier(browserNotices(() => store.state.notify), (route) => (store.state.phone ? go(route) : openConversation(route.session ?? '')))
+/** Opens what an inbox link names, as clicking a notification does. */
+function openRoute(route: InboxRoute): void {
+  if (store.state.phone) go(route)
+  else openConversation(route.session ?? '')
+}
+
+// While notifications come as pushes, the service worker shows them, and
+// the page shows none of its own.
+const notifier = new Notifier(browserNotices(() => store.state.notify && !store.state.push), openRoute)
+
+// Clicking a push's notification while a page is open here moves that
+// page to the item.
+navigator.serviceWorker?.addEventListener('message', (e: MessageEvent<{ type?: string; url?: string }>) => {
+  if (e.data?.type !== 'open' || !e.data.url) return
+  const route = parseInboxPath(new URL(e.data.url, location.origin).pathname)
+  if (route) openRoute(route)
+})
 
 /** The phone's page: what's waiting, and the header's link to the citadel. */
 function renderPhoneLayout(s: State): void {
@@ -486,7 +504,11 @@ function renderPhoneLayout(s: State): void {
   renderPhone(phoneEl, s, s.route, phoneActions)
 }
 
-/** Turns notifications on, asking the browser's permission first if it hasn't been asked, or off. */
+/**
+ * Turns notifications on, asking the browser's permission first if it
+ * hasn't been asked, or off. Where the citadel sends pushes, turning them
+ * on subscribes this browser, and turning them off unsubscribes it.
+ */
 async function turnNotifications(on: boolean): Promise<void> {
   if (on && notifySupport() === 'ok' && Notification.permission === 'default') {
     try {
@@ -495,7 +517,59 @@ async function turnNotifications(on: boolean): Promise<void> {
       // A refusal or a dismissed prompt leaves the permission as it was.
     }
   }
-  store.setNotify(on && notifySupport() === 'ok' && Notification.permission === 'granted')
+  const granted = on && notifySupport() === 'ok' && Notification.permission === 'granted'
+  store.setNotify(granted)
+  if (granted) await syncPush()
+  else if (pushSupport(store.state) !== 'unsupported') {
+    pushedKey = ''
+    store.update({ push: false, pushError: null })
+    await unsubscribePush().catch(() => {})
+  }
+}
+
+let pushedKey = ''
+
+/**
+ * Subscribes this browser to the citadel's pushes while its notifications
+ * are on and the citadel offers them here, once for each push key. Doing
+ * it on every page load registers the subscription again, which keeps it
+ * current if the browser renewed it.
+ */
+async function syncPush(): Promise<void> {
+  const s = store.state
+  const key = s.world?.pushKey ?? ''
+  if (!s.notify || !key || pushSupport(s) !== 'ok' || Notification.permission !== 'granted') {
+    pushedKey = ''
+    if (s.push) store.update({ push: false })
+    return
+  }
+  if (pushedKey === key) return
+  pushedKey = key
+  try {
+    await subscribePush(s)
+    store.update({ push: true, pushError: null })
+  } catch (err) {
+    pushedKey = ''
+    store.update({ push: false, pushError: (err as Error).message })
+  }
+}
+
+let waitingKey: string | null = null
+
+/** Closes the service worker's notifications for what no longer waits, each time that changes. */
+function closeAnswered(s: State): void {
+  if (s.link !== 'connected' || s.approvers === null || pushSupport(s) === 'unsupported') return
+  const tags = waitingItems(s).map((w) => w.tag)
+  const key = tags.sort().join(' ')
+  if (key === waitingKey) return
+  waitingKey = key
+  void closeStale(new Set(tags)).catch(() => {})
+}
+
+function afterRender(s: State): void {
+  notifier.observe(s)
+  closeAnswered(s)
+  void syncPush()
 }
 
 fitScreen()
@@ -503,7 +577,7 @@ fitScreen()
 store.subscribe((s0) => {
   renderPhoneLayout(s0)
   if (s0.phone) {
-    notifier.observe(s0)
+    afterRender(s0)
     return
   }
   // Reading a conversation in the inbox counts as having seen everything in
@@ -553,7 +627,7 @@ store.subscribe((s0) => {
     world.setTheme(s.worldTheme)
   }
   renderPanel(s, stale)
-  notifier.observe(s)
+  afterRender(s)
 })
 
 // A handle for debugging and screenshots: skylands.world.rig.flyTo(...).

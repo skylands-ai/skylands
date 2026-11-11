@@ -77,6 +77,10 @@ export interface State extends Nav {
   worldTheme: WorldThemeId
   /** Whether this browser notifies when an agent asks for approval or has a question. */
   notify: boolean
+  /** Whether those notifications come as pushes from the citadel, which reach this browser with the page closed. */
+  push: boolean
+  /** Why subscribing to pushes last failed, or null. */
+  pushError: string | null
   /** Whether the screen is a phone's: narrow, or short as a phone on its side. Only what waits on a person is shown. */
   phone: boolean
   /** What the phone's view shows, from the page's address. */
@@ -137,7 +141,7 @@ type Listener = (s: State) => void
 
 /** One place for everything the page renders from. Every change notifies every listener. */
 export class Store {
-  state: State = { link: 'connecting', server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), inbox: null, inboxFilter: loadFilter(), worldTheme: loadWorldTheme(), notify: loadNotify(), phone: false, route: {}, install: 'no' }
+  state: State = { link: 'connecting', server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), inbox: null, inboxFilter: loadFilter(), worldTheme: loadWorldTheme(), notify: loadNotify(), push: false, pushError: null, phone: false, route: {}, install: 'no' }
   private listeners: Listener[] = []
 
   subscribe(fn: Listener): void {
