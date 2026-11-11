@@ -50,7 +50,7 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'Skylands',
-			description: 'Run, watch, and approve coding agents across your machines, shown as a 3D world of floating islands.',
+			description: 'Let your agents take flight on any machine, from anywhere, with a 3D world visualization',
 			logo: { src: './src/assets/mark.svg', alt: '' },
 			favicon: '/favicon.svg',
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/skylands-ai/skylands' }],
