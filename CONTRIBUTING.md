@@ -2,6 +2,10 @@
 
 Issues and pull requests are welcome. Read the [code of conduct](CODE_OF_CONDUCT.md) before you take part, and see the [documentation](https://docs.skylands.ai) for how Skylands works.
 
+## Asking Questions
+
+Ask how to do something, share what you've built, or talk through an idea in [Discussions](https://github.com/skylands-ai/skylands/discussions). Open an issue for a bug or a concrete feature request.
+
 ## Reporting Security Issues
 
 Don't open a public issue for a vulnerability. Report it privately from the repository's [Security tab](https://github.com/skylands-ai/skylands/security/advisories/new). [SECURITY.md](SECURITY.md) has the details.

@@ -36,6 +36,11 @@ release:
   draft: true
   replace_existing_draft: true
 
+# Release notes are the ones GitHub generates: each pull request merged since
+# the last tag, with its author, and a link comparing the two tags.
+changelog:
+  use: github-native
+
 # The Homebrew cask in skylands-ai/homebrew-tap. GoReleaser only writes it
 # into dist/: the release is still a draft at that point, so its download
 # URLs would not work yet. The release workflow pushes the cask to the tap
