@@ -270,6 +270,11 @@ specifies. No events, streams, or aggregates are needed for it.
   The title's side session runs in the first listed mode, whatever the
   conversation's: run live, Claude Code in plan mode answered a title
   request with a name for a plan.
+  The agent check reads each agent's listed modes, as it names them, with
+  its models, which the command bar's Mode chip and the header list. The
+  fake agent offers a plan mode, changes its own mode or model when told,
+  and announces every change, so the guard and the record are tested end
+  to end. Slash commands are the second part.
 - Slash commands are done (#40, second part). The daemon keeps the
   commands each session's agent announces in available_commands_update,
   including while a session loads, and the commands fetch returns them less
@@ -297,11 +302,69 @@ specifies. No events, streams, or aggregates are needed for it.
   is stale after it. PromptSent, ChangesCommitted, ChangesMerged, and
   PullRequestOpened record the approver and signature. Stopping,
   interrupting, and mode and model changes stay unsigned.
-  The agent check reads each agent's listed modes, as it names them, with
-  its models, which the command bar's Mode chip and the header list. The
-  fake agent offers a plan mode, changes its own mode or model when told,
-  and announces every change, so the guard and the record are tested end
-  to end. Slash commands are the second part.
+- Approving from a phone is done, apart from push (#54). `devworld up`
+  and `devworld install` take `--url`, the address people open the
+  citadel at, which the setup link names and `citadel.CheckPublicURL`
+  checks (#55). An "Add an approver" link opens at the page's address,
+  the citadel's `--url`, or another one typed in, since a browser keeps
+  its approver key per address (#56). Behind `tailscale serve`, which
+  keeps the browser's `Host` header, the sign-in cookie is `Secure` when
+  a loopback proxy says the browser came over HTTPS, and a proxy that
+  rewrites `Host` gets a refusal that says so (#57). Desktop
+  notifications, turned on in the citadel's panel, announce a tool call
+  waiting for approval or a question while the page is in the
+  background, naming the agent, repository, and island but never the
+  input (#58). A window narrower than 700 px or shorter than 500 px gets
+  the phone view: only what's waiting, newest first, each item at its
+  own `/inbox/...` link, and no 3D world, which is now a chunk a phone
+  never downloads (#59). Chrome and Edge install the citadel as an app
+  that shares the browser profile's approver key; Safari isn't offered
+  it, since its installed apps keep separate storage (#60). Web Push to
+  phones and closed pages is #53.
+- Gemini CLI is the fourth real agent (#62). It runs from npm as
+  `@google/gemini-cli@0.68.0` with `--acp`. It offers its mode through
+  ACP's session modes and session/set_mode, which the daemon now sets and
+  guards as it does a config option, keeping sessions in default or plan,
+  and reads a `[MODE_UPDATE]` marker in its message chunks as a mode
+  update, kept out of the conversation. It asks about tool calls without
+  raw input, so for any agent that gives none, the request's title and
+  content (an edit's diff) stand in as the input the approval card shows
+  and the approval signs. /extensions, /restore, and /init are withheld,
+  and a withheld command now covers its subcommands. Open: no model
+  choice, since the ACP library doesn't read Gemini's models or send
+  session/set_model; a session resumes by load only with
+  `security.auth.selectedType` in Gemini's settings; Gemini retries 503s
+  for minutes without a word over ACP; and preflight doesn't warn about
+  Gemini's own allow rules.
+- Removing what ended sessions leave behind is done from the citadel
+  (#64, part of #43). An ended session's changes card offers Remove
+  worktree when the worktree is clean, and the island and terrace panels
+  list ended sessions' worktrees with Remove them. Each removal is signed
+  over the session's revision, recorded in WorktreeRemoved, and keeps a
+  dirty worktree or a branch with unmerged commits, as `session remove`
+  does without `--force`. The daemon runs `git worktree prune` in each
+  registered repository at startup and after every prune. Open in #43:
+  pruning on a schedule, forcing a removal from the citadel, and deleting
+  orphaned `skylands/*` branches.
+- On a terminal, devworld's log shows each line as the time of day, the
+  level, the message, and the fields; a service or piped output keeps
+  slog's dated key=value lines (#63).
+- Packaging is done. A version tag runs goreleaser, which builds archives
+  for Linux and macOS on amd64 and arm64 with the web client embedded,
+  uploads them to a draft release, smoke-tests the Linux binary with
+  `scripts/release-smoke.sh` (#61), and publishes the release only if
+  that passes. The release then pushes the cask goreleaser wrote to
+  skylands-ai/homebrew-tap, and the tag publishes docs.skylands.ai. A
+  service from `install` runs the binary at its path on PATH, such as
+  Homebrew's `bin/skylands`, and follows it: on a new binary it stops once
+  no agent is mid-turn and exits failing, so launchd or systemd starts the
+  new one, and on a binary gone for five minutes it removes its own
+  definition (#65). v0.0.5 is the first release with the cask. Not yet
+  run: a service following an upgrade under a real launchd or systemd.
+- docs.skylands.ai has Getting Started, Concepts, and Operations pages
+  (#62, #68, #69), and its Run on Your Own NATS Server page carries what
+  docs/NATS.md says. CONTRIBUTING.md, CODE_OF_CONDUCT.md, and SECURITY.md
+  are in the repository's root (#70).
 
 ## After the MVP
 
@@ -536,9 +599,13 @@ Demo: the MVP.
 
 ## Deferred past the MVP
 
-World init, accounts, credentials, and auth callout. User sessions and
-signed approvals. World-wide rules mirrored to every host; rules live
-on each host's repositories for now. Push notifications and the phone inbox. Work
-orders and dynamic dispatch. Compaction puffs and subagent leashes, which
-wait for their events. Claude Code hooks, so terminal sessions appear on the
-island. The three.js upgrade. Packaging and goreleaser.
+NATS accounts and auth callout: a world on its own nats-server takes the
+credentials its operator issues, as docs/NATS.md describes. World-wide
+rules mirrored to every host; rules live on each host's repositories for
+now. Web Push to phones and closed pages (#53). Work orders and dynamic
+dispatch. Compaction puffs and subagent leashes, which wait for their
+events. Claude Code hooks, so terminal sessions appear on the island. The
+three.js upgrade.
+
+World setup, sign-in, signed approvals, the phone inbox, and packaging
+were deferred here and are done; the status above has them.

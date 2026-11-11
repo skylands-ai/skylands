@@ -1,0 +1,92 @@
+name: Bug report
+description: Something in Skylands doesn't work the way the documentation says it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Don't report a vulnerability here. Report it privately from the [Security tab](https://github.com/skylands-ai/skylands/security/advisories/new).
+
+        Remove NATS credentials, API keys, and anything from private repositories before you paste logs or transcripts.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. skylands devworld up
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `skylands version`.
+      placeholder: skylands v0.0.5
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed it
+      options:
+        - Homebrew
+        - Release archive
+        - From source
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS, Apple silicon
+        - macOS, Intel
+        - Linux, amd64
+        - Linux, arm64
+    validations:
+      required: true
+  - type: dropdown
+    id: parts
+    attributes:
+      label: Where it happens
+      multiple: true
+      options:
+        - devworld
+        - citadel
+        - daemon
+        - a service from install
+        - the CLI
+        - the web client
+        - a phone
+  - type: dropdown
+    id: agents
+    attributes:
+      label: Agents involved
+      multiple: true
+      options:
+        - Claude Code
+        - Codex
+        - Gemini CLI
+        - goose
+        - the built-in fake agent
+        - none
+  - type: textarea
+    id: preflight
+    attributes:
+      label: Preflight
+      description: The output of `skylands preflight`, for anything involving agents or a daemon.
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The log lines around the problem, from the terminal running `up` or from the service's log.
+      render: text
