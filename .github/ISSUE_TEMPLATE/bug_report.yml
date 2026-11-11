@@ -70,6 +70,7 @@ body:
     id: agents
     attributes:
       label: Agents involved
+      description: Leave it empty if no agent is involved.
       multiple: true
       options:
         - Claude Code
@@ -77,7 +78,6 @@ body:
         - Gemini CLI
         - goose
         - the built-in fake agent
-        - none
   - type: textarea
     id: preflight
     attributes:
