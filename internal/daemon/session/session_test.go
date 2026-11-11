@@ -788,8 +788,8 @@ func TestChangesAreCommittedMergedSentAndRemoved(t *testing.T) {
 	if pruned := m.Prune(f.ctx); len(pruned) != 1 || pruned[0].Removed || pruned[0].Kept == "" {
 		t.Errorf("Prune of a dirty worktree = %+v", pruned)
 	}
-	if _, _, err := m.Remove(f.ctx, "x10", "s1", false); err == nil {
-		t.Error("a dirty worktree was removed without force")
+	if _, _, err := m.Remove(f.ctx, "x10", "s1", false); !errors.Is(err, ErrUncommitted) {
+		t.Errorf("a dirty worktree removed without force: err = %v, want ErrUncommitted", err)
 	}
 	// Forced, the worktree goes, and the branch with it even though the
 	// second commit was never merged.
@@ -823,6 +823,33 @@ func TestChangesAreCommittedMergedSentAndRemoved(t *testing.T) {
 	}
 	if s2, _ := m2.Get("s1"); s2.Commits != 2 || s2.MergedInto != base || s2.PullRequest == "" || !s2.WorktreeRemoved || s2.Base != base {
 		t.Errorf("reloaded session = %+v", s2)
+	}
+}
+
+// TestPruneDropsRecordsOfWorktreesThatAreGone runs git worktree prune in
+// each registered repository, as a daemon does when it starts and when it
+// prunes, which drops a worktree whose folder was deleted and keeps one
+// whose folder is there, and leaves both branches.
+func TestPruneDropsRecordsOfWorktreesThatAreGone(t *testing.T) {
+	f := setup(t)
+	gitIdentity(t)
+	m, err := Load(f.ctx, f.store, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone, kept := filepath.Join(t.TempDir(), "gone"), filepath.Join(t.TempDir(), "kept")
+	gitOut(t, f.repo.Path, "worktree", "add", "-q", "-b", "skylands/gone", gone)
+	gitOut(t, f.repo.Path, "worktree", "add", "-q", "-b", "skylands/kept", kept)
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatal(err)
+	}
+	m.PruneWorktreeRecords(f.ctx)
+	list := gitOut(t, f.repo.Path, "worktree", "list", "--porcelain")
+	if strings.Contains(list, gone) || !strings.Contains(list, kept) {
+		t.Errorf("worktrees after pruning their records:\n%s", list)
+	}
+	if branches := gitOut(t, f.repo.Path, "branch", "--list", "skylands/*"); !strings.Contains(branches, "skylands/gone") || !strings.Contains(branches, "skylands/kept") {
+		t.Errorf("branches after pruning the records = %q, want both kept", branches)
 	}
 }
 

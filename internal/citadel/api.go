@@ -71,6 +71,7 @@ func (c *citadel) api() http.Handler {
 	signedIn("POST /api/sessions/{host}/{id}/commit", c.commit)
 	signedIn("POST /api/sessions/{host}/{id}/merge", c.merge)
 	signedIn("POST /api/sessions/{host}/{id}/pull-request", c.pullRequest)
+	signedIn("POST /api/sessions/{host}/{id}/remove-worktree", c.removeWorktree)
 	signedIn("GET /api/sessions/{host}/{id}/transcript", c.fetchFromHost(v1.FetchTranscript))
 	signedIn("GET /api/sessions/{host}/{id}/diff", c.fetchFromHost(v1.FetchDiff))
 	signedIn("GET /api/sessions/{host}/{id}/changes", c.fetchFromHost(v1.FetchChanges))
@@ -150,6 +151,19 @@ func (c *citadel) pullRequest(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	cmd := v1.OpenPullRequest{ID: nuid.Next(), SessionID: id, Title: strings.TrimSpace(body.Title), Body: strings.TrimSpace(body.Body), Revision: body.Revision, Signature: body.Signature}
 	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandOpenPullRequest), cmd, http.StatusOK)
+}
+
+// removeWorktree deletes an ended session's worktree, and its branch when
+// git finds it merged, without forcing either.
+func (c *citadel) removeWorktree(w http.ResponseWriter, r *http.Request) {
+	host, id := r.PathValue("host"), r.PathValue("id")
+	var body struct {
+		Revision  int                   `json:"revision"`
+		Signature *v1.DecisionSignature `json:"signature"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	cmd := v1.RemoveWorktree{ID: nuid.Next(), SessionID: id, Revision: body.Revision, Signature: body.Signature}
+	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandRemoveWorktree), cmd, http.StatusOK)
 }
 
 // setMode sets an idle session's mode to one its adapter lists. Every

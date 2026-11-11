@@ -82,13 +82,16 @@ type Session struct {
 	// Commit is the latest commit made through Skylands and Commits counts
 	// them; MergedInto and MergedCommit record the latest merge into the
 	// checkout, PullRequest the pull request opened from the branch, and
-	// WorktreeRemoved that the worktree and branch are gone.
+	// WorktreeRemoved that the worktree is gone, and BranchKept that its
+	// branch stayed, as an unforced removal keeps one with unmerged
+	// commits.
 	Commit          string `json:"commit,omitempty"`
 	Commits         int    `json:"commits,omitempty"`
 	MergedInto      string `json:"mergedInto,omitempty"`
 	MergedCommit    string `json:"mergedCommit,omitempty"`
 	PullRequest     string `json:"pullRequest,omitempty"`
 	WorktreeRemoved bool   `json:"worktreeRemoved,omitempty"`
+	BranchKept      bool   `json:"branchKept,omitempty"`
 	// Status is running, idle (waiting for a person), ended, or failed.
 	Status     string `json:"status"`
 	StopReason string `json:"stopReason,omitempty"`
@@ -373,7 +376,7 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 		var d v1.WorktreeRemoved
 		if ev.Decode(&d) == nil {
 			if s, ok := p.byID[d.SessionID]; ok {
-				s.WorktreeRemoved = true
+				s.WorktreeRemoved, s.BranchKept = true, !d.BranchDeleted
 				changed = s
 			}
 		}

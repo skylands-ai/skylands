@@ -51,6 +51,8 @@ export interface InboxActions {
   merge(s: Session, after?: number): Promise<string>
   /** Pushes the branch and opens a pull request from it. */
   pullRequest(s: Session, after?: number): Promise<string>
+  /** Removes an ended session's worktree, and its branch when git finds it merged. */
+  removeWorktree(s: Session): Promise<string>
   /** Replaces a session's rules, or its repository's, which new sessions copy. */
   setSessionRules(s: Session, rules: Rule[]): Promise<string>
   setRepoRules(host: string, repoId: string, rules: Rule[]): Promise<string>
@@ -228,7 +230,13 @@ const messages = new Map<string, string>()
  */
 function changesCard(x: Session, f: Fetched | undefined, actions: InboxActions): HTMLElement {
   const box = el('div', { class: 'changes', role: 'group', 'aria-label': 'Changes' })
-  const where = x.worktreeRemoved ? 'The worktree was removed.' : x.inCheckout ? `In the checkout, on ${x.branch}` : `On ${x.branch}${x.base ? `, from ${x.base}` : ''}`
+  const where = x.worktreeRemoved
+    ? x.branchKept
+      ? `The worktree was removed. ${x.branch} is kept: it has commits that aren’t merged.`
+      : 'The worktree was removed.'
+    : x.inCheckout
+      ? `In the checkout, on ${x.branch}`
+      : `On ${x.branch}${x.base ? `, from ${x.base}` : ''}`
   box.appendChild(el('div', { class: 'ask' }, [el('strong', { text: 'Changes' }), el('span', { class: 'muted', text: where })]))
   const done: (Node | string)[] = []
   if (x.mergedInto) done.push(`Merged into ${x.mergedInto} as ${x.mergedCommit?.slice(0, 7) ?? ''}.`)
@@ -287,6 +295,12 @@ function changesCard(x: Session, f: Fetched | undefined, actions: InboxActions):
     box.appendChild(row)
   } else {
     box.appendChild(el('span', { class: 'sub', text: x.commits ? 'Everything is committed.' : 'Nothing to commit.' }))
+  }
+  // Once the session is over, its worktree can go, and its branch with it
+  // when git finds it merged. Nothing uncommitted is ever removed.
+  if ((x.status === 'ended' || x.status === 'failed') && !x.inCheckout && !dirty) {
+    const keeps = c.ahead > 0 ? `${x.branch} stays: ${c.base} lacks its ${c.ahead === 1 ? 'commit' : `${c.ahead} commits`}.` : ''
+    box.appendChild(el('div', { class: 'acts' }, [button('Remove worktree', false, () => void act(() => actions.removeWorktree(x), 'Removing…')), keeps ? el('span', { class: 'sub', text: keeps }) : null]))
   }
   if (done.length) box.appendChild(el('span', { class: 'sub' }, done))
   box.appendChild(note)

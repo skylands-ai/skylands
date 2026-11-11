@@ -765,6 +765,18 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 		t.Errorf("transcript after the merge: %d %s", code, body)
 	}
 
+	// The session is over, so its worktree and merged branch are removed
+	// from the browser. Asked again, the host says the same.
+	for range 2 {
+		if code, out := post2("/api/sessions/ws/"+id+"/remove-worktree", `{}`); code != http.StatusOK || out["branchDeleted"] != true {
+			t.Fatalf("remove the worktree: %d %v", code, out)
+		}
+	}
+	b.wait(t, "the removal", 10*time.Second, func(v view) bool { s := v.sessions[id]; return s.WorktreeRemoved && !s.BranchKept })
+	if _, err := os.Stat(worktree); err == nil {
+		t.Error("the worktree is still there")
+	}
+
 	// A session can work in the checkout itself, one at a time.
 	code, out = post(`{"host":"ws","repoId":"` + info.ID + `","agent":"fake","prompt":"work in place","inCheckout":true}`)
 	if code != http.StatusCreated {
@@ -777,6 +789,9 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 	}
 	if code, out := post(`{"host":"ws","repoId":"` + info.ID + `","agent":"fake","prompt":"me too","inCheckout":true}`); code != http.StatusBadRequest || !strings.Contains(out["error"].(string), "another session") {
 		t.Errorf("second checkout session: %d %v", code, out)
+	}
+	if code, out := post2("/api/sessions/ws/"+inPlace+"/remove-worktree", `{}`); code != http.StatusBadRequest || !strings.Contains(fmt.Sprint(out["error"]), "still open") {
+		t.Errorf("remove an open session's worktree: %d %v", code, out)
 	}
 	if code, out := post2("/api/sessions/ws/"+inPlace+"/stop", `{}`); code != http.StatusOK {
 		t.Fatalf("stop the checkout session: %d %v", code, out)

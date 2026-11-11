@@ -36,6 +36,7 @@ const (
 	ChangeCommit      = "commit"
 	ChangeMerge       = "merge"
 	ChangePullRequest = "pull-request"
+	ChangeRemove      = "remove"
 )
 
 // Decision is what an approver signs: one of the decisions below. Its
@@ -169,8 +170,8 @@ type Prompt struct {
 
 func (d Prompt) header() (int, string, string) { return d.V, d.Kind, KindPrompt }
 
-// Change commits a session's worktree, merges its branch, or opens a pull
-// request from it.
+// Change commits a session's worktree, merges its branch, opens a pull
+// request from it, or removes the worktree and branch.
 type Change struct {
 	V       int    `json:"v"`
 	Kind    string `json:"kind"`
@@ -179,10 +180,11 @@ type Change struct {
 	Session string `json:"session"`
 	// Revision is as in Prompt.
 	Revision int `json:"revision"`
-	// Action is ChangeCommit, ChangeMerge, or ChangePullRequest.
+	// Action is ChangeCommit, ChangeMerge, ChangePullRequest, or
+	// ChangeRemove.
 	Action string `json:"action"`
 	// Text is TextHash of a commit's message, PullRequestHash of a pull
-	// request's title and body, and "" for a merge.
+	// request's title and body, and "" for a merge or a removal.
 	Text string `json:"text"`
 }
 

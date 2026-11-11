@@ -120,6 +120,11 @@ export function isOpen(s: Session): boolean {
   return s.status === 'running' || s.status === 'idle'
 }
 
+/** Sessions that are over and still have a worktree of their own, which removing cleans up. */
+export function leftBehind(sessions: Session[]): Session[] {
+  return sessions.filter((s) => !isOpen(s) && !s.inCheckout && !s.worktreeRemoved)
+}
+
 /** Shortens a NATS id to its ends, the way the prototype shows them. */
 export function shortId(id: string): string {
   return id.length > 12 ? `${id.slice(0, 5)}…${id.slice(-5)}` : id

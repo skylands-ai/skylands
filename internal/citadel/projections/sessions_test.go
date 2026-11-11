@@ -160,8 +160,8 @@ func TestSessionsFollowSessionEvents(t *testing.T) {
 	apply(v1.EventChangesCommitted, v1.ChangesCommitted{SessionID: "s1", Commit: "bcd2345efa", Message: "More"})
 	apply(v1.EventChangesMerged, v1.ChangesMerged{SessionID: "s1", Into: "main", Commit: "cde3456fab"})
 	apply(v1.EventPullRequestOpened, v1.PullRequestOpened{SessionID: "s1", URL: "https://example.com/pr/1", Branch: "skylands/s1"})
-	apply(v1.EventWorktreeRemoved, v1.WorktreeRemoved{SessionID: "s1", BranchDeleted: true})
-	if s := p.List()[0]; s.Commit != "bcd2345efa" || s.Commits != 2 || s.MergedInto != "main" || s.MergedCommit != "cde3456fab" || s.PullRequest != "https://example.com/pr/1" || !s.WorktreeRemoved {
+	apply(v1.EventWorktreeRemoved, v1.WorktreeRemoved{SessionID: "s1", BranchDeleted: false})
+	if s := p.List()[0]; s.Commit != "bcd2345efa" || s.Commits != 2 || s.MergedInto != "main" || s.MergedCommit != "cde3456fab" || s.PullRequest != "https://example.com/pr/1" || !s.WorktreeRemoved || !s.BranchKept {
 		t.Errorf("session after its changes were handled = %+v", s)
 	}
 	// An event for an unknown session changes nothing.

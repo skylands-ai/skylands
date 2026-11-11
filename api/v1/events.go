@@ -855,6 +855,10 @@ type PullRequestOpened struct {
 type WorktreeRemoved struct {
 	SessionID     string `json:"sessionId"`
 	BranchDeleted bool   `json:"branchDeleted"`
+	// Approver and Signature are as in PromptSent, for a removal through
+	// the citadel; one from the host's CLI has neither.
+	Approver  string `json:"approver,omitempty"`
+	Signature string `json:"signature,omitempty"`
 }
 
 // Changes commands.
@@ -862,7 +866,20 @@ const (
 	CommandCommitChanges   = "CommitChanges"
 	CommandMergeChanges    = "MergeChanges"
 	CommandOpenPullRequest = "OpenPullRequest"
+	CommandRemoveWorktree  = "RemoveWorktree"
 )
+
+// RemoveWorktree deletes an ended session's worktree, and its branch when
+// git finds it merged, as "skylands session remove" does without --force:
+// a worktree with uncommitted changes is kept, and so is a branch with
+// commits that aren't merged, so nothing is lost.
+type RemoveWorktree struct {
+	ID        string `json:"id"`
+	SessionID string `json:"sessionId"`
+	// Revision and Signature are as in SendPrompt.
+	Revision  int                `json:"revision,omitempty"`
+	Signature *DecisionSignature `json:"signature,omitempty"`
+}
 
 // CommitChanges commits everything in the session's worktree. An empty
 // Message uses the conversation's title.
