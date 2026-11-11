@@ -122,6 +122,7 @@ func runDevworld(ctx context.Context, o devworldOptions, stderr io.Writer, stop 
 	errc := make(chan error, 2)
 	go func() {
 		errc <- citadel.Run(ctx, citadel.Config{
+			Version:   versionString(),
 			NATSURL:   srv.ClientURL(),
 			HTTPAddr:  o.httpAddr,
 			PublicURL: o.url,

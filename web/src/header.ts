@@ -24,7 +24,9 @@ function sep(): HTMLElement {
 }
 
 /** The breadcrumb, the connected-islands count, and the citadel link pill in the top bar. */
-export function renderHeader(crumbs: HTMLElement, connected: HTMLElement, link: HTMLElement, s: State, nav: NavActions): void {
+export function renderHeader(crumbs: HTMLElement, connected: HTMLElement, link: HTMLElement, s: State, nav: NavActions, version: HTMLElement): void {
+  // The snapshot's version follows the citadel through a restart.
+  showVersion(version, s.world?.version ?? s.citadelVersion)
   crumbs.textContent = ''
   const l = level(s)
   if (l === 'world') {
@@ -68,4 +70,15 @@ export function renderHeader(crumbs: HTMLElement, connected: HTMLElement, link: 
         : ['Connecting to citadel', 'var(--warn)']
   link.textContent = ''
   link.append(el('span', { class: 'dot', style: `background:${color}` }), text)
+}
+
+/**
+ * Shows the citadel's skylands version beside the Skylands name, the same
+ * place in every view. A long development version is cut short on screen,
+ * and its tooltip has the whole of it.
+ */
+export function showVersion(el: HTMLElement, version: string | undefined): void {
+  el.hidden = !version
+  el.textContent = version ?? ''
+  el.title = version ? `This citadel runs skylands ${version}` : ''
 }

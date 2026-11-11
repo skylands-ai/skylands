@@ -29,6 +29,9 @@ import (
 
 // Config holds what a citadel needs to join a world.
 type Config struct {
+	// Version is the skylands version this citadel runs, which the web
+	// client shows beside the Skylands name.
+	Version string
 	// NATSURL is the URL of the world's NATS server or cluster.
 	NATSURL string
 	// CredsFile is the path to the citadel's NATS credentials file.

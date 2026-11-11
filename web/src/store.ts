@@ -40,6 +40,11 @@ export interface State extends Nav {
   server: ServerInfo | null
   /** The world as the citadel last described it, or null before the first message. */
   world: WorldInfo | null
+  /**
+   * The citadel's skylands version, read from /api/world as the page loads,
+   * so it shows before this browser signs in, and in one that never can.
+   */
+  citadelVersion?: string
   /** Every approver key ever enrolled in the world, or null before the first message. */
   approvers: ApproverInfo[] | null
   /** This browser's approver key, if it has one, or null; undefined until it has been read. */
