@@ -39,9 +39,11 @@ func setupLinkText(link string, color bool) string {
 // wantColor is true when w is a terminal and NO_COLOR, as
 // https://no-color.org describes it, isn't set.
 func wantColor(w io.Writer) bool {
-	if os.Getenv("NO_COLOR") != "" {
-		return false
-	}
+	return os.Getenv("NO_COLOR") == "" && isTerminal(w)
+}
+
+// isTerminal is true when w is a terminal.
+func isTerminal(w io.Writer) bool {
 	f, ok := w.(*os.File)
 	if !ok {
 		return false

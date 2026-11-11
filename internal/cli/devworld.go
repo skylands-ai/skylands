@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"path/filepath"
 	"sync/atomic"
 
@@ -47,10 +48,18 @@ other machines can join the world through the embedded server's leaf node
 listener, which needs --leaf-listen on an address they can reach.
 
 The embedded NATS server asks for no credentials, so every listener defaults
-to 127.0.0.1.`,
+to 127.0.0.1.
+
+In a terminal, each log line is the time of day, the level, and the message,
+then its fields. Elsewhere, such as a service's log file, lines keep the
+date, as every other command's do.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDevworld(cmd.Context(), o, cmd.ErrOrStderr())
+			stderr := cmd.ErrOrStderr()
+			if isTerminal(stderr) {
+				slog.SetDefault(slog.New(newConsoleHandler(stderr, slog.LevelInfo)))
+			}
+			return runDevworld(cmd.Context(), o, stderr)
 		},
 	}
 	devworldUpFlags(cmd.Flags(), &o)
