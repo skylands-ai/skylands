@@ -41,6 +41,13 @@ type Manager interface {
 	// Uninstall stops the service and removes its definition. It returns
 	// ErrNotInstalled when there is no definition to remove.
 	Uninstall(ctx context.Context, name string) error
+	// Remove removes the service's definition without stopping it, for
+	// the service itself to call before it exits: asking the service
+	// manager to stop the service would wait on the very process asking.
+	// Exiting successfully afterwards leaves it stopped, as the manager
+	// restarts it only when it fails. It returns ErrNotInstalled when
+	// there is no definition to remove.
+	Remove(ctx context.Context, name string) error
 	// Active reports whether the service is running.
 	Active(ctx context.Context, name string) bool
 	// Path is where Install writes the service's definition.
@@ -50,9 +57,13 @@ type Manager interface {
 	Hints(ctx context.Context, name string) []string
 }
 
-// ErrNotInstalled is returned by Uninstall for a service with no
-// definition.
+// ErrNotInstalled is returned by Uninstall and Remove for a service with
+// no definition.
 var ErrNotInstalled = errors.New("not installed")
+
+// EnvName is the variable install sets in a service's environment to the
+// service's name, which tells the command it runs that it is that service.
+const EnvName = "SKYLANDS_SERVICE"
 
 // ForThisMachine returns the service manager for this operating system:
 // systemd on Linux and launchd on macOS.
@@ -93,18 +104,47 @@ func CheckName(name string) error {
 // Executable is the absolute path of the running binary, for a service to
 // run. A binary from "go run" or in a temporary directory is refused,
 // because it would be gone when the service next starts.
+//
+// Of the paths that name the binary, it prefers the one on PATH, because
+// a package manager keeps that path while it replaces the file behind it.
+// Homebrew's bin/skylands is a link into a directory named for the
+// version, which an upgrade deletes, so a service that ran the file the
+// link resolves to would not start again after the next upgrade.
 func Executable() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return "", err
 	}
-	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = resolved
+	resolved := exe
+	if r, err := filepath.EvalSymlinks(exe); err == nil {
+		resolved = r
 	}
-	if strings.Contains(exe, string(filepath.Separator)+"go-build") || within(exe, os.TempDir()) {
-		return "", fmt.Errorf("%s is a temporary binary, such as one from go run; install the service from a built or installed skylands", exe)
+	if strings.Contains(resolved, string(filepath.Separator)+"go-build") || within(resolved, os.TempDir()) {
+		return "", fmt.Errorf("%s is a temporary binary, such as one from go run; install the service from a built or installed skylands", resolved)
 	}
-	return exe, nil
+	return onPath(exe, resolved), nil
+}
+
+// onPath returns the path PATH finds for the binary named resolved when
+// it is the same file, and exe, the path the binary was started by,
+// otherwise.
+func onPath(exe, resolved string) string {
+	found, err := exec.LookPath(filepath.Base(resolved))
+	if err != nil {
+		return exe
+	}
+	if found, err = filepath.Abs(found); err != nil {
+		return exe
+	}
+	a, err := os.Stat(found)
+	if err != nil {
+		return exe
+	}
+	b, err := os.Stat(resolved)
+	if err != nil || !os.SameFile(a, b) {
+		return exe
+	}
+	return found
 }
 
 // within says whether path is dir or inside it. dir counts both as given

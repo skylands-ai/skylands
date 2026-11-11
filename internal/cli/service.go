@@ -54,8 +54,10 @@ closes: a systemd user unit on Linux, a launchd agent on macOS. It gets
 this shell's PATH, so it finds npx, git, and gh where you do.
 
 Installing again replaces the service with the new flags and restarts it.
-After replacing the binary, restart the service or install again to run
-the new one. "skylands %[1]s uninstall" stops and removes it.`, o.role),
+The service follows its binary, so upgrading or uninstalling skylands, such
+as with Homebrew, needs nothing more: once no agent is working on a turn,
+it restarts on a new binary, or removes itself when the binary has been
+gone for a few minutes. "skylands %[1]s uninstall" stops and removes it.`, o.role),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := service.CheckName(name); err != nil {
@@ -89,9 +91,11 @@ the new one. "skylands %[1]s uninstall" stops and removes it.`, o.role),
 				Name:        name,
 				Description: o.description,
 				Args:        append([]string{exe, o.role, "up"}, upArgs...),
+				// So "up" knows it is this service, and follows its binary.
+				Env: map[string]string{service.EnvName: name},
 			}
 			if path := os.Getenv("PATH"); path != "" {
-				spec.Env = map[string]string{"PATH": path}
+				spec.Env["PATH"] = path
 			}
 			began := time.Now()
 			if err := m.Install(ctx, spec); err != nil {

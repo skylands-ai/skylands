@@ -57,6 +57,24 @@ func (m *systemd) Uninstall(ctx context.Context, name string) error {
 	return nil
 }
 
+// Remove disables the unit and deletes it without stopping it: stopping
+// the unit that asks would wait for it to exit. Once it exits
+// successfully systemd does not start it again.
+func (m *systemd) Remove(ctx context.Context, name string) error {
+	path := m.Path(name)
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+		return ErrNotInstalled
+	}
+	if _, err := m.run(ctx, "systemctl", "--user", "disable", name+".service"); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	_, err := m.run(ctx, "systemctl", "--user", "daemon-reload")
+	return err
+}
+
 func (m *systemd) Active(ctx context.Context, name string) bool {
 	_, err := m.run(ctx, "systemctl", "--user", "is-active", "--quiet", name+".service")
 	return err == nil

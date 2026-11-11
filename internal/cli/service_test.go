@@ -22,6 +22,7 @@ type fakeManager struct {
 	installed   *service.Spec
 	onInstall   func()
 	uninstalled []string
+	removed     []string
 }
 
 func (m *fakeManager) Install(_ context.Context, s service.Spec) error {
@@ -37,6 +38,15 @@ func (m *fakeManager) Uninstall(_ context.Context, name string) error {
 		return service.ErrNotInstalled
 	}
 	m.uninstalled = append(m.uninstalled, name)
+	m.installed = nil
+	return nil
+}
+
+func (m *fakeManager) Remove(_ context.Context, name string) error {
+	if m.installed == nil {
+		return service.ErrNotInstalled
+	}
+	m.removed = append(m.removed, name)
 	m.installed = nil
 	return nil
 }
@@ -108,7 +118,7 @@ func TestDaemonInstallRunsUpWithTheGivenFlags(t *testing.T) {
 		// Flags in name order, paths absolute, and flags left at their
 		// defaults left out.
 		Args: []string{"/usr/local/bin/skylands", "daemon", "up", "--data-dir=" + filepath.Join(dir, "data"), "--host=wopr", "--socket=" + sock},
-		Env:  map[string]string{"PATH": "/usr/bin:/home/k/.npm-global/bin"},
+		Env:  map[string]string{"PATH": "/usr/bin:/home/k/.npm-global/bin", service.EnvName: "skylands-daemon"},
 	}
 	if !reflect.DeepEqual(*m.installed, want) {
 		t.Errorf("installed %+v\nwant      %+v", *m.installed, want)
@@ -132,6 +142,9 @@ func TestDevworldInstallTakesItsOwnFlagsAndName(t *testing.T) {
 	}
 	if m.installed.Name != "sky-test" {
 		t.Errorf("name = %q, want sky-test", m.installed.Name)
+	}
+	if got := m.installed.Env[service.EnvName]; got != "sky-test" {
+		t.Errorf("%s = %q, want the service's own name, sky-test", service.EnvName, got)
 	}
 	if want := []string{"/usr/local/bin/skylands", "devworld", "up", "--http=127.0.0.1:9090", "--socket=" + sock, "--url=https://box.example.ts.net"}; !reflect.DeepEqual(m.installed.Args, want) {
 		t.Errorf("args = %q, want %q", m.installed.Args, want)

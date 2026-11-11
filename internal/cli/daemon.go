@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -35,7 +36,10 @@ it over a Unix socket.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg.Version = versionString()
-			return daemon.Run(cmd.Context(), cfg)
+			return runService(cmd.Context(), func(ctx context.Context, stop <-chan struct{}) error {
+				cfg.StopWhenIdle = stop
+				return daemon.Run(ctx, cfg)
+			})
 		},
 	}
 	daemonUpFlags(cmd.Flags(), &cfg)
