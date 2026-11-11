@@ -1,6 +1,6 @@
 ---
 title: Register a Repo
-description: Register a github repository
+description: Register a repository on a host
 ---
 
 Before agents can do any work on your daemon host island, a repository needs to be registered
