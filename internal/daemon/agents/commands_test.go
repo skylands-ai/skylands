@@ -57,11 +57,12 @@ func TestCommandsAreAnnouncedOrRefused(t *testing.T) {
 	}
 	commands, announced := run.Commands()
 	if !announced || len(commands) != 1 || commands[0].Name != "review" || commands[0].Hint != "what to look at" {
-		t.Errorf("Commands = %+v, %v; want review alone, config being withheld", commands, announced)
+		t.Errorf("Commands = %+v, %v; want review alone, config and config show being withheld", commands, announced)
 	}
 	for prompt, want := range map[string]error{
 		"/config x=1":            ErrCommandWithheld,
 		"/CONFIG x=1":            ErrCommandWithheld,
+		"/config show":           ErrCommandWithheld,
 		"/clear":                 ErrCommandUnknown,
 		"/usr/bin is missing":    nil,
 		"review the diff please": nil,

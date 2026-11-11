@@ -73,6 +73,17 @@ func TestProbeAgentReadsModels(t *testing.T) {
 		t.Errorf("probe = %+v, want the fake agent's models", p)
 	}
 
+	// An agent that offers its mode through session modes has the modes
+	// the adapter lists read from them.
+	p, err := ProbeAgent(ctx, Adapter{Name: "fake", Command: cmd, Env: append(append([]string(nil), env...), fakeagent.EnvConfigOptions+"=modes"), Modes: []string{"plan", "ask"}},
+		t.TempDir(), ProbeOptions{AuthWait: 5 * time.Second, Models: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.ModelsRead || len(p.Models) != 0 || len(p.Modes) != 2 || p.Modes[0].ID != "plan" || p.Modes[0].Name != "Plan" || p.Modes[1].ID != "ask" {
+		t.Errorf("probe = %+v, want the listed modes from session modes, and no models", p)
+	}
+
 	// An agent with no model setting has its models read, and none.
 	if p := probe(); !p.ModelsRead || len(p.Models) != 0 || p.ModelsErr != nil {
 		t.Errorf("probe = %+v, want models read and none offered", p)

@@ -67,8 +67,21 @@ const NoInstructions = "(none)"
 // session config options, a mode and a model, which every session opens
 // or loads with at their first values, and which it gives when asked
 // SettingsQuestion. Set to "stuck", it takes every change and makes none,
-// like an agent that ignores what it is told.
+// like an agent that ignores what it is told. Set to "modes", it offers
+// the mode alone, through ACP's session modes and session/set_mode rather
+// than a config option, as Gemini CLI does, and its sessions have no model.
 const EnvConfigOptions = "SKYLANDS_FAKE_AGENT_CONFIG_OPTIONS"
+
+// EnvNoRawInput, when set to 1, makes the fake agent give no raw input
+// for its edit, saying what the edit will do in a diff in the request's
+// content instead, as Gemini CLI does.
+const EnvNoRawInput = "SKYLANDS_FAKE_AGENT_NO_RAW_INPUT"
+
+// EnvModeMarker, when set, makes the fake agent announce each change of
+// its mode, its own or one it was asked for, as a message chunk of this
+// text followed by the mode, as Gemini CLI does, in place of
+// current_mode_update.
+const EnvModeMarker = "SKYLANDS_FAKE_AGENT_MODE_MARKER"
 
 // The values the fake agent's config options take, the first of each
 // being what a session starts with.
@@ -80,9 +93,12 @@ var (
 // Commands are the slash commands the fake agent announces for every
 // session, a moment after it opens or loads, as real agents do. As a
 // prompt, a command gets the answer "ran /<name>" and the text after it.
+// "config show" is announced as Gemini CLI announces a subcommand, by its
+// words, and runs as "/config show".
 var Commands = []acp.AvailableCommand{
 	{Name: "review", Description: "Review the changes", Input: &acp.AvailableCommandInput{Hint: "what to look at"}},
 	{Name: "config", Description: "Change a setting directly"},
+	{Name: "config show", Description: "Show the settings"},
 }
 
 // SwitchModeTo and SwitchModelTo, followed by a value and as a whole
@@ -165,7 +181,7 @@ func Run(ctx context.Context) error {
 	return acp.RunAgent(ctx, &acp.StdioTransport{}, func(conn *acp.AgentConnection) any {
 		return &agent{conn: conn, delay: delay, noLoad: os.Getenv(EnvNoLoad) == "1", auth: os.Getenv(EnvAuth),
 			systemPrompt: os.Getenv(EnvSystemPrompt) == "1", config: os.Getenv(EnvConfigOptions), requireMeta: os.Getenv(EnvRequireMeta) == "1",
-			sessions: map[acp.SessionId]*session{}}
+			modeMarker: os.Getenv(EnvModeMarker), noRawInput: os.Getenv(EnvNoRawInput) == "1", sessions: map[acp.SessionId]*session{}}
 	})
 }
 
@@ -218,6 +234,11 @@ type agent struct {
 	config string
 	// requireMeta refuses a session that comes without _meta.
 	requireMeta bool
+	// modeMarker is EnvModeMarker: empty to announce modes with
+	// current_mode_update.
+	modeMarker string
+	// noRawInput is EnvNoRawInput.
+	noRawInput bool
 	// canAsk means the client fills in forms, so the agent may ask a person
 	// a question.
 	canAsk   bool
@@ -267,13 +288,13 @@ func (a *agent) LoadSession(ctx context.Context, req *acp.LoadSessionRequest) (*
 	}
 	a.mu.Lock()
 	a.sessions[req.SessionID] = s
-	options := a.configOptions(s)
+	options, modes := a.configOptions(s), a.sessionModes(s)
 	a.mu.Unlock()
 	if err := a.conn.SessionUpdate(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(ReplayedLine))}); err != nil {
 		return nil, err
 	}
 	go a.announceCommands(req.SessionID)
-	return &acp.LoadSessionResponse{ConfigOptions: options}, nil
+	return &acp.LoadSessionResponse{ConfigOptions: options, Modes: modes}, nil
 }
 
 func (a *agent) NewSession(_ context.Context, req *acp.NewSessionRequest) (*acp.NewSessionResponse, error) {
@@ -288,10 +309,10 @@ func (a *agent) NewSession(_ context.Context, req *acp.NewSessionRequest) (*acp.
 	}
 	a.mu.Lock()
 	a.sessions[id] = s
-	options := a.configOptions(s)
+	options, modes := a.configOptions(s), a.sessionModes(s)
 	a.mu.Unlock()
 	go a.announceCommands(id)
-	return &acp.NewSessionResponse{SessionID: id, ConfigOptions: options}, nil
+	return &acp.NewSessionResponse{SessionID: id, ConfigOptions: options, Modes: modes}, nil
 }
 
 // announceCommands tells the client the session's slash commands, a
@@ -305,7 +326,11 @@ func (a *agent) announceCommands(id acp.SessionId) {
 // is also where a loaded one comes back.
 func (a *agent) newSession(cwd, instructions string, meta acp.Meta) (*session, error) {
 	s := &session{cwd: cwd, instructions: instructions}
-	if a.config != "" {
+	switch a.config {
+	case "":
+	case "modes":
+		s.mode = Modes[0]
+	default:
 		s.mode, s.model = Modes[0], Models[0]
 	}
 	if len(meta) > 0 {
@@ -323,7 +348,7 @@ func (a *agent) newSession(cwd, instructions string, meta acp.Meta) (*session, e
 // configOptions are a session's config options as ACP describes them, or
 // nil for an agent that offers none. The caller holds a.mu.
 func (a *agent) configOptions(s *session) *[]acp.SessionConfigOption {
-	if a.config == "" {
+	if a.config == "" || a.config == "modes" {
 		return nil
 	}
 	sel := func(id, name string, category acp.SessionConfigOptionCategory, current string, values []string) acp.SessionConfigOption {
@@ -339,6 +364,52 @@ func (a *agent) configOptions(s *session) *[]acp.SessionConfigOption {
 		sel("fake-mode", "Mode", acp.SessionConfigOptionCategoryMode, s.mode, Modes),
 		sel("fake-model", "Model", acp.SessionConfigOptionCategoryModel, s.model, Models),
 	}
+}
+
+// sessionModes are a session's modes as ACP's session modes describe
+// them, for an agent that offers its mode that way, or nil. The caller
+// holds a.mu.
+func (a *agent) sessionModes(s *session) *acp.SessionModeState {
+	if a.config != "modes" {
+		return nil
+	}
+	modes := make([]acp.SessionMode, 0, len(Modes))
+	for _, m := range Modes {
+		modes = append(modes, acp.SessionMode{ID: acp.SessionModeId(m), Name: strings.ToUpper(m[:1]) + m[1:]})
+	}
+	return &acp.SessionModeState{AvailableModes: modes, CurrentModeID: acp.SessionModeId(s.mode)}
+}
+
+// SetSessionMode changes the mode of a session that offers its modes
+// through session modes, and announces it before answering.
+func (a *agent) SetSessionMode(ctx context.Context, req *acp.SetSessionModeRequest) (*acp.SetSessionModeResponse, error) {
+	a.mu.Lock()
+	s, ok := a.sessions[req.SessionID]
+	if !ok || a.config != "modes" {
+		a.mu.Unlock()
+		return nil, fmt.Errorf("no session modes for session %s", req.SessionID)
+	}
+	if !slices.Contains(Modes, string(req.ModeID)) {
+		a.mu.Unlock()
+		return nil, fmt.Errorf("invalid mode %q", req.ModeID)
+	}
+	mode := string(req.ModeID)
+	s.mode = mode
+	a.mu.Unlock()
+	if err := a.announceMode(ctx, req.SessionID, mode); err != nil {
+		return nil, err
+	}
+	return &acp.SetSessionModeResponse{}, nil
+}
+
+// announceMode tells the client a session's mode is now mode, with
+// current_mode_update or, given EnvModeMarker, in a message chunk.
+func (a *agent) announceMode(ctx context.Context, id acp.SessionId, mode string) error {
+	update := acp.CurrentModeUpdateSessionUpdate(acp.SessionModeId(mode))
+	if a.modeMarker != "" {
+		update = acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(a.modeMarker + mode))
+	}
+	return a.conn.SessionUpdate(ctx, &acp.SessionNotification{SessionID: id, Update: update})
 }
 
 // SetSessionConfigOption changes a session's mode or model to a value the
@@ -382,24 +453,27 @@ func (a *agent) setConfigOption(req *acp.SetSessionConfigOptionRequest) (*acp.Se
 	return &acp.SetSessionConfigOptionResponse{ConfigOptions: *a.configOptions(s)}, nil
 }
 
-// switchOwn changes one of a session's config options on the agent's own
-// account and announces it: with current_mode_update first for a mode,
-// then config_option_update.
+// switchOwn changes one of a session's settings on the agent's own
+// account and announces it: a mode first as announceMode does, then
+// config_option_update for an agent with config options.
 func (a *agent) switchOwn(ctx context.Context, id acp.SessionId, s *session, field *string, values []string, value string, mode bool) error {
 	a.mu.Lock()
-	if a.config == "" || !slices.Contains(values, value) {
+	if a.config == "" || (a.config == "modes" && !mode) || !slices.Contains(values, value) {
 		a.mu.Unlock()
 		return fmt.Errorf("cannot switch to %q", value)
 	}
 	*field = value
-	options := *a.configOptions(s)
+	options := a.configOptions(s)
 	a.mu.Unlock()
 	if mode {
-		if err := a.conn.SessionUpdate(ctx, &acp.SessionNotification{SessionID: id, Update: acp.CurrentModeUpdateSessionUpdate(acp.SessionModeId(value))}); err != nil {
+		if err := a.announceMode(ctx, id, value); err != nil {
 			return err
 		}
 	}
-	return a.conn.SessionUpdate(ctx, &acp.SessionNotification{SessionID: id, Update: acp.ConfigOptionUpdateSessionUpdate(options)})
+	if options == nil {
+		return nil
+	}
+	return a.conn.SessionUpdate(ctx, &acp.SessionNotification{SessionID: id, Update: acp.ConfigOptionUpdateSessionUpdate(*options)})
 }
 
 // systemPromptText is a session's system prompt as text. Only append mode
@@ -639,7 +713,11 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		// Like an agent whose tool input streams in, the edit is announced
 		// before its input is known, under a placeholder title with an empty
 		// input, and named once the input is complete.
-		if err := send(toolCall(id, "Edit", acp.ToolKindEdit, "", acp.ToolCallStatusPending, map[string]any{})); err != nil {
+		var streaming any = map[string]any{}
+		if a.noRawInput {
+			streaming = nil
+		}
+		if err := send(toolCall(id, "Edit", acp.ToolKindEdit, "", acp.ToolCallStatusPending, streaming)); err != nil {
 			return nil, err
 		}
 		title := "Edit " + edited
@@ -652,14 +730,21 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 			input["content"] = strings.Repeat("// a long line of the file's new content, éh, ✓\n", 400)
 		}
 		named := acp.ToolCallUpdateSessionUpdate(id)
-		named.Title, named.Kind, named.Locations, named.RawInput = &title, &kind, &locs, input
+		named.Title, named.Kind, named.Locations = &title, &kind, &locs
+		asked := acp.ToolCallUpdate{ToolCallID: id, Title: &title, Kind: &kind, Locations: &locs}
+		if a.noRawInput {
+			diff := []acp.ToolCallContent{acp.DiffToolCallContent(filepath.Join(s.cwd, edited), "rewritten\n")}
+			named.Content, asked.Content = &diff, &diff
+		} else {
+			named.RawInput, asked.RawInput = input, input
+		}
 		if err := send(named); err != nil {
 			return nil, err
 		}
 		// An edit needs permission, like a real agent's would.
 		perm, err := a.conn.RequestPermission(ctx, &acp.RequestPermissionRequest{
 			SessionID: req.SessionID,
-			ToolCall:  acp.ToolCallUpdate{ToolCallID: id, Title: &title, Kind: &kind, Locations: &locs, RawInput: input},
+			ToolCall:  asked,
 			Options: []acp.PermissionOption{
 				{OptionID: "allow", Name: "Allow", Kind: acp.PermissionOptionKindAllowOnce},
 				{OptionID: "always", Name: "Always allow", Kind: acp.PermissionOptionKindAllowAlways},

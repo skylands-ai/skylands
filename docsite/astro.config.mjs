@@ -92,7 +92,17 @@ export default defineConfig({
 				},
 				{
 					label: 'Operations',
-					items: [],
+					items: [
+						{ label: 'Run as a Service', slug: 'operations/service' },
+						{ label: 'Add Islands', slug: 'operations/islands' },
+						{ label: 'Open the World on a Phone', slug: 'operations/phone' },
+						{ label: 'Desktop Notifications', slug: 'operations/notifications' },
+						{ label: 'Rules and Approvals', slug: 'operations/rules' },
+						{ label: 'Agent Modes', slug: 'operations/agent-modes' },
+						{ label: 'Sessions and Worktrees', slug: 'operations/sessions' },
+						{ label: 'Signed Decisions and History', slug: 'operations/history' },
+						{ label: 'Run on Your Own NATS Server', slug: 'operations/own-nats' },
+					],
 				}
 			],
 		}),

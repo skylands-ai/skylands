@@ -61,6 +61,11 @@ type Adapter struct {
 	// append mode. An agent that does not advertise the system prompt
 	// does not get them.
 	Instructions string
+	// ModeMarker begins a message chunk that says the agent's mode is now
+	// the rest of the chunk, for an agent that says so in its reply rather
+	// than with ACP's current_mode_update. Such a chunk is taken as a mode
+	// update and never reaches the conversation.
+	ModeMarker string
 }
 
 // Registry is the adapters a daemon can launch, by name.
@@ -74,8 +79,9 @@ type Registry map[string]Adapter
 const ClaudeAdapterPackage = "@agentclientprotocol/claude-agent-acp@0.100.0"
 
 // DefaultRegistry holds the fake agent built into the skylands binary, the
-// Claude Code and Codex adapters from npm, and goose as installed on the
-// host. Each real agent is set to a mode in which it asks before acting.
+// Claude Code and Codex adapters and Gemini CLI from npm, and goose as
+// installed on the host. Each real agent is set to a mode in which it asks
+// before acting.
 func DefaultRegistry() Registry {
 	exe, err := os.Executable()
 	if err != nil {
@@ -89,6 +95,8 @@ func DefaultRegistry() Registry {
 		"codex": {Name: "codex", Provider: "codex", Command: []string{"npx", "-y", CodexAdapterPackage},
 			Modes: codexModes, Withheld: codexWithheld, Instructions: codexInstructions,
 			Login: "run npx -y " + CodexAdapterPackage + " login, or codex login if the Codex CLI is installed"},
+		"gemini": {Name: "gemini", Provider: "gemini", Command: []string{"npx", "-y", GeminiPackage, "--acp"},
+			Modes: geminiModes, Withheld: geminiWithheld, ModeMarker: geminiModeMarker, Login: geminiLogin},
 		"goose": {Name: "goose", Provider: "goose", Command: []string{"goose", "acp"}, Modes: gooseModes, Install: gooseInstall},
 	}
 }
@@ -237,6 +245,8 @@ type handler struct {
 	// session, and announced is closed for a session once it has.
 	commands  map[acp.SessionId][]v1.AgentCommand
 	announced map[acp.SessionId]chan struct{}
+	// modeMarker is the adapter's ModeMarker.
+	modeMarker string
 }
 
 // announce keeps the commands the agent announced for a session.
@@ -308,6 +318,9 @@ func (h *handler) Update(_ context.Context, n *acp.SessionNotification) error {
 
 func (h *handler) update(n *acp.SessionNotification) {
 	u := n.Update
+	if mode, ok := h.markedMode(u); ok {
+		u = acp.CurrentModeUpdateSessionUpdate(acp.SessionModeId(mode))
+	}
 	// Commands are kept for every session, including one being loaded,
 	// whose other updates are history the daemon already has.
 	if u.SessionUpdate == acp.SessionUpdateTypeAvailableCommandsUpdate {
@@ -379,6 +392,19 @@ func (h *handler) update(n *acp.SessionNotification) {
 	}
 }
 
+// markedMode is the mode a message chunk names when it is the adapter's
+// ModeMarker followed by a mode and nothing else.
+func (h *handler) markedMode(u acp.SessionUpdate) (string, bool) {
+	if h.modeMarker == "" || u.SessionUpdate != acp.SessionUpdateTypeAgentMessageChunk {
+		return "", false
+	}
+	mode, ok := strings.CutPrefix(contentText(u.Content), h.modeMarker)
+	if !ok || mode == "" || strings.ContainsAny(mode, " \t\r\n") {
+		return "", false
+	}
+	return mode, true
+}
+
 // RequestPermission hands a tool call the agent asks about to the
 // observer, which applies the host's rules or waits for a person. A side
 // session, such as a title request, is refused: it was told not to use
@@ -435,6 +461,9 @@ func (h *handler) RequestPermission(ctx context.Context, req *acp.RequestPermiss
 			input = data
 		}
 	}
+	if input == nil {
+		input = describedInput(tc.Title, u.Content)
+	}
 	options := make([]v1.PermissionOption, 0, len(req.Options))
 	for _, o := range req.Options {
 		options = append(options, v1.PermissionOption{ID: string(o.OptionID), Name: o.Name, Kind: string(o.Kind)})
@@ -444,6 +473,29 @@ func (h *handler) RequestPermission(ctx context.Context, req *acp.RequestPermiss
 		return &acp.RequestPermissionResponse{Outcome: acp.CancelledRequestPermissionOutcome()}, nil
 	}
 	return &acp.RequestPermissionResponse{Outcome: acp.SelectedRequestPermissionOutcome(acp.PermissionOptionId(d.OptionID))}, nil
+}
+
+// describedInput stands in for the raw input of a call an agent asks
+// about without ever giving one, as Gemini CLI does: what the agent says
+// the call will do, its title, which holds a command, and the request's
+// content, which holds an edit's diff. It is then what a person sees and
+// an approval signs. It is nil when the agent said neither.
+func describedInput(title string, content *[]acp.ToolCallContent) json.RawMessage {
+	described := struct {
+		Title   string                `json:"title,omitempty"`
+		Content []acp.ToolCallContent `json:"content,omitempty"`
+	}{Title: title}
+	if content != nil {
+		described.Content = *content
+	}
+	if described.Title == "" && len(described.Content) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(described)
+	if err != nil {
+		return nil
+	}
+	return data
 }
 
 // CreateElicitation hands a question the agent asks to the observer, which

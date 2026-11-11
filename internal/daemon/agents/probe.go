@@ -122,8 +122,8 @@ func (r *Run) readModels(ctx context.Context, cwd string, init *acp.InitializeRe
 	}
 	p.ModelsRead = true
 	var options []acp.SessionConfigOption
-	if sess.ConfigOptions != nil {
-		options = *sess.ConfigOptions
+	if given := withModes(sess.ConfigOptions, sess.Modes); given != nil {
+		options = *given
 	}
 	if o, ok := optionFor(options, acp.SessionConfigOptionCategoryMode); ok {
 		p.Modes = listedModes(r.modes, optionModels(o))

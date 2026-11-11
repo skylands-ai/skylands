@@ -2,6 +2,9 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -47,6 +50,36 @@ func TestGooseAdapter(t *testing.T) {
 	}
 	if ad.Install == "" {
 		t.Error("goose adapter has no install hint")
+	}
+}
+
+// TestGeminiAdapter keeps Gemini CLI at an exact version, run in its own
+// ACP mode, in the modes where it asks before acting, with its mode
+// announcements and the commands that act outside tool calls handled.
+func TestGeminiAdapter(t *testing.T) {
+	exact := regexp.MustCompile(`^@google/gemini-cli@\d+\.\d+\.\d+$`)
+	if !exact.MatchString(GeminiPackage) {
+		t.Errorf("GeminiPackage = %q, want the package at an exact x.y.z version", GeminiPackage)
+	}
+	ad := DefaultRegistry()["gemini"]
+	if !reflect.DeepEqual(ad.Command, []string{"npx", "-y", GeminiPackage, "--acp"}) || ad.Provider != "gemini" {
+		t.Errorf("gemini adapter = %+v", ad)
+	}
+	if !reflect.DeepEqual(ad.Modes, []string{"default", "plan"}) || len(ad.Env) != 0 {
+		t.Errorf("gemini modes = %q and env = %q, want default or plan sessions set over ACP alone", ad.Modes, ad.Env)
+	}
+	if ad.ModeMarker != "[MODE_UPDATE] " || ad.Login == "" {
+		t.Errorf("gemini mode marker = %q and login = %q", ad.ModeMarker, ad.Login)
+	}
+	for _, c := range []string{"extensions install", "extensions", "restore", "init"} {
+		if !ad.Withholds(c) {
+			t.Errorf("gemini adapter runs %s", c)
+		}
+	}
+	for _, c := range []string{"memory show", "about", "help"} {
+		if ad.Withholds(c) {
+			t.Errorf("gemini adapter withholds %s", c)
+		}
 	}
 }
 
@@ -175,6 +208,46 @@ func TestPermissionFillsInWhatTheAgentReported(t *testing.T) {
 	}
 	if !strings.Contains(string(second.Input), `"command":"go test ./..."`) {
 		t.Errorf("second input = %s, want the reported input when the request has none", second.Input)
+	}
+}
+
+// TestPermissionWithoutRawInput asks about a call the agent never gives a
+// raw input for, as Gemini CLI does, with what the agent said it will do
+// as the input: its title and the request's diff.
+func TestPermissionWithoutRawInput(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cwd := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cwd, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd, env := fakeagent.TestCommand()
+	rec := &recorder{}
+	ad := Adapter{Name: "fake", Command: cmd, Env: append(append([]string(nil), env...), fakeagent.EnvNoRawInput+"=1")}
+	if _, err := RunPrompt(ctx, ad, cwd, "do the thing", Settings{}, rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.asked) != 1 {
+		t.Fatalf("asked %d times", len(rec.asked))
+	}
+	var input struct {
+		Title   string `json:"title"`
+		Content []struct {
+			Type    string `json:"type"`
+			Path    string `json:"path"`
+			NewText string `json:"newText"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(rec.asked[0].Input, &input); err != nil {
+		t.Fatalf("input %s: %v", rec.asked[0].Input, err)
+	}
+	if input.Title != "Edit main.go" || len(input.Content) != 1 || input.Content[0].Type != "diff" || input.Content[0].NewText != "rewritten\n" {
+		t.Errorf("input = %s, want the title and the diff", rec.asked[0].Input)
+	}
+
+	// A call with neither a title nor content has no input, as before.
+	if got := describedInput("", nil); got != nil {
+		t.Errorf("describedInput of nothing = %s", got)
 	}
 }
 
