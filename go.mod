@@ -10,7 +10,7 @@ require (
 	github.com/nats-io/nuid v1.0.1
 	github.com/spachava753/acp-sdk v0.6.0
 	github.com/spf13/cobra v1.10.2
-	github.com/spf13/pflag v1.0.9
+	github.com/spf13/pflag v1.1.0
 )
 
 require (
