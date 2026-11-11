@@ -40,6 +40,7 @@ You need Go 1.26 and Node 22.23.4 or newer. `make lint` also needs [golangci-lin
 | `make lint` | Runs `go vet` and golangci-lint |
 | `make docs` | Builds the documentation site into `docsite/dist` |
 | `make snapshot` | Builds every release archive into `dist/` with goreleaser, publishing nothing |
+| `make notices` | Writes `THIRD_PARTY_NOTICES`, the licenses of the third-party code in the binary, which every release archive includes |
 
 Run `make web` before `make build` or `make install`. A binary built without `web/dist` serves a page saying the client is missing.
 
