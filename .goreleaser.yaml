@@ -44,7 +44,7 @@ homebrew_casks:
   - name: skylands
     binaries: [skylands]
     homepage: https://skylands.ai
-    description: Run, watch, and approve coding agents across your machines.
+    description: Let your agents take flight on any machine, from anywhere
     skip_upload: true
     repository:
       owner: skylands-ai
