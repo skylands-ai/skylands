@@ -113,12 +113,12 @@ func ProbeAgent(ctx context.Context, ad Adapter, cwd string, opts ProbeOptions) 
 // readModels opens a session, reads its model setting into p, and closes
 // the session when the agent can.
 func (r *Run) readModels(ctx context.Context, cwd string, init *acp.InitializeResponse, p *Probe) error {
-	sess, err := r.client.NewSession(ctx, &acp.NewSessionRequest{Cwd: cwd, McpServers: []acp.McpServer{}, Meta: r.meta})
+	sess, err := r.client.SessionNew(ctx, &acp.NewSessionRequest{Cwd: cwd, McpServers: []acp.McpServer{}, Meta: r.meta})
 	if err != nil {
 		return r.fail("open a session", err)
 	}
 	if caps := init.AgentCapabilities; caps != nil && caps.SessionCapabilities != nil && caps.SessionCapabilities.Close != nil {
-		defer func() { _, _ = r.client.CloseSession(ctx, &acp.CloseSessionRequest{SessionID: sess.SessionID}) }()
+		defer func() { _, _ = r.client.SessionClose(ctx, &acp.CloseSessionRequest{SessionID: sess.SessionID}) }()
 	}
 	p.ModelsRead = true
 	var options []acp.SessionConfigOption

@@ -175,12 +175,12 @@ func TestPermissionFillsInWhatTheAgentReported(t *testing.T) {
 	h := &handler{ExtensionMux: acp.NewExtensionMux(), auth: make(chan AuthStatus, 1), cwd: t.TempDir(), obs: rec, calls: map[acp.ToolCallId]ToolCall{}}
 	h.seq = newSequencer(h.update)
 	title, kind := "go test ./...", acp.ToolKindExecute
-	_ = h.Update(ctx, &acp.SessionNotification{SessionID: "s", Update: acp.SessionUpdate{
+	_ = h.SessionUpdate(ctx, &acp.SessionNotification{SessionID: "s", Update: acp.SessionUpdate{
 		SessionUpdate: acp.SessionUpdateTypeToolCall, ToolCallID: "c1", Title: &title, Kind: &kind,
 		RawInput: map[string]any{"command": "go test ./..."},
 	}})
 	allow := []acp.PermissionOption{{OptionID: "allow_once", Name: "Allow", Kind: acp.PermissionOptionKindAllowOnce}}
-	if _, err := h.RequestPermission(ctx, &acp.RequestPermissionRequest{SessionID: "s", Options: allow, ToolCall: acp.ToolCallUpdate{
+	if _, err := h.SessionRequestPermission(ctx, &acp.RequestPermissionRequest{SessionID: "s", Options: allow, ToolCall: acp.ToolCallUpdate{
 		ToolCallID: "c1", Locations: &[]acp.ToolCallLocation{},
 		RawInput: map[string]any{"command": "go test ./...", "cwd": "/w"},
 	}}); err != nil {
@@ -188,7 +188,7 @@ func TestPermissionFillsInWhatTheAgentReported(t *testing.T) {
 	}
 	// A request that says what the call is wins over the earlier report.
 	editTitle, edit := "Edit main.go", acp.ToolKindEdit
-	if _, err := h.RequestPermission(ctx, &acp.RequestPermissionRequest{SessionID: "s", Options: allow, ToolCall: acp.ToolCallUpdate{
+	if _, err := h.SessionRequestPermission(ctx, &acp.RequestPermissionRequest{SessionID: "s", Options: allow, ToolCall: acp.ToolCallUpdate{
 		ToolCallID: "c1", Title: &editTitle, Kind: &edit,
 	}}); err != nil {
 		t.Fatal(err)
