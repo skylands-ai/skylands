@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Install the skylands binary from a release or from source, and check a machine that will run agents.
+description: Install the skylands binary with Homebrew, from a release, or from source, and check a machine that will run agents.
 ---
 
 Once developers get past the initial adoption stage and start using AI assistants and harnesses for real work (aka "in anger"), their needs change. Managing multiple agents working in multiple repositories from different locations and apps becomes a real pain and slows down the work. Developers end up herding terminal sessions and VPNs more than they orchestrate agents.
@@ -11,6 +11,24 @@ Skylands solves that problem by giving you a single interface through which you 
 
 Skylands gives you a _**secure**, **signed**_ log of everything your agents do and every approval or rejection you provide, no matter where the agent's running or what it's doing. Conversation history is available through a central inbox rather than hidden deep within some obscure sub-directory.
 
+
+## Install with Homebrew
+
+On macOS or Linux with [Homebrew](https://brew.sh), add the Skylands tap, trust it, and install the cask:
+
+```sh
+brew tap skylands-ai/tap
+brew trust skylands-ai/tap
+brew install --cask skylands
+```
+
+Homebrew won't load a cask from a third-party tap until you've trusted the tap.
+
+On macOS, the cask clears the quarantine attribute for you.
+
+`brew upgrade` installs new versions, and `brew uninstall --cask skylands` removes it. A service from `skylands daemon install` or `skylands devworld install` follows both on its own; see [Run as a Service](/operations/service/#upgrades-and-uninstalls).
+
+If you've also installed from source, `which -a skylands` shows which copy your shell runs first.
 
 ## Install from a Release
 
