@@ -8,7 +8,7 @@ require (
 	github.com/nats-io/nats.go v1.55.0
 	github.com/nats-io/nkeys v0.4.16
 	github.com/nats-io/nuid v1.0.1
-	github.com/spachava753/acp-sdk v0.5.0
+	github.com/spachava753/acp-sdk v0.6.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
 )

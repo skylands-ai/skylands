@@ -222,6 +222,19 @@ type session struct {
 	meta string
 }
 
+// The SDK calls a handler method only when its name matches the ACP method,
+// and a method with any other name still compiles but is never called. These
+// guards make a name that drifts from the SDK's a compile error.
+var (
+	_ acp.InitializeHandler             = (*agent)(nil)
+	_ acp.SessionNewHandler             = (*agent)(nil)
+	_ acp.SessionLoadHandler            = (*agent)(nil)
+	_ acp.SessionPromptHandler          = (*agent)(nil)
+	_ acp.SessionCancelHandler          = (*agent)(nil)
+	_ acp.SessionSetModeHandler         = (*agent)(nil)
+	_ acp.SessionSetConfigOptionHandler = (*agent)(nil)
+)
+
 type agent struct {
 	conn   *acp.AgentConnection
 	delay  time.Duration
@@ -271,10 +284,10 @@ func (a *agent) Initialize(_ context.Context, req *acp.InitializeRequest) (*acp.
 	}, nil
 }
 
-// LoadSession brings back a session from a previous process. The fake
+// SessionLoad brings back a session from a previous process. The fake
 // agent keeps nothing on disk, so any id is accepted, and it replays a
 // line of history the way a real agent streams the conversation back.
-func (a *agent) LoadSession(ctx context.Context, req *acp.LoadSessionRequest) (*acp.LoadSessionResponse, error) {
+func (a *agent) SessionLoad(ctx context.Context, req *acp.LoadSessionRequest) (*acp.LoadSessionResponse, error) {
 	if a.noLoad {
 		return nil, fmt.Errorf("this agent cannot load sessions")
 	}
@@ -297,7 +310,7 @@ func (a *agent) LoadSession(ctx context.Context, req *acp.LoadSessionRequest) (*
 	return &acp.LoadSessionResponse{ConfigOptions: options, Modes: modes}, nil
 }
 
-func (a *agent) NewSession(_ context.Context, req *acp.NewSessionRequest) (*acp.NewSessionResponse, error) {
+func (a *agent) SessionNew(_ context.Context, req *acp.NewSessionRequest) (*acp.NewSessionResponse, error) {
 	instructions, err := systemPromptText(req.SystemPrompt)
 	if err != nil {
 		return nil, err
@@ -380,9 +393,9 @@ func (a *agent) sessionModes(s *session) *acp.SessionModeState {
 	return &acp.SessionModeState{AvailableModes: modes, CurrentModeID: acp.SessionModeId(s.mode)}
 }
 
-// SetSessionMode changes the mode of a session that offers its modes
+// SessionSetMode changes the mode of a session that offers its modes
 // through session modes, and announces it before answering.
-func (a *agent) SetSessionMode(ctx context.Context, req *acp.SetSessionModeRequest) (*acp.SetSessionModeResponse, error) {
+func (a *agent) SessionSetMode(ctx context.Context, req *acp.SetSessionModeRequest) (*acp.SetSessionModeResponse, error) {
 	a.mu.Lock()
 	s, ok := a.sessions[req.SessionID]
 	if !ok || a.config != "modes" {
@@ -412,10 +425,10 @@ func (a *agent) announceMode(ctx context.Context, id acp.SessionId, mode string)
 	return a.conn.SessionUpdate(ctx, &acp.SessionNotification{SessionID: id, Update: update})
 }
 
-// SetSessionConfigOption changes a session's mode or model to a value the
+// SessionSetConfigOption changes a session's mode or model to a value the
 // agent offers, and announces the options it then has before answering,
 // as real agents do.
-func (a *agent) SetSessionConfigOption(ctx context.Context, req *acp.SetSessionConfigOptionRequest) (*acp.SetSessionConfigOptionResponse, error) {
+func (a *agent) SessionSetConfigOption(ctx context.Context, req *acp.SetSessionConfigOptionRequest) (*acp.SetSessionConfigOptionResponse, error) {
 	resp, err := a.setConfigOption(req)
 	if err != nil {
 		return nil, err
@@ -492,7 +505,7 @@ func systemPromptText(p *acp.SystemPrompt) (string, error) {
 	return text, nil
 }
 
-func (a *agent) Cancel(_ context.Context, n *acp.CancelNotification) error {
+func (a *agent) SessionCancel(_ context.Context, n *acp.CancelNotification) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if s, ok := a.sessions[n.SessionID]; ok {
@@ -508,7 +521,7 @@ func (a *agent) cancelled(id acp.SessionId) bool {
 	return ok && s.cancelled
 }
 
-// Prompt plays the script: plan, read up to four files, edit the first,
+// SessionPrompt plays the script: plan, read up to four files, edit the first,
 // report usage, say what it did, and end the turn.
 func promptText(req *acp.PromptRequest) string {
 	asked := ""
@@ -518,7 +531,7 @@ func promptText(req *acp.PromptRequest) string {
 	return asked
 }
 
-func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.PromptResponse, error) {
+func (a *agent) SessionPrompt(ctx context.Context, req *acp.PromptRequest) (*acp.PromptResponse, error) {
 	a.mu.Lock()
 	s, ok := a.sessions[req.SessionID]
 	if ok {
@@ -671,7 +684,7 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 			options = append(options, acp.EnumOption{Const: f, Title: f})
 		}
 		fileTitle, otherTitle, otherDesc := "File", "Other", "Type your own answer, or add a note to the option you chose above (optional)."
-		resp, err := a.conn.CreateElicitation(ctx, &acp.CreateElicitationRequest{
+		resp, err := a.conn.ElicitationCreate(ctx, &acp.CreateElicitationRequest{
 			Mode: acp.CreateElicitationRequestTypeForm, SessionID: req.SessionID, Message: "Which file should I edit?",
 			RequestedSchema: acp.ElicitationSchema{Type: acp.ElicitationSchemaTypeObject, Properties: map[string]acp.ElicitationPropertySchema{
 				"question_0":        {Type: acp.ElicitationPropertySchemaTypeString, Title: &fileTitle, OneOf: &options},
@@ -742,7 +755,7 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 			return nil, err
 		}
 		// An edit needs permission, like a real agent's would.
-		perm, err := a.conn.RequestPermission(ctx, &acp.RequestPermissionRequest{
+		perm, err := a.conn.SessionRequestPermission(ctx, &acp.RequestPermissionRequest{
 			SessionID: req.SessionID,
 			ToolCall:  asked,
 			Options: []acp.PermissionOption{

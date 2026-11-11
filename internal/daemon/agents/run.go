@@ -83,7 +83,7 @@ func Start(ctx context.Context, ad Adapter, cwd string, s Settings, obs Observer
 	if err != nil {
 		return nil, err
 	}
-	sess, err := r.client.NewSession(ctx, &acp.NewSessionRequest{Cwd: cwd, McpServers: []acp.McpServer{}, SystemPrompt: r.system, Meta: r.meta})
+	sess, err := r.client.SessionNew(ctx, &acp.NewSessionRequest{Cwd: cwd, McpServers: []acp.McpServer{}, SystemPrompt: r.system, Meta: r.meta})
 	if err != nil {
 		_ = r.Close()
 		return nil, r.fail("open session", err)
@@ -115,7 +115,7 @@ func Resume(ctx context.Context, ad Adapter, cwd string, s Settings, agentSessio
 	if agentSessionID != "" && init.AgentCapabilities != nil && init.AgentCapabilities.LoadSession {
 		id := acp.SessionId(agentSessionID)
 		r.handler.aside(id)
-		loaded, err := r.client.LoadSession(ctx, &acp.LoadSessionRequest{SessionID: id, Cwd: cwd, McpServers: []acp.McpServer{}, SystemPrompt: r.system, Meta: r.meta})
+		loaded, err := r.client.SessionLoad(ctx, &acp.LoadSessionRequest{SessionID: id, Cwd: cwd, McpServers: []acp.McpServer{}, SystemPrompt: r.system, Meta: r.meta})
 		r.drain()
 		r.handler.collected(id)
 		if err == nil {
@@ -140,7 +140,7 @@ func Resume(ctx context.Context, ad Adapter, cwd string, s Settings, agentSessio
 		}
 		slog.Info("agents: the agent could not load its session, seeding a new one", "agent", ad.Name, "err", err)
 	}
-	sess, err := r.client.NewSession(ctx, &acp.NewSessionRequest{Cwd: cwd, McpServers: []acp.McpServer{}, SystemPrompt: r.system, Meta: r.meta})
+	sess, err := r.client.SessionNew(ctx, &acp.NewSessionRequest{Cwd: cwd, McpServers: []acp.McpServer{}, SystemPrompt: r.system, Meta: r.meta})
 	if err != nil {
 		_ = r.Close()
 		return nil, "", r.fail("open session", err)
@@ -488,12 +488,12 @@ func (r *Run) setOption(ctx context.Context, id acp.SessionId, options []acp.Ses
 	if o.ID == sessionModesID {
 		// ACP's session modes have no options to give back: the agent's
 		// answering is what says the mode is set.
-		if _, err = r.client.SetSessionMode(ctx, &acp.SetSessionModeRequest{SessionID: id, ModeID: acp.SessionModeId(value)}); err == nil {
+		if _, err = r.client.SessionSetMode(ctx, &acp.SetSessionModeRequest{SessionID: id, ModeID: acp.SessionModeId(value)}); err == nil {
 			after = withValue(options, category, value)
 		}
 	} else {
 		var resp *acp.SetSessionConfigOptionResponse
-		if resp, err = r.client.SetSessionConfigOption(ctx, &acp.SetSessionConfigOptionRequest{SessionID: id, ConfigID: o.ID, Value: acp.SessionConfigValueId(value)}); err == nil {
+		if resp, err = r.client.SessionSetConfigOption(ctx, &acp.SetSessionConfigOptionRequest{SessionID: id, ConfigID: o.ID, Value: acp.SessionConfigValueId(value)}); err == nil {
 			after = resp.ConfigOptions
 		}
 	}
@@ -608,7 +608,7 @@ func (r *Run) Prompt(ctx context.Context, text string) (string, error) {
 		r.mu.Unlock()
 		cancel()
 	}()
-	resp, err := r.client.Prompt(ctx, &acp.PromptRequest{SessionID: r.session, Prompt: []acp.ContentBlock{acp.TextContentBlock(text)}})
+	resp, err := r.client.SessionPrompt(ctx, &acp.PromptRequest{SessionID: r.session, Prompt: []acp.ContentBlock{acp.TextContentBlock(text)}})
 	if err != nil {
 		return "", r.fail("prompt", err)
 	}
@@ -659,7 +659,7 @@ func (r *Run) drain() { r.handler.catchUp() }
 func (r *Run) Title(ctx context.Context, request string, timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	sess, err := r.client.NewSession(ctx, &acp.NewSessionRequest{Cwd: r.cwd, McpServers: []acp.McpServer{}, Meta: r.meta})
+	sess, err := r.client.SessionNew(ctx, &acp.NewSessionRequest{Cwd: r.cwd, McpServers: []acp.McpServer{}, Meta: r.meta})
 	if err != nil {
 		return "", fmt.Errorf("open a side session: %w", err)
 	}
@@ -682,11 +682,11 @@ func (r *Run) Title(ctx context.Context, request string, timeout time.Duration) 
 	go func() {
 		select {
 		case <-ctx.Done():
-			_ = r.client.Cancel(context.Background(), &acp.CancelNotification{SessionID: sess.SessionID})
+			_ = r.client.SessionCancel(context.Background(), &acp.CancelNotification{SessionID: sess.SessionID})
 		case <-done:
 		}
 	}()
-	resp, err := r.client.Prompt(ctx, &acp.PromptRequest{SessionID: sess.SessionID, Prompt: []acp.ContentBlock{acp.TextContentBlock(titles.Request(request))}})
+	resp, err := r.client.SessionPrompt(ctx, &acp.PromptRequest{SessionID: sess.SessionID, Prompt: []acp.ContentBlock{acp.TextContentBlock(titles.Request(request))}})
 	close(done)
 	if err != nil {
 		return "", fmt.Errorf("ask for a title: %w", err)
@@ -710,7 +710,7 @@ func (r *Run) Cancel(ctx context.Context) {
 	if turn == nil {
 		return
 	}
-	_ = r.client.Cancel(ctx, &acp.CancelNotification{SessionID: r.session})
+	_ = r.client.SessionCancel(ctx, &acp.CancelNotification{SessionID: r.session})
 }
 
 // CloseGrace is how long Close gives the agent to finish what it is doing

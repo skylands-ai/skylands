@@ -220,6 +220,15 @@ type Decision struct {
 	Cancelled bool
 }
 
+// The SDK calls a handler method only when its name matches the ACP method,
+// and a method with any other name still compiles but is never called. These
+// guards make a name that drifts from the SDK's a compile error.
+var (
+	_ acp.SessionUpdateHandler            = (*handler)(nil)
+	_ acp.SessionRequestPermissionHandler = (*handler)(nil)
+	_ acp.ElicitationCreateHandler        = (*handler)(nil)
+)
+
 // handler answers the agent's calls to the client side of ACP.
 type handler struct {
 	// ExtensionMux receives the agent's underscore-prefixed notifications,
@@ -309,9 +318,9 @@ func (h *handler) collected(id acp.SessionId) string {
 	return b.String()
 }
 
-// Update receives session updates, possibly concurrently and out of order,
+// SessionUpdate receives session updates, possibly concurrently and out of order,
 // and lets the sequencer hand them on in the order the agent sent them.
-func (h *handler) Update(_ context.Context, n *acp.SessionNotification) error {
+func (h *handler) SessionUpdate(_ context.Context, n *acp.SessionNotification) error {
 	h.seq.Deliver(n)
 	return nil
 }
@@ -405,7 +414,7 @@ func (h *handler) markedMode(u acp.SessionUpdate) (string, bool) {
 	return mode, true
 }
 
-// RequestPermission hands a tool call the agent asks about to the
+// SessionRequestPermission hands a tool call the agent asks about to the
 // observer, which applies the host's rules or waits for a person. A side
 // session, such as a title request, is refused: it was told not to use
 // tools.
@@ -425,7 +434,7 @@ func (h *handler) catchUp() {
 	}
 }
 
-func (h *handler) RequestPermission(ctx context.Context, req *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
+func (h *handler) SessionRequestPermission(ctx context.Context, req *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
 	h.mu.Lock()
 	_, side := h.side[req.SessionID]
 	h.mu.Unlock()
@@ -498,10 +507,10 @@ func describedInput(title string, content *[]acp.ToolCallContent) json.RawMessag
 	return data
 }
 
-// CreateElicitation hands a question the agent asks to the observer, which
+// ElicitationCreate hands a question the agent asks to the observer, which
 // waits for a person. A side session, such as a title request, is refused,
 // and so is a URL elicitation, which Skylands cannot open for anyone.
-func (h *handler) CreateElicitation(ctx context.Context, req *acp.CreateElicitationRequest) (*acp.CreateElicitationResponse, error) {
+func (h *handler) ElicitationCreate(ctx context.Context, req *acp.CreateElicitationRequest) (*acp.CreateElicitationResponse, error) {
 	h.mu.Lock()
 	_, side := h.side[req.SessionID]
 	h.mu.Unlock()
