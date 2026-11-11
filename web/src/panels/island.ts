@@ -2,6 +2,7 @@ import { el } from '../dom'
 import type { AgentAvailability, Island, Repo, Session } from '../protocol'
 import { agentLabel, clockText, islandStatus, isOpen } from '../status'
 import { agentGlyph, factsBox, header, note, section, timeNode } from './parts'
+import { type PruneOptions, pruneSection } from './prune'
 
 /**
  * The agents an island can run, as its daemon last checked: what each is,
@@ -51,6 +52,7 @@ export function renderIslandPanel(
   lastContact: number | null,
   sessions: Session[],
   land: (terrace: string) => void,
+  prune: PruneOptions,
 ): void {
   panel.textContent = ''
   const d = i.daemon
@@ -118,4 +120,6 @@ export function renderIslandPanel(
       ]),
     )
   }
+  const worktrees = pruneSection(sessions, prune)
+  if (worktrees) panel.appendChild(worktrees)
 }

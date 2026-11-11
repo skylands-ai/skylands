@@ -223,8 +223,8 @@ export function signPrompt(s: State, x: Session, text: string, revision: number)
   return signOnceWorld(s, (world) => ({ v: DECISION_VERSION, kind: 'prompt', world, host: x.host, session: x.id, revision, prompt: textHash(text) }))
 }
 
-/** This browser's signature over a commit, merge, or pull request, at the revision it names. */
-export function signChange(s: State, x: Session, action: 'commit' | 'merge' | 'pull-request', text: string, revision: number) {
+/** This browser's signature over a commit, merge, pull request, or removal, at the revision it names. */
+export function signChange(s: State, x: Session, action: 'commit' | 'merge' | 'pull-request' | 'remove', text: string, revision: number) {
   return signOnceWorld(s, (world) => ({ v: DECISION_VERSION, kind: 'change', world, host: x.host, session: x.id, revision, action, text }))
 }
 

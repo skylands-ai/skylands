@@ -5,6 +5,7 @@ import { HOST_DEFAULTS, rulesSheet } from '../rules'
 import { agentLabel, isOpen } from '../status'
 import { sumTokens } from '../store'
 import { agentGlyph, backButton, factsBox, header, hint, note, section, timeNode, tokensNode } from './parts'
+import { type PruneOptions, pruneSection } from './prune'
 
 /** The terrace-level panel: one repository on one host. */
 export function renderTerracePanel(
@@ -18,6 +19,7 @@ export function renderTerracePanel(
   setRules: (rules: Rule[]) => Promise<string>,
   canSign: boolean,
   lapsed: string | undefined,
+  prune: PruneOptions,
 ): void {
   panel.textContent = ''
   const down = stale || !island.reachable
@@ -58,6 +60,8 @@ export function renderTerracePanel(
       rulesSheet(repo.rules ?? [], { defaults: HOST_DEFAULTS, readOnly: down || !canSign, lapsed: repo.rulesLapsed ? lapsed : undefined, onChange: setRules }),
     ]),
   )
+  const worktrees = pruneSection(sessions, prune)
+  if (worktrees) panel.appendChild(worktrees)
   panel.appendChild(hint(sessions.length ? 'Click an airship to follow its agent, or a building to look closer. Conversations are in the inbox.' : 'Click a building to look closer.'))
 }
 

@@ -285,11 +285,12 @@ export interface Session {
   /** The latest commit made through Skylands, and how many there were. */
   commit?: string
   commits?: number
-  /** The latest merge into the checkout, the pull request opened from the branch, and whether the worktree is gone. */
+  /** The latest merge into the checkout, the pull request opened from the branch, whether the worktree is gone, and whether its branch stayed when it went. */
   mergedInto?: string
   mergedCommit?: string
   pullRequest?: string
   worktreeRemoved?: boolean
+  branchKept?: boolean
   /** running: the agent works on a turn. idle: it waits for a person. */
   status: 'running' | 'idle' | 'ended' | 'failed'
   stopReason?: string
