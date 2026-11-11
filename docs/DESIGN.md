@@ -457,57 +457,53 @@ Two prototypes show the design so far.
 
 Open items:
 
-- [ ] Choose the domain for Skylands.
+- [x] Choose the domain for Skylands: skylands.ai.
 - [ ] Set default size caps for host event streams.
-- [ ] Choose how push notifications reach phones.
+- [ ] Design Web Push for approvers' phones and browsers (#53).
 
-## Initial Scaffold
-The following is an initial, _rough estimate_ of what the scaffolding structure looks like.
+## Repository layout
 
 ```
 skylands/
 ├── cmd/
-│   └── skylands/              one binary: devworld up, citadel up, daemon up/install/status, repo register, request list/approve/deny
+│   └── skylands/              the one binary: devworld, citadel, daemon, and the local CLI
 ├── api/
-│   └── v1/                    public: subject builders, event and command types
+│   └── v1/                    public: subjects, event and command types
 ├── internal/
-│   ├── cli/                   subcommand wiring, Unix socket client for the local CLI
-│   ├── citadel/
-│   │   ├── rules/             Rules aggregate
-│   │   ├── users/             Users aggregate
-│   │   ├── budget/            Budget aggregate
-│   │   ├── workorder/         WorkOrder aggregate
-│   │   ├── projections/       in-memory projections, KV snapshots
-│   │   ├── service/           skylands-citadel micro endpoints, commands and queries
-│   │   ├── push/              phone notifications
+│   ├── cli/                   subcommands, and the client for the daemon's socket
+│   ├── citadel/               the citadel role
+│   │   ├── projections/       in-memory views of the world
 │   │   └── web/               HTTP and WebSocket server for browsers
-│   ├── daemon/
-│   │   ├── session/           Session aggregate
+│   ├── daemon/                the daemon role
+│   │   ├── agents/            agents as child processes over ACP, and their adapters
+│   │   ├── blobs/             exact inputs and outputs kept on the host under their SHA-256
+│   │   ├── fetch/             on-demand reads: transcripts, diffs, and tool calls
 │   │   ├── host/              Host aggregate
-│   │   ├── placement/         placement processor
-│   │   ├── agents/            ACP runner and provider adapters
-│   │   ├── hooks/             Claude Code hooks
-│   │   ├── terrain/           repos, worktrees, file watching
-│   │   ├── enforce/           rule enforcement, approval signature checks
-│   │   ├── leaf/              embedded leaf node, local streams and mirrors
-│   │   ├── fetch/             diff, file, transcript, and tool call responders
-│   │   └── socket/            local API for the CLI
+│   │   ├── session/           Session aggregate
+│   │   ├── socket/            local API for the CLI
+│   │   └── terrain/           a repository's files as the world shows them
+│   ├── approval/              approvers, signed decisions, and their verification
+│   ├── canonical/             JSON in RFC 8785's canonical form, for signing
 │   ├── es/                    event-sourcing kit over JetStream
+│   ├── fakeagent/             scripted ACP agent for tests
+│   ├── filelock/              the lock a daemon holds on its island while it runs
+│   ├── natsembed/             in-process nats-server for devworld and leaf nodes
+│   ├── preflight/             checks of what a host needs to run agents
 │   ├── rules/                 rule language and evaluation
-│   ├── approval/              signed records and approvals, and their verification
-│   └── natsembed/             embedded server setup for leaf nodes and skylands devworld up
+│   ├── service/               systemd and launchd services that follow their binary
+│   ├── titles/                conversation titles from a side session
+│   └── watchdog/              ends a daemon's agents if the daemon dies
 ├── web/                       citadel front end, built to web/dist and embedded
 │   └── src/
-│       ├── world/             the 3D scene, starting from the prototype
-│       ├── panels/
-│       ├── bar/               command bar and work orders
-│       └── inbox/             phone routes, installed as a PWA
+│       ├── world/             the 3D scene and its themes
+│       └── panels/
+├── docsite/                   docs.skylands.ai, built with Starlight
+├── docs/                      design notes and diagrams
+├── scripts/                   release smoke test
 ├── test/
-│   ├── e2e/                   daemon, citadel, and embedded NATS in one test process
-│   └── fakeagent/             scripted ACP agent for tests
-├── packaging/                 systemd unit, launchd plist for brew services, Dockerfile
-├── docs/
-├── .goreleaser.yaml
+│   └── e2e/                   daemon, citadel, and embedded NATS in one test process
+├── .github/workflows/         CI, releases, and the docs site
+├── .goreleaser.yaml           release archives and the Homebrew cask
 └── go.mod
 ```
 
