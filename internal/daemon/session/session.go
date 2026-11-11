@@ -979,7 +979,7 @@ func (m *Manager) List() []Session {
 	defer m.mu.Unlock()
 	out := make([]Session, 0, len(m.sessions))
 	for _, s := range m.sessions {
-		out = append(out, *s)
+		out = append(out, s.copy())
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
 	return out
@@ -993,7 +993,22 @@ func (m *Manager) Get(id string) (Session, bool) {
 	if !ok {
 		return Session{}, false
 	}
-	return *s, true
+	return s.copy(), true
+}
+
+// copy returns s with slices of its own, for a caller to read without the
+// manager's lock. apply changes a tool call in place and filters pending
+// requests and questions in place, so a copy sharing their backing arrays
+// would change, or be left inconsistent, under its reader.
+func (s *Session) copy() Session {
+	c := *s
+	c.Rules = slices.Clone(s.Rules)
+	c.Pending = slices.Clone(s.Pending)
+	c.Decided = slices.Clone(s.Decided)
+	c.Questions = slices.Clone(s.Questions)
+	c.ToolCalls = slices.Clone(s.ToolCalls)
+	c.Plan = slices.Clone(s.Plan)
+	return c
 }
 
 // Wait blocks until every running agent has stopped, closing the agents
