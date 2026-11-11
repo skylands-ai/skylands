@@ -14,18 +14,15 @@ Skylands gives you a _**secure**, **signed**_ log of everything your agents do a
 
 ## Install with Homebrew
 
-On macOS or Linux with [Homebrew](https://brew.sh), add the Skylands tap and install the cask:
+On macOS or Linux with [Homebrew](https://brew.sh), add the Skylands tap, trust it, and install the cask:
 
 ```sh
 brew tap skylands-ai/tap
+brew trust skylands-ai/tap
 brew install --cask skylands
 ```
 
-If Homebrew refuses to load the cask because the tap isn't trusted, trust it and run the install again:
-
-```sh
-brew trust skylands-ai/tap
-```
+Homebrew won't load a cask from a third-party tap until you've trusted the tap.
 
 On macOS, the cask clears the quarantine attribute for you.
 
