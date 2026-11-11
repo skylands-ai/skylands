@@ -129,22 +129,34 @@ func run(ctx context.Context, opts *server.Options) (*server.Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configure nats-server: %w", err)
 	}
-	go ns.Start()
+	// nats-server isn't safe to shut down while Start is still running: its
+	// goroutines would start after the shutdown, or race it. So whatever
+	// happens, run waits for Start to return before stopping the server or
+	// handing it back.
+	started := make(chan struct{})
+	go func() {
+		defer close(started)
+		ns.Start()
+	}()
+	stop := func() {
+		<-started
+		ns.Shutdown()
+		ns.WaitForShutdown()
+	}
 
 	ready := make(chan bool, 1)
 	go func() { ready <- ns.ReadyForConnections(10 * time.Second) }()
 	select {
 	case ok := <-ready:
 		if !ok {
-			ns.Shutdown()
-			ns.WaitForShutdown()
+			stop()
 			return nil, fmt.Errorf("nats-server did not become ready; is another skylands or nats-server already using %s?", listenersOf(opts))
 		}
 	case <-ctx.Done():
-		ns.Shutdown()
-		ns.WaitForShutdown()
+		stop()
 		return nil, ctx.Err()
 	}
+	<-started
 	return ns, nil
 }
 
