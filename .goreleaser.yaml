@@ -9,6 +9,8 @@ before:
   hooks:
     # The Go build embeds web/dist, which npm builds and git does not keep.
     - make web
+    # The licenses of the third-party code in the binary, for every archive.
+    - scripts/third-party-notices.sh
 
 builds:
   - id: skylands
@@ -24,8 +26,13 @@ builds:
       - -s -w -X github.com/skylands-ai/skylands/internal/cli.version=v{{ .Version }}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
-# Archives are tar.gz with README.md and LICENSE beside the binary, and
-# checksums go in one file; both are goreleaser's defaults.
+# Archives are tar.gz, goreleaser's default, with README.md, LICENSE, and
+# THIRD_PARTY_NOTICES beside the binary. Checksums go in one file.
+archives:
+  - files:
+      - README.md
+      - LICENSE
+      - THIRD_PARTY_NOTICES
 
 snapshot:
   version_template: "{{ incpatch .Version }}-dev+{{ .ShortCommit }}"

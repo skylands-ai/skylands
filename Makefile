@@ -2,7 +2,7 @@ MODULE  := github.com/skylands-ai/skylands
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -ldflags "-X $(MODULE)/internal/cli.version=$(VERSION)"
 
-.PHONY: all build web docs test lint install snapshot
+.PHONY: all build web docs test lint install snapshot notices
 
 all: build
 
@@ -35,3 +35,7 @@ install:
 ## snapshot: build every release archive into dist/ with goreleaser, publishing nothing
 snapshot:
 	goreleaser release --snapshot --clean
+
+## notices: write THIRD_PARTY_NOTICES, the licenses of the third-party code in the binary
+notices: web
+	scripts/third-party-notices.sh

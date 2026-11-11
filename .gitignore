@@ -39,6 +39,8 @@ go.work.sum
 /skylands
 /bin/
 /dist/
+# Written by scripts/third-party-notices.sh for each release.
+/THIRD_PARTY_NOTICES
 web/node_modules/
 web/dist/*
 !web/dist/.gitkeep
