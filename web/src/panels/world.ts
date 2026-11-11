@@ -170,7 +170,7 @@ export function renderWorldPanel(panel: HTMLElement, s: State, select: (id: stri
       ...world,
       ['Islands connected', counts],
       ['Waiting on you', `${waiting}${stale && waiting ? ', as last seen' : ''}`],
-      ...(s.world?.version ? [['Version', `skylands ${s.world.version}`] as [string, string]] : []),
+      ...(s.world?.version ? [['Version', s.world.version] as [string, string]] : []),
     ]),
   )
   panel.appendChild(themeSwitch(s.worldTheme, setTheme))
