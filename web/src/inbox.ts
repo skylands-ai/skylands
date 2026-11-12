@@ -650,10 +650,14 @@ function mark(s: State, x: Session): HTMLElement {
   return el('span', { class: 'mark', title: status[0], style })
 }
 
-/** The conversations the inbox lists under the current filter. An open conversation stays listed while it is open. */
-function listed(s: State): Session[] {
+/**
+ * The conversations the inbox lists under the current filter. Under Open a
+ * finished conversation stays out of the list even while it is the one
+ * shown, so the list, its count and its token total agree.
+ */
+export function listed(s: State): Session[] {
   const all = conversationList(s)
-  return s.inboxFilter === 'all' ? all : all.filter((x) => isOpen(x) || x.id === s.inbox)
+  return s.inboxFilter === 'all' ? all : all.filter(isOpen)
 }
 
 /** The row above the list: what is shown, what the listed conversations have cost in tokens, the switch between open and all, and New. */
@@ -673,6 +677,12 @@ function tools(s: State, actions: InboxActions, compact: boolean): HTMLElement {
   return el('div', { class: 'inbox-tools' }, [left, el('div', { class: 'acts' }, [which, start])])
 }
 
+/** What the list says when the filter leaves nothing in it. */
+function emptyNote(s: State): HTMLElement {
+  const any = Object.keys(s.sessions).length > 0
+  return el('p', { class: 'inbox-empty', text: any ? 'No open conversations. Switch to All to see finished ones.' : 'No conversations yet. Press New to give an agent some work.' })
+}
+
 function agentCell(x: Session): HTMLElement {
   return el('span', { class: 'who' }, [agentGlyph(x.agent), agentLabel(x.agent)])
 }
@@ -683,8 +693,7 @@ function table(s: State, actions: InboxActions): HTMLElement {
   const box = el('div', { class: 'inbox-list', 'data-scroll': 'list' })
   box.appendChild(tools(s, actions, false))
   if (!list.length) {
-    const any = Object.keys(s.sessions).length > 0
-    box.appendChild(el('p', { class: 'inbox-empty', text: any ? 'No open conversations. Switch to All to see finished ones.' : 'No conversations yet. Press New to give an agent some work.' }))
+    box.appendChild(emptyNote(s))
     return box
   }
   const head = el('tr', {}, ['Conversation', 'Agent', 'Repository', 'Status', 'Turns', 'Last activity'].map((h) => el('th', { scope: 'col', text: h })))
@@ -722,7 +731,9 @@ function table(s: State, actions: InboxActions): HTMLElement {
 function narrowList(s: State, openId: string, actions: InboxActions): HTMLElement {
   const box = el('div', { class: 'inbox-list narrow', 'data-scroll': 'list' })
   box.appendChild(tools(s, actions, true))
-  for (const x of listed(s)) {
+  const list = listed(s)
+  if (!list.length) box.appendChild(emptyNote(s))
+  for (const x of list) {
     const unread = isUnread(s, x) && x.id !== openId
     const row = el(
       'button',

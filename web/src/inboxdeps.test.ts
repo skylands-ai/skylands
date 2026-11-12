@@ -5,7 +5,7 @@ import type { State } from './store'
 
 // The inbox's modules look at the window as they load.
 vi.stubGlobal('window', {})
-const { conversationDeps } = await import('./inbox')
+const { conversationDeps, listed } = await import('./inbox')
 
 function session(id: string, over: Partial<Session> = {}): Session {
   return { id, host: 'workstation', repoId: 'r1', agent: 'claude', status: 'idle', pending: [], questions: [], terminals: [], startedAt: '2026-11-06T09:00:00Z', activeAt: '2026-11-06T09:00:00Z', updatedAt: '2026-11-06T09:00:00Z', ...over } as Session
@@ -36,5 +36,22 @@ describe('conversationDeps', () => {
     const moved = { ...open, status: 'running' as const }
     const after = state([moved, busy])
     expect(identical(conversationDeps(after, moved, undefined, undefined, cache, terminals), deps)).toBe(false)
+  })
+})
+
+describe('listed', () => {
+  const idle = session('idle')
+  const ended = session('ended', { status: 'ended' })
+  const failed = session('failed', { status: 'failed' })
+  const ids = (s: State): string[] => listed(s).map((x) => x.id).sort()
+  const under = (inboxFilter: 'open' | 'all', inbox: string | null): State => ({ ...state([idle, ended, failed]), inboxFilter, inbox })
+
+  it('leaves a finished conversation out of Open even while it is shown', () => {
+    expect(ids(under('open', 'ended'))).toEqual(['idle'])
+    expect(ids(under('open', null))).toEqual(['idle'])
+  })
+
+  it('lists every conversation under All', () => {
+    expect(ids(under('all', 'ended'))).toEqual(['ended', 'failed', 'idle'])
   })
 })
