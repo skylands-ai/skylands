@@ -248,7 +248,7 @@ func IsSessionEvent(eventType string) bool {
 		EventPermissionRequested, EventPermissionGranted, EventPermissionDenied, EventPermissionExpired, EventSessionTrusted,
 		EventSessionResumed, EventChangesCommitted, EventChangesMerged, EventPullRequestOpened, EventWorktreeRemoved,
 		EventSessionRulesSet, EventSessionRulesLapsed, EventQuestionAsked, EventQuestionAnswered, EventQuestionExpired, EventTurnCancelled,
-		EventTokensUsed, EventSessionModeChanged, EventSessionModelChanged:
+		EventTokensUsed, EventSessionModeChanged, EventSessionModelChanged, EventTerminalOpened, EventTerminalClosed:
 		return true
 	}
 	return false
@@ -649,15 +649,16 @@ type ChangesResult struct {
 }
 
 // FetchSessionRequest asks for one session's transcript, diff, or changes,
-// with ToolCallID for one of its tool calls, or with RequestID for the
-// input of one of its waiting requests. A files fetch names SessionID or
-// RepoID, and Query, what was typed. An attachment fetch names Hash and
-// Offset, and Max, the most bytes of the image the asker can take in one
-// answer.
+// with ToolCallID for one of its tool calls, with RequestID for the input
+// of one of its waiting requests, or with TerminalID for what one of its
+// terminals shows. A files fetch names SessionID or RepoID, and Query, what
+// was typed. An attachment fetch names Hash and Offset, and Max, the most
+// bytes of the image the asker can take in one answer.
 type FetchSessionRequest struct {
 	SessionID  string `json:"sessionId,omitempty"`
 	ToolCallID string `json:"toolCallId,omitempty"`
 	RequestID  string `json:"requestId,omitempty"`
+	TerminalID string `json:"terminalId,omitempty"`
 	RepoID     string `json:"repoId,omitempty"`
 	Query      string `json:"query,omitempty"`
 	Hash       string `json:"hash,omitempty"`

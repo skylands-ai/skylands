@@ -38,6 +38,9 @@ type Config struct {
 	// Live, if set, starts delivering one session's transcript appends and
 	// returns how to stop.
 	Live func(host, id string, deliver func(v1.Live)) (stop func(), err error)
+	// Terminal, if set, relays a browser's terminals to and from their
+	// islands.
+	Terminal Terminals
 	// NeedsSetup, if set and true, sends the world's page to /setup,
 	// because there is no world to show yet.
 	NeedsSetup func() bool
@@ -52,6 +55,17 @@ type Config struct {
 	// page is in sight, and the function it returns is called when the page
 	// is hidden or the WebSocket closes.
 	InSight func(who string) (gone func())
+}
+
+// Terminals relays terminals between browsers and the islands they run on.
+type Terminals interface {
+	// Watch starts delivering what one terminal's shell writes and returns
+	// how to stop.
+	Watch(host, id, terminal string, deliver func(v1.TerminalOutput)) (stop func(), err error)
+	// Input passes on what a person typed, signed for the daemon to check.
+	Input(host, id, terminal string, in v1.TerminalInput) error
+	// Resize passes on a terminal's new size.
+	Resize(host, id, terminal string, size v1.TerminalSize) error
 }
 
 // StatusSignIn closes a browser's WebSocket when what it signed in as no
@@ -170,6 +184,20 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		unwatch = stop
 	}
 	defer setWatch(nil)
+	// And at most one terminal.
+	var (
+		termMu sync.Mutex
+		unterm func()
+	)
+	setTerm := func(stop func()) {
+		termMu.Lock()
+		defer termMu.Unlock()
+		if unterm != nil {
+			unterm()
+		}
+		unterm = stop
+	}
+	defer setTerm(nil)
 	var (
 		sightMu sync.Mutex
 		unsight func()
@@ -215,6 +243,33 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				setWatch(stop)
 			case "unwatch":
 				setWatch(nil)
+			case "term-watch":
+				if s.cfg.Terminal == nil {
+					continue
+				}
+				host, id, term := in.Host, in.ID, in.Terminal
+				stop, err := s.cfg.Terminal.Watch(host, id, term, func(o v1.TerminalOutput) {
+					if err := sendJSON(ctx, c, Message{Type: "term", Host: host, ID: id, Terminal: term, Output: &o}); err != nil {
+						cancel()
+					}
+				})
+				if err != nil {
+					slog.Debug("web: terminal watch refused", "host", host, "session", id, "terminal", term, "err", err)
+					continue
+				}
+				setTerm(stop)
+			case "term-unwatch":
+				setTerm(nil)
+			case "term-input":
+				if s.cfg.Terminal != nil && in.Input != nil {
+					if err := s.cfg.Terminal.Input(in.Host, in.ID, in.Terminal, *in.Input); err != nil {
+						slog.Debug("web: terminal input refused", "host", in.Host, "session", in.ID, "terminal", in.Terminal, "err", err)
+					}
+				}
+			case "term-size":
+				if s.cfg.Terminal != nil && in.Size != nil {
+					_ = s.cfg.Terminal.Resize(in.Host, in.ID, in.Terminal, *in.Size)
+				}
 			case "visible", "hidden":
 				setSight(in.Type == "visible")
 			}

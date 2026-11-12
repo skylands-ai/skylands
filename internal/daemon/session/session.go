@@ -154,6 +154,9 @@ type Session struct {
 	// Images are the images the session's prompts carried, oldest first,
 	// which the host keeps and a conversation's reader may fetch.
 	Images []v1.PromptImage
+	// Terminals are the shells a person has open in the worktree, oldest
+	// first.
+	Terminals []Terminal
 }
 
 // Resumed says how a session's agent came back after a daemon restart.
@@ -259,6 +262,9 @@ type Config struct {
 	// and allow rules stand on the approver who signed them only while it
 	// does.
 	Valid func(ctx context.Context, approver string) bool
+	// Shell is what a person's terminal runs, as a login shell. Empty means
+	// terminal.DefaultShell.
+	Shell string
 }
 
 // DefaultAllowKinds are the tool call kinds a host allows when no rule
@@ -317,6 +323,13 @@ type Manager struct {
 	// and written whole.
 	toolMu sync.Mutex
 	runs   sync.WaitGroup
+	// terminals holds each open terminal's shell by terminal id, and
+	// terminalIDs every terminal id ever opened on the host, which can't
+	// be opened again.
+	terminals   map[string]*openTerminal
+	terminalIDs map[string]bool
+	// terms counts the terminals whose end isn't recorded yet.
+	terms sync.WaitGroup
 }
 
 // live is a session's running agent and the turn it may be on.
@@ -345,7 +358,7 @@ func Load(ctx context.Context, store *es.Store, cfg Config) (*Manager, error) {
 	if cfg.Registry == nil {
 		cfg.Registry = agents.DefaultRegistry()
 	}
-	m := &Manager{cfg: cfg, store: store, ctx: ctx, started: time.Now().UTC(), sessions: map[string]*Session{}, handled: map[string]string{}, live: map[string]*live{}, resuming: map[string]bool{}, transcripts: map[string]*transcript{}}
+	m := &Manager{cfg: cfg, store: store, ctx: ctx, started: time.Now().UTC(), sessions: map[string]*Session{}, handled: map[string]string{}, live: map[string]*live{}, resuming: map[string]bool{}, transcripts: map[string]*transcript{}, terminals: map[string]*openTerminal{}, terminalIDs: map[string]bool{}}
 	err := store.Replay(ctx, v1.IslandStreamName(cfg.Host), []string{v1.SessionEventFilter(cfg.Host)}, func(seq uint64, ev v1.Event) error {
 		m.apply(ev)
 		return nil
@@ -354,6 +367,12 @@ func Load(ctx context.Context, store *es.Store, cfg Config) (*Manager, error) {
 		return nil, fmt.Errorf("load sessions for %s: %w", cfg.Host, err)
 	}
 	for _, s := range m.List() {
+		// Every shell ended with the daemon that ran it.
+		for _, t := range s.Terminals {
+			if err := m.record(ctx, s.ID, "", v1.EventTerminalClosed, v1.TerminalClosed{SessionID: s.ID, TerminalID: t.ID, Reason: v1.TerminalRestart}); err != nil {
+				return nil, err
+			}
+		}
 		if s.Status != StatusRunning && s.Status != StatusIdle {
 			continue
 		}
@@ -1020,16 +1039,19 @@ func (s *Session) copy() Session {
 	c.ToolCalls = slices.Clone(s.ToolCalls)
 	c.Plan = slices.Clone(s.Plan)
 	c.Images = slices.Clone(s.Images)
+	c.Terminals = slices.Clone(s.Terminals)
 	return c
 }
 
 // Wait blocks until every running agent has stopped, closing the agents
 // of open sessions so that each ends with whatever it started, rather than
-// leaving that to the daemon's exit. Cancel the manager's context first:
-// a session whose agent stops because the daemon is stopping stays open,
-// and is resumed when the daemon starts again.
+// leaving that to the daemon's exit, and closing every terminal. Cancel
+// the manager's context first: a session whose agent stops because the
+// daemon is stopping stays open, and is resumed when the daemon starts
+// again.
 func (m *Manager) Wait() {
 	m.runs.Wait()
+	m.closeAllTerminals()
 	m.mu.Lock()
 	runs := make([]*agents.Run, 0, len(m.live))
 	for _, l := range m.live {
@@ -1182,6 +1204,8 @@ func (m *Manager) Stop(ctx context.Context, cmd v1.StopAgent) (Session, error) {
 		delete(m.live, cmd.SessionID)
 		m.mu.Unlock()
 	}
+	// A person's terminals end with the session.
+	m.closeTerminals(ctx, cmd.SessionID, v1.TerminalSessionEnded)
 	m.transcript(cmd.SessionID).Append("\n\n---\n\n*Stopped*\n")
 	if err := m.record(ctx, cmd.SessionID, cmd.ID, v1.EventSessionEnded, v1.SessionEnded{SessionID: cmd.SessionID, StopReason: "stopped"}); err != nil {
 		return Session{}, err
@@ -1859,6 +1883,8 @@ func (m *Manager) apply(ev v1.Event) {
 				}
 			}
 		}
+	case v1.EventTerminalOpened, v1.EventTerminalClosed:
+		m.applyTerminal(ev, touch)
 	}
 }
 

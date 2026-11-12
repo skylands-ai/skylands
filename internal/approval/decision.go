@@ -29,6 +29,8 @@ const (
 	KindStart        = "start"
 	KindPrompt       = "prompt"
 	KindChange       = "change"
+	KindTerminal     = "terminal"
+	KindTerminalIn   = "terminal-input"
 )
 
 // The actions a Change decision names.
@@ -195,9 +197,47 @@ type Change struct {
 
 func (d Change) header() (int, string, string) { return d.V, d.Kind, KindChange }
 
+// Terminal opens a shell in a session's worktree. The browser picks the
+// terminal's id, so a signed opening opens one terminal.
+type Terminal struct {
+	V        int    `json:"v"`
+	Kind     string `json:"kind"`
+	World    string `json:"world"`
+	Host     string `json:"host"`
+	Session  string `json:"session"`
+	Terminal string `json:"terminal"`
+}
+
+func (d Terminal) header() (int, string, string) { return d.V, d.Kind, KindTerminal }
+
+// TerminalInput types or pastes into a terminal. Attach names the browser's
+// view of the terminal, and Seq counts its inputs from one, which the
+// daemon takes only in increasing order, so a signature can't be used
+// again.
+type TerminalInput struct {
+	V        int    `json:"v"`
+	Kind     string `json:"kind"`
+	World    string `json:"world"`
+	Host     string `json:"host"`
+	Session  string `json:"session"`
+	Terminal string `json:"terminal"`
+	Attach   string `json:"attach"`
+	Seq      int    `json:"seq"`
+	// Data is the SHA-256 of the input's bytes, in lowercase hex.
+	Data string `json:"data"`
+}
+
+func (d TerminalInput) header() (int, string, string) { return d.V, d.Kind, KindTerminalIn }
+
 // TextHash is the SHA-256 of a text's UTF-8 bytes, in lowercase hex.
 func TextHash(text string) string {
 	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
+}
+
+// BytesHash is the SHA-256 of b, in lowercase hex.
+func BytesHash(b []byte) string {
+	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
 

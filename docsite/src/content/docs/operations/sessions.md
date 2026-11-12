@@ -17,6 +17,16 @@ When the agent isn't in the middle of a turn, the conversation shows where its c
 - merge the session's branch into the checkout, which is aborted if there's a conflict
 - push the branch and open a pull request with `gh`
 
+## Open a Terminal
+
+To build, test, or look around where the agent works without asking it to, switch the conversation from Chat to Terminal. The first switch opens a shell on the session's island, in its worktree (or the checkout, for a session that works there), as your login shell on that host. Switch back and forth as you like: the terminal keeps running, and shows what it printed meanwhile when you come back.
+
+A conversation can have more than one terminal. Use New terminal for another, and the numbered tabs to move between them.
+
+A terminal stays open until you press Close terminal, exit its shell, or end the session. Ending a session closes its terminals, and so does removing a worktree, or restarting the daemon, which ends every shell it ran.
+
+Only an approver's browser can open a terminal or type in one, once the world is set up. The browser signs the opening and every keystroke, and the daemon refuses anything else, so the citadel relays what you type but can't type for you. What a terminal prints isn't stored: the daemon keeps the newest 256 KB while it is open, for a browser that opens it, and nothing after it closes.
+
 ## Interrupt and End
 
 To change course while the agent is working, press Interrupt in the conversation, or run:

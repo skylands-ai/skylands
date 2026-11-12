@@ -1,4 +1,4 @@
-import type { Island, Live, Message, Repo, Session, WorldInfo } from './protocol'
+import type { Island, Live, Message, Repo, Session, TerminalOutput, WorldInfo } from './protocol'
 import { signedOut, signIn } from './signin'
 import type { Store } from './store'
 
@@ -6,23 +6,52 @@ import type { Store } from './store'
 export interface Link {
   /** Reads one session's transcript as it is written, or none. */
   watch(host: string | null, id: string | null): void
+  /** Follows what one terminal's shell writes, or none. */
+  watchTerminal(t: TerminalRef | null): void
+  /** Sends what a person typed, signed for the daemon to check. False when the socket is down and it wasn't sent. */
+  terminalInput(t: TerminalRef, input: { attach: string; seq: number; data: string; signature?: unknown }): boolean
+  /** Tells a terminal its view's new size. */
+  terminalSize(t: TerminalRef, cols: number, rows: number): void
+}
+
+/** One terminal: its island, its session, and its id. */
+export interface TerminalRef {
+  host: string
+  id: string
+  terminal: string
+}
+
+/** What the page does with its terminals' traffic. */
+export interface TerminalListener {
+  output(t: TerminalRef, out: TerminalOutput): void
+  /** The socket came back, so what was written meanwhile is missing. */
+  reconnected(): void
 }
 
 /** Fills in lists an older citadel might send as null, so renderers never check. */
 function normalizeSession(s: Session): Session {
-  return { ...s, recent: s.recent ?? [], files: s.files ?? {}, plan: s.plan ?? [], pending: s.pending ?? [], questions: s.questions ?? [], rules: s.rules ?? [], trusted: s.trusted ?? false, turns: s.turns ?? 1, updatedAt: s.updatedAt ?? s.startedAt, activeAt: s.activeAt ?? s.updatedAt ?? s.startedAt }
+  return { ...s, recent: s.recent ?? [], files: s.files ?? {}, plan: s.plan ?? [], pending: s.pending ?? [], questions: s.questions ?? [], rules: s.rules ?? [], terminals: s.terminals ?? [], trusted: s.trusted ?? false, turns: s.turns ?? 1, updatedAt: s.updatedAt ?? s.startedAt, activeAt: s.activeAt ?? s.updatedAt ?? s.startedAt }
 }
 
 // The browser stays on one citadel through this socket. When it drops, keep
 // trying with a growing delay so a citadel restart heals on its own.
-export function connectToCitadel(store: Store, onLive: (host: string, id: string, piece: Live) => void): Link {
+export function connectToCitadel(store: Store, onLive: (host: string, id: string, piece: Live) => void, terms?: TerminalListener): Link {
   let retryDelay = 1000
   let ws: WebSocket | null = null
   let watched: { host: string; id: string } | null = null
+  let term: TerminalRef | null = null
+  let opened = 0
 
+  const send = (m: unknown): boolean => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false
+    ws.send(JSON.stringify(m))
+    return true
+  }
   const tell = (): void => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return
-    ws.send(JSON.stringify(watched ? { type: 'watch', ...watched } : { type: 'unwatch' }))
+    send(watched ? { type: 'watch', ...watched } : { type: 'unwatch' })
+  }
+  const tellTerm = (): void => {
+    send(term ? { type: 'term-watch', ...term } : { type: 'term-unwatch' })
   }
 
   // Whether the page is in sight, which holds the citadel's pushes to this
@@ -53,6 +82,8 @@ export function connectToCitadel(store: Store, onLive: (host: string, id: string
       store.update({ link: 'connected', lastContact: Date.now() })
       // A reconnection picks the watch back up.
       if (watched) tell()
+      if (term) tellTerm()
+      if (opened++ > 0) terms?.reconnected()
       tellSight()
     })
     ws.addEventListener('message', (ev: MessageEvent<string>) => {
@@ -61,6 +92,9 @@ export function connectToCitadel(store: Store, onLive: (host: string, id: string
       switch (m.type) {
         case 'live':
           if (m.host && m.id && m.live && watched && m.host === watched.host && m.id === watched.id) onLive(m.host, m.id, m.live)
+          break
+        case 'term':
+          if (m.host && m.id && m.terminal && m.output && term && m.host === term.host && m.id === term.id && m.terminal === term.terminal) terms?.output(term, m.output)
           break
         case 'snapshot': {
           const islands: Record<string, Island> = {}
@@ -104,6 +138,17 @@ export function connectToCitadel(store: Store, onLive: (host: string, id: string
       if (next?.host === watched?.host && next?.id === watched?.id) return
       watched = next
       tell()
+    },
+    watchTerminal(t) {
+      if (t?.host === term?.host && t?.id === term?.id && t?.terminal === term?.terminal) return
+      term = t ? { ...t } : null
+      tellTerm()
+    },
+    terminalInput(t, input) {
+      return send({ type: 'term-input', ...t, input })
+    },
+    terminalSize(t, cols, rows) {
+      send({ type: 'term-size', ...t, size: { cols, rows } })
     },
   }
 }

@@ -23,3 +23,7 @@ func watchFrom(ctx context.Context) Watch {
 	w, _ := ctx.Value(watchKey{}).(Watch)
 	return w
 }
+
+// WatchFrom is the Watch on ctx, or nil, for whatever else the daemon runs
+// in a process group of its own, such as a person's terminal.
+func WatchFrom(ctx context.Context) Watch { return watchFrom(ctx) }
