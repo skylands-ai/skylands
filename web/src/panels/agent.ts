@@ -1,7 +1,7 @@
 import { el } from '../dom'
 import type { FetchCache, Fetched } from '../fetchcache'
 import type { Island, Repo, Session } from '../protocol'
-import { agentLabel, clockText, modeName, sessionLabel, sessionStatus } from '../status'
+import { agentLabel, modeName, sessionLabel, sessionStatus } from '../status'
 import { backButton, factsBox, header, hint, section, timeNode, tokensNode } from './parts'
 
 function pct(used?: number, size?: number): string {
@@ -26,7 +26,7 @@ export interface AgentActions {
   conversation(): void
 }
 
-/** The agent-level panel: one session's facts, plan, activity, and changes. The conversation itself is in the inbox. */
+/** The agent-level panel: one session's facts, plan, and changes. The conversation itself is in the inbox. */
 export function renderAgentPanel(
   panel: HTMLElement,
   s: Session,
@@ -87,23 +87,6 @@ export function renderAgentPanel(
   // While the agent runs its changes grow, so keep fetching them. Afterwards each event is enough.
   const refresh = running ? 2000 : 0
   const since = Date.parse(s.updatedAt)
-
-  if (s.recent.length) {
-    panel.appendChild(
-      section('Activity', [
-        el(
-          'ol',
-          { class: 'feed' },
-          [...s.recent].reverse().map((tc) =>
-            el('li', { class: tc.status === 'failed' ? 'bad' : '' }, [
-              el('time', { text: clockText(Date.parse(tc.at)) }),
-              el('span', { text: tc.title + (tc.locations?.length ? ` \u00b7 ${tc.locations.join(', ')}` : '') + (tc.status === 'in_progress' ? ' \u2026' : tc.status === 'failed' ? ' (failed)' : '') }),
-            ]),
-          ),
-        ),
-      ]),
-    )
-  }
 
   if (s.worktreeRemoved) {
     panel.appendChild(hint('The worktree was removed, so there is no diff to show.'))
