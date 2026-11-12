@@ -296,20 +296,56 @@ function renderMode(s: State): void {
   world?.setPaused(inbox)
 }
 
+/**
+ * How long a citadel catches up before the veil says so. A short catch-up,
+ * such as for an island that has just joined, then passes without the
+ * page flashing. A veil already up for a lost link changes at once.
+ */
+const CATCH_UP_VEIL_MS = 400
+let catchingUpSince = 0
+
+/**
+ * Veils the world or the inbox while what they show isn't the world as it
+ * is now: the link to the citadel is lost, or the citadel is catching up,
+ * as it does once it has restarted. Before the first contact there is
+ * nothing stale to show, and a phone says so in its own words.
+ */
 function renderVeil(s: State): void {
-  // Only a lost link veils the world. Before the first contact there is nothing stale to show.
-  veilEl.hidden = s.link !== 'lost'
-  if (veilEl.hidden) return
+  const lost = s.link === 'lost'
+  const catching = s.link === 'connected' && s.loading !== null
+  if (!catching) catchingUpSince = 0
+  else if (!catchingUpSince) {
+    catchingUpSince = Date.now()
+    if (veilEl.hidden) setTimeout(() => renderVeil(store.state), CATCH_UP_VEIL_MS)
+  }
+  const show = !s.phone && (lost || (catching && (!veilEl.hidden || Date.now() - catchingUpSince >= CATCH_UP_VEIL_MS)))
+  veilEl.hidden = !show
+  veilEl.classList.toggle('catching', catching)
+  if (!show) return
   veilMsgEl.textContent = ''
+  if (catching) {
+    const hosts = s.loading?.hosts ?? []
+    veilMsgEl.append(
+      s.loading?.nats ? 'Citadel waiting for NATS' : `Citadel catching up${hosts.length ? ` with ${hostsText(hosts)}` : ''}`,
+      el('span', { text: 'It’s reading what happened on the world’s islands, and this page updates once it has.' }),
+    )
+    return
+  }
   const since = s.lastContact ? `for ${durationText(secondsSince(s.lastContact))}` : ''
   veilMsgEl.append(
     `Citadel unreachable ${since}`.trim(),
     el('span', {
       text: s.lastContact
-        ? `The world shows the last state seen, at ${clockText(s.lastContact)}. This page keeps retrying.`
+        ? `This page shows the last state seen, at ${clockText(s.lastContact)}. It keeps retrying.`
         : 'This page keeps retrying.',
     }),
   )
+}
+
+/** "a", "a and b", "a, b, and c", or "a, b, c, and 2 more". */
+function hostsText(hosts: string[]): string {
+  const shown = hosts.length > 4 ? [...hosts.slice(0, 3), `${hosts.length - 3} more`] : hosts
+  return new Intl.ListFormat('en', { type: 'conjunction' }).format(shown)
 }
 
 /**
@@ -333,7 +369,7 @@ function panelDeps(s: State, stale: boolean): unknown[] {
     case 'island':
       return ['island', island, stale, stale ? s.lastContact : 0, s.approvers, s.me, s.world, pruneVersion(), ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
     default:
-      return ['world', s.server, s.world, s.link, s.worldTheme, s.notify, s.push, s.pushError, s.install, notifySupport() === 'ok' ? Notification.permission : '', waitingCount(s), s.approvers, s.me, s.persisted, s.invite, s.revoking, s.approverError, s.invite ? Date.now() > Date.parse(s.invite.expires) : false, ...islandList(s)]
+      return ['world', s.server, s.world, s.link, s.loading, s.worldTheme, s.notify, s.push, s.pushError, s.install, notifySupport() === 'ok' ? Notification.permission : '', waitingCount(s), s.approvers, s.me, s.persisted, s.invite, s.revoking, s.approverError, s.invite ? Date.now() > Date.parse(s.invite.expires) : false, ...islandList(s)]
   }
 }
 
@@ -603,6 +639,7 @@ store.subscribe((s0) => {
   newSession.update(s0)
   terminals.update(s0.sessions)
   renderPhoneLayout(s0)
+  renderVeil(s0)
   if (s0.phone) {
     afterRender(s0)
     return
@@ -615,7 +652,6 @@ store.subscribe((s0) => {
   const stale = isStale(s)
   renderMode(s)
   renderHeader(crumbsEl, connectedEl, linkEl, s, nav, versionEl)
-  renderVeil(s)
   bar.update(s)
   if (s.view === 'inbox') renderInbox(inboxEl, s, cache, live, inboxActions, terminals)
   const reading = s.view === 'inbox' && s.inbox ? s.sessions[s.inbox] : undefined

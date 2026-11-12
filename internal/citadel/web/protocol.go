@@ -9,7 +9,11 @@ import (
 // its WebSocket. Type names which other fields are set:
 //
 //   - "snapshot" carries Server, Islands, and Repos, and opens every
-//     connection.
+//     connection. While the citadel is still reading what happened, it
+//     carries Loading too, and leaves out the hosts being read. Once
+//     nothing is, the citadel sends every browser a new snapshot.
+//   - "loading" carries Loading when what the citadel is still reading
+//     changes, such as when it starts reading a host's stored events.
 //   - "server" carries Server when the citadel's NATS connection changes.
 //   - "island" carries Island when one host's state changes.
 //   - "repo" carries Repo when a repository is registered or its terrain
@@ -37,6 +41,19 @@ type Message struct {
 	Repo      *projections.Repo     `json:"repo,omitempty"`
 	Sessions  []projections.Session `json:"sessions,omitempty"`
 	Session   *projections.Session  `json:"session,omitempty"`
+	Loading   *Loading              `json:"loading,omitempty"`
+}
+
+// Loading is what a citadel still has to read before what it sends is the
+// world as it is now, and not some point in its history. Nothing about a
+// host it names is sent until the host has been read.
+type Loading struct {
+	// NATS is true until the citadel has reached the world's NATS server
+	// and listed the hosts it followed before.
+	NATS bool `json:"nats,omitempty"`
+	// Hosts are the hosts whose stored events the citadel is reading, and,
+	// as it starts, the hosts it followed before that it hasn't heard from.
+	Hosts []string `json:"hosts,omitempty"`
 }
 
 // Inbound is what a browser sends: "watch" with Host and ID to read one

@@ -1,5 +1,5 @@
 import type { StoredApprover } from './approver'
-import type { ApproverInfo, Island, Repo, ServerInfo, Session, TokenUsage, WorldInfo } from './protocol'
+import type { ApproverInfo, Island, Loading, Repo, ServerInfo, Session, TokenUsage, WorldInfo } from './protocol'
 import type { InstallState } from './install'
 import type { InboxRoute } from './route'
 import { isWorldTheme, type WorldThemeId } from './worldthemes'
@@ -36,6 +36,12 @@ export interface Invite {
 
 export interface State extends Nav {
   link: LinkState
+  /**
+   * What the citadel is still reading before it sends the world as it is
+   * now, or null once it has. Meanwhile a page that showed the world keeps
+   * what it showed, rather than each point of the history being read.
+   */
+  loading: Loading | null
   /** The NATS server as the citadel last described it, or null before the first message. */
   server: ServerInfo | null
   /** The world as the citadel last described it, or null before the first message. */
@@ -143,7 +149,7 @@ type Listener = (s: State) => void
 
 /** One place for everything the page renders from. Every change notifies every listener. */
 export class Store {
-  state: State = { link: 'connecting', server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), inbox: null, inboxFilter: loadFilter(), convoMode: {}, worldTheme: loadWorldTheme(), notify: loadNotify(), push: false, pushError: null, phone: false, route: {}, install: 'no' }
+  state: State = { link: 'connecting', loading: null, server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), inbox: null, inboxFilter: loadFilter(), convoMode: {}, worldTheme: loadWorldTheme(), notify: loadNotify(), push: false, pushError: null, phone: false, route: {}, install: 'no' }
   private listeners: Listener[] = []
 
   subscribe(fn: Listener): void {

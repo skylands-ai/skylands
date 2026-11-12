@@ -65,6 +65,7 @@ function list(s: State, route: InboxRoute, actions: PhoneActions): HTMLElement[]
     out.push(el('h1', {}, ['Waiting on you', items.length ? el('span', { class: 'badge', text: String(items.length) }) : null]))
   }
   if (isStale(s)) out.push(el('p', { class: 'phone-stale', text: 'The citadel can’t be reached, so this is what was waiting when it last could.' }))
+  else if (s.loading) out.push(el('p', { class: 'phone-stale', text: 'The citadel is catching up on what happened, so this may change once it has.' }))
   if (!items.length) {
     out.push(el('p', { class: 'phone-empty', text: route.session ? 'Nothing in this conversation is waiting on you.' : 'Nothing is waiting on you. When an agent asks for approval or has a question, it shows here.' }))
   }
@@ -86,6 +87,7 @@ function item(s: State, route: InboxRoute, actions: PhoneActions): HTMLElement[]
   out.push(el('p', { class: 'muted phone-where', text: who(s, x) }))
   out.push(el('h1', { text: sessionLabel(x, 120) }))
   if (isStale(s)) out.push(el('p', { class: 'phone-stale', text: 'The citadel can’t be reached, so this may already be answered, and an answer from here won’t arrive until it can.' }))
+  else if (s.loading) out.push(el('p', { class: 'phone-stale', text: 'The citadel is catching up on what happened, so this may already be answered.' }))
   if (p) {
     // The card is all the phone shows, so the input being approved is shown
     // open, where the desktop folds it.
@@ -111,8 +113,8 @@ export function renderPhone(root: HTMLElement, s: State, route: InboxRoute, acti
   // way back is kept up to date in place.
   const permission = notifySupport() === 'ok' ? Notification.permission : ''
   const deps = route.item
-    ? ['item', route, x, x ? s.repos[x.repoId] : undefined, s.approvers, s.me, s.world, s.link, inputsVersion()]
-    : ['list', route, s.sessions, s.repos, s.approvers, s.me, s.link, s.world, s.notify, s.push, s.pushError, permission]
+    ? ['item', route, x, x ? s.repos[x.repoId] : undefined, s.approvers, s.me, s.world, s.link, !!s.loading, inputsVersion()]
+    : ['list', route, s.sessions, s.repos, s.approvers, s.me, s.link, !!s.loading, s.world, s.notify, s.push, s.pushError, permission]
   const back = root.querySelector<HTMLElement>('.phone-back')
   if (back) back.textContent = backText(s)
   if (lastDeps && lastDeps.length === deps.length && lastDeps.every((d, i) => d === deps[i])) return
