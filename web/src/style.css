@@ -342,13 +342,6 @@ code{ font-family:"JetBrains Mono",ui-monospace,monospace; font-size:12px; }
 .ftag.edit{ border-color:#C98A1E; }
 .ftag.read{ border-color:var(--info); }
 .ftag.conflict{ border-color:var(--bad); color:var(--bad); font-weight:600; }
-.feed{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; font-size:12.5px; }
-.feed li{ display:flex; gap:10px; align-items:baseline; }
-.feed time{ flex:none; font-family:"JetBrains Mono",ui-monospace,monospace; font-size:11px; color:var(--muted); }
-.feed li span{ min-width:0; overflow-wrap:anywhere; }
-.feed li.bad span{ color:var(--bad); }
-.feed li.warn span{ color:var(--warn); }
-.feed li.info span{ color:var(--info); }
 .plan{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; font-size:13px; }
 .plan li{ display:flex; gap:8px; }
 .plan li.done{ color:var(--muted); }

@@ -103,7 +103,7 @@ The world has five zoom levels, and every click goes one level deeper. The 3D sc
 | World | Every island around the citadel | Islands connected, everything waiting on a person across the world, spend, and the NATS server the citadel is connected to |
 | Island | The island from outside the ring, with the citadel behind it | Link state, daemon facts, terraces, airships by provider, and waiting items |
 | Terrace | The repo up close, with name tags on airships, tags on busy files, and subagent leashes | Each agent's live action, waiting items for the repo, and the repo's activity feed |
-| Agent | Follows one airship as it flies | Model, role, session, current action, any pending request, context, plan, and recent activity |
+| Agent | Follows one airship as it flies | Model, role, session, current action, any pending request, context, and plan |
 | File | One building up close | The path, who is on it, any overlap warning, and recent activity on that file |
 
 ### Controls
