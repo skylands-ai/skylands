@@ -687,7 +687,7 @@ function foldSwitch(x: Session, actions: InboxActions): HTMLElement {
   return el('button', {
     type: 'button',
     class: 'btn small ghost',
-    text: folded ? 'Expand tool calls' : 'Collapse tool calls',
+    text: folded ? 'Expand calls' : 'Collapse calls',
     title: folded ? 'Show every tool call as a chip' : 'Show each run of tool calls as one badge that counts them, so the words read on their own',
     onclick: (e) => {
       holdPlace((e.currentTarget as HTMLElement).closest('.convo'), x.id)
