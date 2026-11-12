@@ -19,7 +19,7 @@ A request nobody answers within 30 minutes expires, and the agent is told it was
 
 ## Trust a Session
 
-"Trust this session", in the conversation's header, lets that session's calls through without asking from then on. Deny rules still apply to a trusted session.
+"Trust this session", in the bar under the conversation's header when it shows Chat, lets that session's calls through without asking from then on. Deny rules still apply to a trusted session.
 
 ## Keep an Answer as a Rule
 

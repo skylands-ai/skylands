@@ -13,10 +13,10 @@ import { canSign as canSignIn, myApprover } from './approvers'
 import { HOST_DEFAULTS, proposeRule, ruleText, rulesSheet } from './rules'
 import { agentLabel, isOpen, modelText, sessionLabel, sessionStatus, tokensBreakdown, tokensLabel, tokensText } from './status'
 import { conversationList, isUnread, isWaiting, sumTokens, type State } from './store'
-import { chipDeps, toolChip } from './toolchip'
+import { chipDeps, foldTools, toolChip, toolRun, toolsFolded } from './toolchip'
 import { canTerminal, convoMode, type ConvoMode, type Terminals } from './terminal'
 
-import { parseTranscript } from './transcript'
+import { parseTranscript, segments } from './transcript'
 import type { Rule } from './protocol'
 
 export interface InboxActions {
@@ -130,6 +130,27 @@ function heldKeyboard(root: HTMLElement): (() => void) | null {
 }
 
 /**
+ * Where the reader was in a conversation before folding or unfolding its
+ * tool calls, which moves everything below them: the first piece still in
+ * sight, and how far from the top it showed.
+ */
+let place: { session: string; anchor: string; offset: number } | null = null
+
+/** Notes the first piece of the conversation in sight, unless the reader is at its end, where the rebuild keeps them anyway. */
+function holdPlace(convo: Element | null, session: string): void {
+  const box = convo?.querySelector<HTMLElement>('[data-scroll="convo"]')
+  if (!box || box.scrollHeight - box.scrollTop - box.clientHeight < 12) return
+  const top = box.getBoundingClientRect().top
+  for (const n of box.querySelectorAll<HTMLElement>('[data-anchor]')) {
+    const r = n.getBoundingClientRect()
+    if (r.bottom > top) {
+      place = { session, anchor: n.dataset.anchor as string, offset: r.top - top }
+      return
+    }
+  }
+}
+
+/**
  * The inbox: every conversation on every island in one table, and the one
  * that is open beside a shorter list. The list and the conversation are
  * each rebuilt only when something they show has changed, so activity in
@@ -154,7 +175,10 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live
   const convo = conversationDeps(s, open, fetched, changes, cache, terminals)
   const redrawList = !same(lastList, list)
   const redrawConvo = !same(lastConvo, convo)
-  if (!redrawList && !redrawConvo) return
+  if (!redrawList && !redrawConvo) {
+    place = null
+    return
+  }
   lastList = list
   lastConvo = convo
 
@@ -192,6 +216,14 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live
     const was = scrolls.get(key)
     if (key === 'convo' && (!was || openedBefore !== open?.id || was.atEnd)) box.scrollTop = box.scrollHeight
     else if (was) box.scrollTop = was.top
+  }
+  // After folding, the piece that was in sight goes back where it showed.
+  const held = place
+  place = null
+  if (held && redrawConvo && open && held.session === open.id && openedBefore === open.id) {
+    const box = root.querySelector<HTMLElement>('[data-scroll="convo"]')
+    const n = box?.querySelector<HTMLElement>(`[data-anchor="${held.anchor}"]`)
+    if (box && n) box.scrollTop += n.getBoundingClientRect().top - box.getBoundingClientRect().top - held.offset
   }
 }
 
@@ -542,20 +574,29 @@ function trustSwitch(s: State, x: Session, actions: InboxActions): HTMLElement {
   return label
 }
 
-/** An agent message: its words as Markdown, with each tool call it made as a chip where it happened, and its record behind the chip. */
-function agentBody(x: Session, text: string, cache: FetchCache, refresh: () => void): HTMLElement {
+/**
+ * An agent message, at index turn in the conversation: its words as
+ * Markdown, with each run of tool calls it made where it happened, as
+ * chips with their records behind them, or as a badge when the
+ * conversation is folded. Each piece's first element is marked with its
+ * place, to keep the reader's place across folding.
+ */
+function agentBody(x: Session, text: string, turn: number, cache: FetchCache, refresh: () => void): HTMLElement {
   const body = el('div', { class: 'body md' })
-  for (const seg of segments(text)) {
-    if (seg.kind === 'tool') for (const n of toolChip(x, seg.text, seg.id, cache, refresh)) body.appendChild(n)
-    else body.appendChild(renderMarkdown(seg.text))
-  }
+  segments(text).forEach((seg, i) => {
+    const where = `${turn}:${i}`
+    const nodes = seg.kind === 'tools' ? toolRun(x, seg.calls, where, cache, refresh) : seg.kind === 'question' ? toolChip(x, seg.text, undefined, cache, refresh) : [renderMarkdown(seg.text)]
+    const first = nodes[0] instanceof DocumentFragment ? nodes[0].firstElementChild : nodes[0]
+    if (first instanceof HTMLElement) first.dataset.anchor = where
+    for (const n of nodes) body.appendChild(n)
+  })
   return body
 }
 
 /** The running turn's body: what the agent has said so far, or what it is doing. */
-function liveBody(x: Session, text: string, cache: FetchCache, refresh: () => void): HTMLElement {
+function liveBody(x: Session, text: string, turn: number, cache: FetchCache, refresh: () => void): HTMLElement {
   if (text.trim()) {
-    const body = agentBody(x, text, cache, refresh)
+    const body = agentBody(x, text, turn, cache, refresh)
     body.classList.add('md')
     return body
   }
@@ -563,35 +604,8 @@ function liveBody(x: Session, text: string, cache: FetchCache, refresh: () => vo
   return el('div', { class: 'body quiet', text: `${doing}\u2026` })
 }
 
-/**
- * A line the daemon writes between the agent's words: a tool call, or a
- * question and its answer. A tool call's line ends with a marker naming
- * the call, which Markdown would hide and the chip follows to its record.
- */
-const TOOL_LINE = /^[\u2699\u2753] (.*?)(?: <!-- tool:(\S+) -->)?\s*$/
-
-/** The marker, wherever it is, for text that leaves the page. */
+/** The marker the daemon ends a tool call's line with, wherever it is, for text that leaves the page. */
 const TOOL_MARKERS = / <!-- tool:\S+ -->/g
-
-/** Splits an agent turn into runs of words and the tool calls between them. */
-function segments(text: string): { kind: 'text' | 'tool'; text: string; id?: string }[] {
-  const out: { kind: 'text' | 'tool'; text: string; id?: string }[] = []
-  let words: string[] = []
-  const flush = (): void => {
-    const t = words.join('\n').trim()
-    if (t) out.push({ kind: 'text', text: t })
-    words = []
-  }
-  for (const line of text.split('\n')) {
-    const m = TOOL_LINE.exec(line)
-    if (m) {
-      flush()
-      out.push({ kind: 'tool', text: m[1], id: m[2] })
-    } else words.push(line)
-  }
-  flush()
-  return out
-}
 
 /**
  * Grows the open conversation's live bubble with what the feed brought,
@@ -610,7 +624,7 @@ export function growLive(root: HTMLElement, s: State, cache: FetchCache, live: L
   if (!bubble || !last || last.who !== 'agent') return
   const box = convo.querySelector<HTMLElement>('.convo-body')
   const atEnd = !!box && box.scrollHeight - box.scrollTop - box.clientHeight < 12
-  bubble.querySelector('.body')?.replaceWith(liveBody(open, last.text, cache, refresh))
+  bubble.querySelector('.body')?.replaceWith(liveBody(open, last.text, conv.turns.length - 1, cache, refresh))
   if (box && atEnd) box.scrollTop = box.scrollHeight
 }
 
@@ -642,7 +656,7 @@ function listed(s: State): Session[] {
   return s.inboxFilter === 'all' ? all : all.filter((x) => isOpen(x) || x.id === s.inbox)
 }
 
-/** The row above the list: what is shown, what every conversation has cost in tokens, the switch between open and all, and New. */
+/** The row above the list: what is shown, what the listed conversations have cost in tokens, the switch between open and all, and New. */
 function tools(s: State, actions: InboxActions, compact: boolean): HTMLElement {
   const all = conversationList(s)
   const open = all.filter(isOpen).length
@@ -650,9 +664,9 @@ function tools(s: State, actions: InboxActions, compact: boolean): HTMLElement {
   const seg = (which: 'open' | 'all', text: string): HTMLElement =>
     el('button', { type: 'button', class: 'btn small', 'aria-pressed': s.inboxFilter === which ? 'true' : 'false', text, onclick: () => actions.filter(which) })
   const count = compact ? null : s.inboxFilter === 'all' ? `${all.length} conversations` : `${open} open${over ? `, ${over} finished hidden` : ''}`
-  // The total is over every conversation on every island, whatever the filter lists.
-  const tokens = sumTokens(all)
-  const spent = tokens.total ? el('span', { title: `${tokensBreakdown(tokens)}, across every conversation`, text: `${tokensText(tokens.total)} tokens${compact ? '' : ' used'}` }) : null
+  // The total is over exactly the conversations listed, so it follows the filter.
+  const tokens = sumTokens(listed(s))
+  const spent = tokens.total ? el('span', { title: `${tokensBreakdown(tokens)}, across ${s.inboxFilter === 'all' ? 'every conversation' : 'the conversations listed'}`, text: `${tokensText(tokens.total)} tokens${compact ? '' : ' used'}` }) : null
   const left = el('span', { class: 'muted' }, [count, count && spent ? ' · ' : null, spent])
   const which = el('div', { class: 'modes', role: 'group', 'aria-label': 'Which conversations' }, [seg('open', 'Open'), seg('all', 'All')])
   const start = el('button', { type: 'button', class: 'btn small primary', text: 'New', title: 'Start a session on any repository', onclick: () => actions.newSession() })
@@ -738,6 +752,22 @@ function modeSwitch(s: State, x: Session, actions: InboxActions): HTMLElement | 
   ])
 }
 
+/** The button that folds every run of the conversation's tool calls into a badge, or unfolds them all, keeping the reader's place. */
+function foldSwitch(x: Session, actions: InboxActions): HTMLElement {
+  const folded = toolsFolded(x)
+  return el('button', {
+    type: 'button',
+    class: 'btn small ghost',
+    text: folded ? 'Expand calls' : 'Collapse calls',
+    title: folded ? 'Show every tool call as a chip' : 'Show each run of tool calls as one badge that counts them, so the words read on their own',
+    onclick: (e) => {
+      holdPlace((e.currentTarget as HTMLElement).closest('.convo'), x.id)
+      foldTools(x, !folded)
+      actions.refresh()
+    },
+  })
+}
+
 /** The program a shell path names, such as zsh for /bin/zsh. */
 function shellName(path: string): string {
   return path.slice(path.lastIndexOf('/') + 1) || path
@@ -765,7 +795,8 @@ function terminalPane(s: State, x: Session, terminals: Terminals): HTMLElement {
   const open = el('button', { type: 'button', class: 'btn small ghost', text: v.current ? 'New terminal' : 'Open a terminal', disabled: v.opening ? 'true' : null, onclick: () => void terminals.open(x) })
   const canOpen = x.status === 'running' || x.status === 'idle'
   if (!v.current) {
-    bar.appendChild(el('span', { class: 'muted', text: `A shell in ${where} on ${x.host}` }))
+    const what = `A shell in ${where} on ${x.host}`
+    bar.appendChild(el('span', { class: 'muted', text: what, title: what }))
     const say = v.opening ? 'Opening a terminal…' : v.error || (canOpen ? 'No terminal is open in this session.' : 'This session is over, so no terminal can open in it.')
     pane.appendChild(el('div', { class: 'term-empty' }, [el('p', { text: say, style: v.error && !v.opening ? 'color:var(--bad)' : null }), canOpen && !v.opening ? open : null]))
     return pane
@@ -782,11 +813,13 @@ function terminalPane(s: State, x: Session, terminals: Terminals): HTMLElement {
       const err = await terminals.close(x, t.id)
       if (err) {
         note.textContent = err
+        note.title = err
         close.disabled = false
       }
     },
   }) as HTMLButtonElement
-  bar.append(el('span', { class: 'muted', text: `${shellName(t.shell)} in ${where} on ${x.host}` }), note, el('div', { class: 'acts' }, [canOpen ? open : null, close]))
+  const what = `${shellName(t.shell)} in ${where} on ${x.host}`
+  bar.append(el('span', { class: 'muted', text: what, title: what }), note, el('div', { class: 'acts' }, [canOpen ? open : null, close]))
   pane.appendChild(terminals.screen(x, t.id))
   const trouble = terminals.note(x, t.id)
   if (trouble) pane.appendChild(el('p', { class: 'term-note', text: trouble }))
@@ -799,38 +832,28 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
   const repo = s.repos[x.repoId]
   const name = agentLabel(x.agent)
   const running = x.status === 'running'
-  // The mode and model chips, the trust switch, and the rules are about
-  // the chat with the agent, so the terminal leaves them out.
-  const chat = convoMode(s, x) === 'chat'
+  // The head is the session's, the same in chat and in the terminal, so
+  // nothing in it moves when the mode does: what the session is on the
+  // left, with the status last because its width changes most, and the
+  // switch and the ways out on the right. What only one mode has goes in
+  // that mode's bar under the head.
   const head = el('div', { class: 'convo-head' }, [
-    el('h2', { text: sessionLabel(x), title: x.prompt }),
-    el('span', { class: 'who muted' }, [agentGlyph(x.agent), `${name} \u00b7 ${repo?.name ?? x.repoId} on ${x.host}`]),
-    statusPill(status),
-    el('span', { class: 'muted', text: `${x.turns} ${x.turns === 1 ? 'turn' : 'turns'}` }),
-    el('span', { class: 'muted', title: tokensBreakdown(x.tokens, running) || null, text: tokensLabel(x.tokens, running) }),
+    el('div', { class: 'convo-id' }, [
+      el('h2', { text: sessionLabel(x), title: x.prompt }),
+      el('div', { class: 'convo-facts' }, [
+        el('span', { class: 'who muted' }, [agentGlyph(x.agent), el('span', { class: 'what', text: `${name} \u00b7 ${repo?.name ?? x.repoId} on ${x.host}` })]),
+        el('span', { class: 'muted', text: `${x.turns} ${x.turns === 1 ? 'turn' : 'turns'}` }),
+        el('span', { class: 'muted', title: tokensBreakdown(x.tokens, running) || null, text: tokensLabel(x.tokens, running) }),
+        statusPill(status),
+      ]),
+    ]),
     el('div', { class: 'acts' }, [
       modeSwitch(s, x, actions),
-      ...(chat && isOpen(x) ? settingChips(s, x, actions) : []),
-      chat && isOpen(x) ? trustSwitch(s, x, actions) : null,
-      chat
-        ? el('button', {
-            type: 'button',
-            class: 'btn small ghost',
-            text: isOpen(x) && x.rulesLapsed ? `Rules (${x.rules.length}, lapsed)` : `Rules (${x.rules.length})`,
-            'aria-expanded': rulesOpen.has(x.id) ? 'true' : 'false',
-            onclick: () => {
-              if (rulesOpen.has(x.id)) rulesOpen.delete(x.id)
-              else rulesOpen.add(x.id)
-              rulesToggles++
-              actions.refresh()
-            },
-          })
-        : null,
       el('button', { type: 'button', class: 'btn small ghost', text: 'Show in world', onclick: () => actions.openInWorld(x) }),
       el('button', { type: 'button', class: 'btn small ghost', text: 'Close', 'aria-label': 'Close the conversation', onclick: () => actions.open(null) }),
     ]),
   ])
-  if (!chat) {
+  if (convoMode(s, x) === 'terminal') {
     return el('section', { class: 'convo', 'aria-label': `${sessionLabel(x)}, with ${name}`, 'data-session': x.id }, [head, terminalPane(s, x, terminals)])
   }
 
@@ -841,13 +864,13 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
   // in place as the feed arrives rather than rebuilding the conversation.
   const last = conv.turns[conv.turns.length - 1]
   const liveTurn = running && last?.who === 'agent' ? last : null
-  for (const t of conv.turns) {
-    if (t.who === 'you') body.appendChild(el('div', { class: 'msg you' }, [el('span', { class: 'from', text: 'You' }), el('div', { class: 'body', text: t.text }), carriedRow(x, t)]))
-    else if (t.who === 'note') body.appendChild(el('p', { class: 'convo-note', text: t.text }))
-    else if (t === liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, t.text, cache, actions.refresh)]))
-    else if (t.text) body.appendChild(el('div', { class: 'msg agent' }, [el('span', { class: 'from' }, [name, copyButton(t.text)]), agentBody(x, t.text, cache, actions.refresh)]))
-  }
-  if (running && !liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, '', cache, actions.refresh)]))
+  conv.turns.forEach((t, i) => {
+    if (t.who === 'you') body.appendChild(el('div', { class: 'msg you', 'data-anchor': String(i) }, [el('span', { class: 'from', text: 'You' }), el('div', { class: 'body', text: t.text }), carriedRow(x, t)]))
+    else if (t.who === 'note') body.appendChild(el('p', { class: 'convo-note', 'data-anchor': String(i), text: t.text }))
+    else if (t === liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, t.text, i, cache, actions.refresh)]))
+    else if (t.text) body.appendChild(el('div', { class: 'msg agent' }, [el('span', { class: 'from' }, [name, copyButton(t.text)]), agentBody(x, t.text, i, cache, actions.refresh)]))
+  })
+  if (running && !liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, '', conv.turns.length, cache, actions.refresh)]))
   for (const p of x.pending) body.appendChild(approvalCard(s, x, p, actions))
   for (const q of x.questions) body.appendChild(questionCard(s, x, q, actions))
   if (fetchError) body.appendChild(el('p', { class: 'convo-end', style: 'color:var(--bad)', text: fetchError }))
@@ -886,8 +909,30 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
         }),
       ])
     : null
-  const convo = el('section', { class: 'convo', 'aria-label': `${sessionLabel(x)}, with ${name}`, 'data-session': x.id }, [head, hint, rules, body, foot])
+  const convo = el('section', { class: 'convo', 'aria-label': `${sessionLabel(x)}, with ${name}`, 'data-session': x.id }, [head, chatBar(s, x, actions), hint, rules, body, foot])
   return convo
+}
+
+/**
+ * The chat's bar, where the terminal has its own: the mode and model
+ * chips and the trust switch while the session is open, the switch that
+ * folds the tool calls, and the session's rules.
+ */
+function chatBar(s: State, x: Session, actions: InboxActions): HTMLElement {
+  const rules = el('button', {
+    type: 'button',
+    class: 'btn small ghost',
+    text: isOpen(x) && x.rulesLapsed ? `Rules (${x.rules.length}, lapsed)` : `Rules (${x.rules.length})`,
+    'aria-expanded': rulesOpen.has(x.id) ? 'true' : 'false',
+    onclick: () => {
+      if (rulesOpen.has(x.id)) rulesOpen.delete(x.id)
+      else rulesOpen.add(x.id)
+      rulesToggles++
+      actions.refresh()
+    },
+  })
+  // Rules is last, so it stays put when the fold button's words change.
+  return el('div', { class: 'chat-bar' }, [...(isOpen(x) ? settingChips(s, x, actions) : []), isOpen(x) ? trustSwitch(s, x, actions) : null, el('div', { class: 'acts' }, [foldSwitch(x, actions), rules])])
 }
 
 /** Under a prompt, the files it mentioned as chips and the images it carried as thumbnails, or nothing. */
