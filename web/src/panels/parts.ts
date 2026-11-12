@@ -48,10 +48,14 @@ export function statusPill(status: Status): HTMLElement {
   return el('span', { class: 'pill status', title: status[0] }, [el('span', { class: 'dot', style: `background:${status[1]}` }), el('span', { class: 'what', text: status[0] })])
 }
 
-/** A token total with the exact counts as its tooltip, or the given text while nothing has been counted. */
-export function tokensNode(t: TokenUsage, none = 'none yet'): HTMLElement {
-  if (!t.total) return el('span', { text: none })
-  return el('span', { title: tokensBreakdown(t), text: tokensText(t.total) })
+/**
+ * A token total with the exact counts as its tooltip, or the given text while
+ * nothing has been counted. A session's total while a turn runs says the turn
+ * is still to come, since agents report a turn's tokens only as it ends.
+ */
+export function tokensNode(t: TokenUsage, running = false, none = 'none yet'): HTMLElement {
+  if (!t.total) return el('span', { title: tokensBreakdown(t, running) || null, text: none })
+  return el('span', { title: tokensBreakdown(t, running), text: `${tokensText(t.total)}${running ? ' + this turn' : ''}` })
 }
 
 /** Label and value rows. A value can be a node, such as a ticking time. */
