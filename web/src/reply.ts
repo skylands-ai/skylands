@@ -46,6 +46,8 @@ export function replyBox(s: Session, actions: ReplyActions): HTMLElement {
   const input = el('textarea', {
     placeholder: idle ? 'Reply to the agent\u2026' : 'The agent is working. You can reply when it stops.',
     'aria-label': 'Reply',
+    // A box drawn again under this key gets the keyboard back, caret and all.
+    'data-keep': `reply-${s.id}`,
   }) as HTMLTextAreaElement
   input.disabled = !idle
   input.value = drafts.get(s.id) ?? ''

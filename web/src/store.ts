@@ -335,9 +335,13 @@ export function waitingCount(s: State): number {
   return Object.values(s.sessions).filter((x) => isWaiting(s, x)).length
 }
 
-/** Every session, most recently active first. */
+/**
+ * Every session, newest first by when it started. Nothing an agent does
+ * moves a session in the list, so a row stays where it is while you reach
+ * for it. Sessions that started at the same moment go by id.
+ */
 export function conversationList(s: State): Session[] {
-  return Object.values(s.sessions).sort((a, b) => b.activeAt.localeCompare(a.activeAt))
+  return Object.values(s.sessions).sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 }
 
 /** What the level of the current navigation is. */
