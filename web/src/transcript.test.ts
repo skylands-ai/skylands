@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseTranscript } from './transcript'
+import { parseTranscript, segments } from './transcript'
 
 const hash = 'ab'.repeat(32)
 
@@ -29,5 +29,46 @@ describe('parseTranscript', () => {
   it('keeps a line like a mention in the middle of a prompt’s text', () => {
     const { turns } = parseTranscript('## You\n\n\u{1F4C4} notes (link)\nis what I called it\n\n## Agent\n\n')
     expect(turns[0]).toEqual({ who: 'you', text: '\u{1F4C4} notes (link)\nis what I called it' })
+  })
+})
+
+describe('segments', () => {
+  it('puts the tool calls between two runs of words in one run, blank lines and all', () => {
+    const text = 'Looking around.\n\n⚙ Read a.go <!-- tool:t1 -->\n\n⚙ Read b.go <!-- tool:t2 -->\n⚙ Run make <!-- tool:t3 -->\n\nAll good.\n\n⚙ Edit a.go <!-- tool:t4 -->\n'
+    expect(segments(text)).toEqual([
+      { kind: 'text', text: 'Looking around.' },
+      {
+        kind: 'tools',
+        calls: [
+          { title: 'Read a.go', id: 't1' },
+          { title: 'Read b.go', id: 't2' },
+          { title: 'Run make', id: 't3' },
+        ],
+      },
+      { kind: 'text', text: 'All good.' },
+      { kind: 'tools', calls: [{ title: 'Edit a.go', id: 't4' }] },
+    ])
+  })
+
+  it('keeps a question apart from the tool calls on either side of it', () => {
+    const text = '⚙ Read a.go <!-- tool:t1 -->\n❓ Which branch? → main\n⚙ Run git <!-- tool:t2 -->\n'
+    expect(segments(text)).toEqual([
+      { kind: 'tools', calls: [{ title: 'Read a.go', id: 't1' }] },
+      { kind: 'question', text: 'Which branch? → main' },
+      { kind: 'tools', calls: [{ title: 'Run git', id: 't2' }] },
+    ])
+  })
+
+  it('counts a tool call written before calls were named', () => {
+    expect(segments('⚙ Read a.go\n⚙ Read b.go <!-- tool:t2 -->')).toEqual([
+      {
+        kind: 'tools',
+        calls: [{ title: 'Read a.go' }, { title: 'Read b.go', id: 't2' }],
+      },
+    ])
+  })
+
+  it('leaves a gear in the middle of a line to the words', () => {
+    expect(segments('Settings live under ⚙ Preferences.')).toEqual([{ kind: 'text', text: 'Settings live under ⚙ Preferences.' }])
   })
 })

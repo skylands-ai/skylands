@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mentionsIn, pickMention, typingMention } from './mentions'
+import { MENU_MAX, menuRoom, mentionsIn, pickMention, typingMention } from './mentions'
 
 describe('typingMention', () => {
   it('finds the @ being typed and what follows it', () => {
@@ -32,5 +32,25 @@ describe('mentionsIn', () => {
 
   it('drops a mention whose text was edited away', () => {
     expect(mentionsIn('look at a.go', ['a.go'])).toEqual([])
+  })
+})
+
+describe('menuRoom', () => {
+  it('opens above the box, no taller than the list grows', () => {
+    expect(menuRoom({ top: 700, bottom: 744 }, { top: 0, bottom: 800 })).toEqual({ below: false, height: MENU_MAX })
+  })
+
+  it('stays inside what clips it, as a dialog does', () => {
+    // The New form's prompt sits about 138px down its dialog.
+    expect(menuRoom({ top: 400, bottom: 520 }, { top: 262, bottom: 625 })).toEqual({ below: false, height: 126 })
+  })
+
+  it('opens below when the room above is short and there is more below', () => {
+    expect(menuRoom({ top: 60, bottom: 100 }, { top: 0, bottom: 800 })).toEqual({ below: true, height: MENU_MAX })
+    expect(menuRoom({ top: 60, bottom: 100 }, { top: 0, bottom: 150 })).toEqual({ below: false, height: 48 })
+  })
+
+  it('never asks for a negative height', () => {
+    expect(menuRoom({ top: 0, bottom: 800 }, { top: 0, bottom: 800 }).height).toBe(0)
   })
 })
