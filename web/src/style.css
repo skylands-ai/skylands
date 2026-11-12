@@ -236,6 +236,9 @@ button.toolchip[aria-expanded="true"]::before{ content:"\25BE"; }
 .ph h2{ margin:0; font-size:22px; line-height:1.1; display:inline-flex; align-items:center; gap:8px; }
 .ph h2 svg{ width:20px; height:20px; flex:none; }
 .pill{ display:inline-flex; align-items:center; gap:6px; padding:3px 9px; border-radius:999px; background:var(--surface-2); border:1px solid var(--line); font-size:12px; font-weight:600; }
+.pill.status{ max-width:100%; min-width:0; }
+.pill.status .what{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.convo-head .pill.status{ max-width:min(100%, 420px); }
 .note{ margin:0; padding:10px 12px; border-radius:8px; background:var(--surface-2); font-size:13px; }
 .facts{ display:flex; flex-direction:column; }
 .fact{ display:flex; justify-content:space-between; gap:12px; padding:7px 0; border-bottom:1px solid var(--line); font-size:13px; }

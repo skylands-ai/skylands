@@ -32,11 +32,20 @@ export function header(title: string, kind: string | null, status: Status | null
     el('div', { style: 'flex:1;min-width:0' }, [
       el('div', { style: 'display:flex;flex-wrap:wrap;align-items:center;gap:10px' }, [
         el('h2', {}, [place ? placeIcon(place) : null, title]),
-        status ? el('span', { class: 'pill' }, [el('span', { class: 'dot', style: `background:${status[1]}` }), status[0]]) : null,
+        status ? statusPill(status) : null,
       ]),
       kind ? el('p', { class: 'muted', style: 'margin:4px 0 0;font-size:13px', text: kind }) : null,
     ]),
   ])
+}
+
+/**
+ * What a session is doing, as a pill one line high. A long status, such as
+ * a whole command the agent runs, ends in an ellipsis; the transcript has
+ * all of it, and so does the tooltip.
+ */
+export function statusPill(status: Status): HTMLElement {
+  return el('span', { class: 'pill status', title: status[0] }, [el('span', { class: 'dot', style: `background:${status[1]}` }), el('span', { class: 'what', text: status[0] })])
 }
 
 /** A token total with the exact counts as its tooltip, or the given text while nothing has been counted. */

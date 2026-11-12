@@ -2,7 +2,7 @@ import { el } from './dom'
 import type { FetchCache, Fetched } from './fetchcache'
 import type { LiveText } from './live'
 import { renderMarkdown } from './markdown'
-import { agentGlyph, timeNode } from './panels/parts'
+import { agentGlyph, statusPill, timeNode } from './panels/parts'
 import type { AgentAvailability, AgentCommand, Permission, Question, QuestionField, Session } from './protocol'
 import { replyBox } from './reply'
 import { inputsVersion, requestInput } from './requestinput'
@@ -648,7 +648,7 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
   const head = el('div', { class: 'convo-head' }, [
     el('h2', { text: sessionLabel(x), title: x.prompt }),
     el('span', { class: 'who muted' }, [agentGlyph(x.agent), `${name} \u00b7 ${repo?.name ?? x.repoId} on ${x.host}`]),
-    el('span', { class: 'pill' }, [el('span', { class: 'dot', style: `background:${status[1]}` }), status[0]]),
+    statusPill(status),
     el('span', { class: 'muted', text: `${x.turns} ${x.turns === 1 ? 'turn' : 'turns'}` }),
     el('span', { class: 'muted', title: tokensBreakdown(x.tokens) || null, text: tokensLabel(x.tokens) }),
     el('div', { class: 'acts' }, [
