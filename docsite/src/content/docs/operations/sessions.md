@@ -7,7 +7,7 @@ description: Where a session works, how its changes reach your branch, and how t
 
 Each session works in its own git worktree, on a branch named `skylands/<session>` cut from whatever the checkout was on. Worktrees live under `<data-dir>/worktrees/<host>/<session>`.
 
-A session can work in the checkout itself instead, when the command bar's Where chip says so. Only one session at a time can work in a repository's checkout.
+A session can work in the checkout itself instead, when you choose that under Where in the command bar or the inbox's New form. Only one session at a time can work in a repository's checkout.
 
 ## Commit, Merge, or Open a Pull Request
 

@@ -20,6 +20,8 @@ export interface InboxActions {
   open(id: string | null): void
   /** Lists open conversations or all of them. */
   filter(which: 'open' | 'all'): void
+  /** Opens the form that starts a session on any repository. */
+  newSession(): void
   /** Shows the session in the world instead. */
   openInWorld(s: Session): void
   prompt(s: Session, text: string): Promise<string>
@@ -558,7 +560,7 @@ function listed(s: State): Session[] {
   return s.inboxFilter === 'all' ? all : all.filter((x) => isOpen(x) || x.id === s.inbox)
 }
 
-/** The row above the list: what is shown, what every conversation has cost in tokens, and the switch between open and all. */
+/** The row above the list: what is shown, what every conversation has cost in tokens, the switch between open and all, and New. */
 function tools(s: State, actions: InboxActions, compact: boolean): HTMLElement {
   const all = conversationList(s)
   const open = all.filter(isOpen).length
@@ -570,7 +572,9 @@ function tools(s: State, actions: InboxActions, compact: boolean): HTMLElement {
   const tokens = sumTokens(all)
   const spent = tokens.total ? el('span', { title: `${tokensBreakdown(tokens)}, across every conversation`, text: `${tokensText(tokens.total)} tokens${compact ? '' : ' used'}` }) : null
   const left = el('span', { class: 'muted' }, [count, count && spent ? ' · ' : null, spent])
-  return el('div', { class: 'inbox-tools' }, [left, el('div', { class: 'modes', role: 'group', 'aria-label': 'Which conversations' }, [seg('open', 'Open'), seg('all', 'All')])])
+  const which = el('div', { class: 'modes', role: 'group', 'aria-label': 'Which conversations' }, [seg('open', 'Open'), seg('all', 'All')])
+  const start = el('button', { type: 'button', class: 'btn small primary', text: 'New', title: 'Start a session on any repository', onclick: () => actions.newSession() })
+  return el('div', { class: 'inbox-tools' }, [left, el('div', { class: 'acts' }, [which, start])])
 }
 
 function agentCell(x: Session): HTMLElement {
@@ -584,7 +588,7 @@ function table(s: State, actions: InboxActions): HTMLElement {
   box.appendChild(tools(s, actions, false))
   if (!list.length) {
     const any = Object.keys(s.sessions).length > 0
-    box.appendChild(el('p', { class: 'inbox-empty', text: any ? 'No open conversations. Switch to All to see finished ones.' : 'No conversations yet. Open a terrace in the world and give an agent some work.' }))
+    box.appendChild(el('p', { class: 'inbox-empty', text: any ? 'No open conversations. Switch to All to see finished ones.' : 'No conversations yet. Press New to give an agent some work.' }))
     return box
   }
   const head = el('tr', {}, ['Conversation', 'Agent', 'Repository', 'Status', 'Turns', 'Last activity'].map((h) => el('th', { scope: 'col', text: h })))
@@ -695,7 +699,7 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
   const foot = el('div', { class: 'convo-foot' })
   if (x.status !== 'running') foot.appendChild(changesCard(x, changes, actions))
   if (isOpen(x)) foot.appendChild(replyBox(x, { prompt: (text) => actions.prompt(x, text), commands: () => actions.commands(x), cancel: () => actions.cancel(x), stop: () => actions.stop(x) }))
-  else foot.appendChild(el('p', { class: 'muted', style: 'margin:0;font-size:13px', text: 'This session is over. Start a new one from its terrace in the world.' }))
+  else foot.appendChild(el('p', { class: 'muted', style: 'margin:0;font-size:13px', text: 'This session is over. Press New to start another.' }))
 
   const hint = !isOpen(x)
     ? null
