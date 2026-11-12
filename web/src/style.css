@@ -166,6 +166,12 @@ button.toolchip:hover{ border-color:var(--text); color:var(--text); }
 button.toolchip[aria-expanded="true"]{ border-color:var(--accent); color:var(--text); margin-bottom:4px; }
 button.toolchip[aria-expanded="true"]::before{ content:"\25BE"; }
 .md .toolchip + *{ margin-top:0; }
+.toolrun{ display:inline-flex; align-items:center; gap:5px; margin:2px 6px 10px 0; padding:1px 9px; border-radius:999px; background:transparent; border:1px dashed var(--line); font-size:11px; font-weight:600; color:var(--muted); cursor:pointer; }
+.toolrun::before{ content:"\25B8"; }
+.toolrun:hover{ border-color:var(--text); color:var(--text); }
+.toolrun[aria-expanded="true"]{ border-style:solid; border-color:var(--accent); color:var(--text); }
+.toolrun[aria-expanded="true"]::before{ content:"\25BE"; }
+.md .toolrun + *{ margin-top:0; }
 .tooldetail{ display:flex; flex-direction:column; gap:8px; max-width:100%; margin:0 0 10px; padding:10px 12px; border-radius:10px; background:var(--surface-2); border:1px solid var(--line); font-size:12px; }
 .tooldetail .row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
 .tooldetail .state{ font-weight:600; }

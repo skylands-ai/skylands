@@ -14,6 +14,23 @@ export interface Conversation {
   end?: string
 }
 
+/** A tool call in an agent turn: the title its line gives it, and the id that names its record, which lines written before calls were named lack. */
+export interface ToolCall {
+  title: string
+  id?: string
+}
+
+/** A piece of an agent turn: a run of its words, a question it asked and the answer, or the tool calls it made in a row between them. */
+export type Segment = { kind: 'text'; text: string } | { kind: 'question'; text: string } | { kind: 'tools'; calls: ToolCall[] }
+
+/**
+ * The lines the daemon writes between the agent's words: a tool call, and
+ * a question with its answer. A tool call's line ends with a marker naming
+ * the call, which Markdown would hide and the chip follows to its record.
+ */
+const TOOL_LINE = /^⚙ (.*?)(?: <!-- tool:(\S+) -->)?\s*$/
+const QUESTION_LINE = /^❓ (.*?)\s*$/
+
 const YOU = /^#{1,2} (You|Prompt)\s*$/
 const AGENT = /^#{1,2} Agent\s*$/
 const END = /^\*(Finished: .*|Stopped|Failed: .*)\*\s*$/
@@ -95,4 +112,35 @@ export function parseTranscript(md: string): Conversation {
   }
   flush()
   return { turns, end }
+}
+
+/**
+ * Splits an agent turn into runs of words, the questions it asked, and the
+ * tool calls between them. Calls with only blank lines between them are
+ * one run.
+ */
+export function segments(text: string): Segment[] {
+  const out: Segment[] = []
+  let words: string[] = []
+  const flush = (): void => {
+    const t = words.join('\n').trim()
+    if (t) out.push({ kind: 'text', text: t })
+    words = []
+  }
+  for (const line of text.split('\n')) {
+    const tool = TOOL_LINE.exec(line)
+    const question = tool ? null : QUESTION_LINE.exec(line)
+    if (tool) {
+      flush()
+      const call: ToolCall = tool[2] ? { title: tool[1], id: tool[2] } : { title: tool[1] }
+      const last = out[out.length - 1]
+      if (last?.kind === 'tools') last.calls.push(call)
+      else out.push({ kind: 'tools', calls: [call] })
+    } else if (question) {
+      flush()
+      out.push({ kind: 'question', text: question[1] })
+    } else words.push(line)
+  }
+  flush()
+  return out
 }
