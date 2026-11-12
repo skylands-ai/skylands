@@ -34,6 +34,26 @@ export function mentionsIn(text: string, picked: string[]): string[] {
   return kept.sort((a, b) => text.indexOf(`@${a}`) - text.indexOf(`@${b}`))
 }
 
+/** The tallest the @ list grows, and the least room above its box it takes before opening below instead. */
+export const MENU_MAX = 260
+const MENU_MIN = 120
+/** The gap the list keeps from its box, as the stylesheet has it, and from the edge of what clips it. */
+const MENU_GAP = 4
+const EDGE_GAP = 8
+
+/**
+ * Where the @ list opens off its box and how tall it can be: above the
+ * box, as far up as what clips it allows (the window, a dialog, a pane
+ * that scrolls), or below it when the room above is short and there is
+ * more below.
+ */
+export function menuRoom(box: { top: number; bottom: number }, clip: { top: number; bottom: number }): { below: boolean; height: number } {
+  const above = box.top - MENU_GAP - (clip.top + EDGE_GAP)
+  const under = clip.bottom - EDGE_GAP - (box.bottom + MENU_GAP)
+  const below = above < MENU_MIN && under > above
+  return { below, height: Math.max(0, Math.min(MENU_MAX, below ? under : above)) }
+}
+
 /** "512 bytes", "12 KB", "3.4 MB". */
 export function sizeText(n: number): string {
   if (n < 1024) return `${n} bytes`

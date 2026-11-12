@@ -61,17 +61,22 @@ export class NewSessionForm {
     })
     this.refreshCarry = carry.refresh
     const cancel = el('button', { type: 'button', class: 'btn small ghost', text: 'Cancel', onclick: () => this.dialog.close() })
-    this.dialog.append(
-      el('div', { class: 'ns-body' }, [
-        el('h2', { id: 'newsessionTitle', text: 'New conversation' }),
-        el('div', { class: 'ns-row' }, [el('label', { class: 'chip' }, ['Repository', this.repo]), this.island]),
-        el('div', { class: 'ns-row' }, [el('label', { class: 'chip' }, ['Agent', agent]), modeChip, el('span', { class: 'chip' }, [el('label', {}, ['Model', model]), otherModel]), el('label', { class: 'chip' }, ['Where', where])]),
-        el('div', { class: 'cmd-anchor' }, [carry.menu, this.prompt]),
-        el('div', { class: 'ns-row' }, [carry.attach, carry.tray]),
-        el('div', { class: 'ns-foot' }, [this.note, cancel, this.start]),
-      ]),
-    )
+    const body = el('div', { class: 'ns-body' }, [
+      el('h2', { id: 'newsessionTitle', text: 'New conversation' }),
+      el('div', { class: 'ns-row' }, [el('label', { class: 'chip' }, ['Repository', this.repo]), this.island]),
+      el('div', { class: 'ns-row' }, [el('label', { class: 'chip' }, ['Agent', agent]), modeChip, el('span', { class: 'chip' }, [el('label', {}, ['Model', model]), otherModel]), el('label', { class: 'chip' }, ['Where', where])]),
+      el('div', { class: 'cmd-anchor' }, [carry.menu, this.prompt]),
+      el('div', { class: 'ns-row' }, [carry.attach, carry.tray]),
+      el('div', { class: 'ns-foot' }, [this.note, cancel, this.start]),
+    ])
+    this.dialog.append(body)
     document.body.appendChild(this.dialog)
+    // The @ list may reach past the dialog's edge, unless the window is too
+    // short for the form, which then scrolls inside the dialog and the
+    // list fits in it.
+    const scrolls = new ResizeObserver(() => this.dialog.classList.toggle('scrolls', body.offsetHeight > this.dialog.clientHeight))
+    scrolls.observe(body)
+    scrolls.observe(this.dialog)
     // Changing anything clears the last start's error, and choosing another
     // repository lists what its island can run.
     for (const type of ['input', 'change']) {
