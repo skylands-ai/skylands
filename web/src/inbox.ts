@@ -694,7 +694,8 @@ function terminalPane(s: State, x: Session, terminals: Terminals): HTMLElement {
   const open = el('button', { type: 'button', class: 'btn small ghost', text: v.current ? 'New terminal' : 'Open a terminal', disabled: v.opening ? 'true' : null, onclick: () => void terminals.open(x) })
   const canOpen = x.status === 'running' || x.status === 'idle'
   if (!v.current) {
-    bar.appendChild(el('span', { class: 'muted', text: `A shell in ${where} on ${x.host}` }))
+    const what = `A shell in ${where} on ${x.host}`
+    bar.appendChild(el('span', { class: 'muted', text: what, title: what }))
     const say = v.opening ? 'Opening a terminal…' : v.error || (canOpen ? 'No terminal is open in this session.' : 'This session is over, so no terminal can open in it.')
     pane.appendChild(el('div', { class: 'term-empty' }, [el('p', { text: say, style: v.error && !v.opening ? 'color:var(--bad)' : null }), canOpen && !v.opening ? open : null]))
     return pane
@@ -711,11 +712,13 @@ function terminalPane(s: State, x: Session, terminals: Terminals): HTMLElement {
       const err = await terminals.close(x, t.id)
       if (err) {
         note.textContent = err
+        note.title = err
         close.disabled = false
       }
     },
   }) as HTMLButtonElement
-  bar.append(el('span', { class: 'muted', text: `${shellName(t.shell)} in ${where} on ${x.host}` }), note, el('div', { class: 'acts' }, [canOpen ? open : null, close]))
+  const what = `${shellName(t.shell)} in ${where} on ${x.host}`
+  bar.append(el('span', { class: 'muted', text: what, title: what }), note, el('div', { class: 'acts' }, [canOpen ? open : null, close]))
   pane.appendChild(terminals.screen(x, t.id))
   const trouble = terminals.note(x, t.id)
   if (trouble) pane.appendChild(el('p', { class: 'term-note', text: trouble }))
@@ -728,38 +731,28 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
   const repo = s.repos[x.repoId]
   const name = agentLabel(x.agent)
   const running = x.status === 'running'
-  // The mode and model chips, the trust switch, and the rules are about
-  // the chat with the agent, so the terminal leaves them out.
-  const chat = convoMode(s, x) === 'chat'
+  // The head is the session's, the same in chat and in the terminal, so
+  // nothing in it moves when the mode does: what the session is on the
+  // left, with the status last because its width changes most, and the
+  // switch and the ways out on the right. What only one mode has goes in
+  // that mode's bar under the head.
   const head = el('div', { class: 'convo-head' }, [
-    el('h2', { text: sessionLabel(x), title: x.prompt }),
-    el('span', { class: 'who muted' }, [agentGlyph(x.agent), `${name} \u00b7 ${repo?.name ?? x.repoId} on ${x.host}`]),
-    statusPill(status),
-    el('span', { class: 'muted', text: `${x.turns} ${x.turns === 1 ? 'turn' : 'turns'}` }),
-    el('span', { class: 'muted', title: tokensBreakdown(x.tokens, running) || null, text: tokensLabel(x.tokens, running) }),
+    el('div', { class: 'convo-id' }, [
+      el('h2', { text: sessionLabel(x), title: x.prompt }),
+      el('div', { class: 'convo-facts' }, [
+        el('span', { class: 'who muted' }, [agentGlyph(x.agent), el('span', { class: 'what', text: `${name} \u00b7 ${repo?.name ?? x.repoId} on ${x.host}` })]),
+        el('span', { class: 'muted', text: `${x.turns} ${x.turns === 1 ? 'turn' : 'turns'}` }),
+        el('span', { class: 'muted', title: tokensBreakdown(x.tokens, running) || null, text: tokensLabel(x.tokens, running) }),
+        statusPill(status),
+      ]),
+    ]),
     el('div', { class: 'acts' }, [
       modeSwitch(s, x, actions),
-      ...(chat && isOpen(x) ? settingChips(s, x, actions) : []),
-      chat && isOpen(x) ? trustSwitch(s, x, actions) : null,
-      chat
-        ? el('button', {
-            type: 'button',
-            class: 'btn small ghost',
-            text: isOpen(x) && x.rulesLapsed ? `Rules (${x.rules.length}, lapsed)` : `Rules (${x.rules.length})`,
-            'aria-expanded': rulesOpen.has(x.id) ? 'true' : 'false',
-            onclick: () => {
-              if (rulesOpen.has(x.id)) rulesOpen.delete(x.id)
-              else rulesOpen.add(x.id)
-              rulesToggles++
-              actions.refresh()
-            },
-          })
-        : null,
       el('button', { type: 'button', class: 'btn small ghost', text: 'Show in world', onclick: () => actions.openInWorld(x) }),
       el('button', { type: 'button', class: 'btn small ghost', text: 'Close', 'aria-label': 'Close the conversation', onclick: () => actions.open(null) }),
     ]),
   ])
-  if (!chat) {
+  if (convoMode(s, x) === 'terminal') {
     return el('section', { class: 'convo', 'aria-label': `${sessionLabel(x)}, with ${name}`, 'data-session': x.id }, [head, terminalPane(s, x, terminals)])
   }
 
@@ -815,8 +808,28 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
         }),
       ])
     : null
-  const convo = el('section', { class: 'convo', 'aria-label': `${sessionLabel(x)}, with ${name}`, 'data-session': x.id }, [head, hint, rules, body, foot])
+  const convo = el('section', { class: 'convo', 'aria-label': `${sessionLabel(x)}, with ${name}`, 'data-session': x.id }, [head, chatBar(s, x, actions), hint, rules, body, foot])
   return convo
+}
+
+/**
+ * The chat's bar, where the terminal has its own: the mode and model
+ * chips and the trust switch while the session is open, and its rules.
+ */
+function chatBar(s: State, x: Session, actions: InboxActions): HTMLElement {
+  const rules = el('button', {
+    type: 'button',
+    class: 'btn small ghost',
+    text: isOpen(x) && x.rulesLapsed ? `Rules (${x.rules.length}, lapsed)` : `Rules (${x.rules.length})`,
+    'aria-expanded': rulesOpen.has(x.id) ? 'true' : 'false',
+    onclick: () => {
+      if (rulesOpen.has(x.id)) rulesOpen.delete(x.id)
+      else rulesOpen.add(x.id)
+      rulesToggles++
+      actions.refresh()
+    },
+  })
+  return el('div', { class: 'chat-bar' }, [...(isOpen(x) ? settingChips(s, x, actions) : []), isOpen(x) ? trustSwitch(s, x, actions) : null, el('div', { class: 'acts' }, [rules])])
 }
 
 /** Under a prompt, the files it mentioned as chips and the images it carried as thumbnails, or nothing. */
