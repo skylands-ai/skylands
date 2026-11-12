@@ -64,7 +64,9 @@ export function renderHeader(crumbs: HTMLElement, connected: HTMLElement, link: 
 
   const [text, color] =
     s.link === 'connected'
-      ? ['Citadel connected', 'var(--ok)']
+      ? s.loading
+        ? ['Citadel catching up', 'var(--warn)']
+        : ['Citadel connected', 'var(--ok)']
       : s.link === 'lost'
         ? ['Citadel unreachable, retrying', 'var(--bad)']
         : ['Connecting to citadel', 'var(--warn)']

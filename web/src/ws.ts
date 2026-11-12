@@ -1,6 +1,6 @@
 import type { Island, Live, Message, Repo, Session, TerminalOutput, WorldInfo } from './protocol'
 import { signedOut, signIn } from './signin'
-import type { Store } from './store'
+import type { State, Store } from './store'
 
 /** The browser's side of the socket, beyond listening. */
 export interface Link {
@@ -33,6 +33,26 @@ function normalizeSession(s: Session): Session {
   return { ...s, recent: s.recent ?? [], files: s.files ?? {}, plan: s.plan ?? [], pending: s.pending ?? [], questions: s.questions ?? [], rules: s.rules ?? [], terminals: s.terminals ?? [], trusted: s.trusted ?? false, turns: s.turns ?? 1, updatedAt: s.updatedAt ?? s.startedAt, activeAt: s.activeAt ?? s.updatedAt ?? s.startedAt }
 }
 
+/**
+ * What a snapshot changes. A citadel still catching up, as one does when it
+ * has just restarted, sends only the hosts it has read so far. A page that
+ * already shows the world keeps showing it until the citadel has caught up
+ * and sends the whole of it, so nothing on the page moves meanwhile. A page
+ * with nothing yet shows what there is.
+ */
+export function snapshotPatch(m: Message, shown: boolean): Partial<State> {
+  const loading = m.loading ?? null
+  const patch: Partial<State> = { server: m.server ?? null, world: m.world ?? null, approvers: m.approvers ?? [], loading }
+  if (loading && shown) return patch
+  const islands: Record<string, Island> = {}
+  for (const i of m.islands ?? []) islands[i.host] = i
+  const repos: Record<string, Repo> = {}
+  for (const r of m.repos ?? []) repos[r.id] = r
+  const sessions: Record<string, Session> = {}
+  for (const x of m.sessions ?? []) sessions[x.id] = normalizeSession(x)
+  return { ...patch, islands, repos, sessions }
+}
+
 // The browser stays on one citadel through this socket. When it drops, keep
 // trying with a growing delay so a citadel restart heals on its own.
 export function connectToCitadel(store: Store, onLive: (host: string, id: string, piece: Live) => void, terms?: TerminalListener): Link {
@@ -41,6 +61,9 @@ export function connectToCitadel(store: Store, onLive: (host: string, id: string
   let watched: { host: string; id: string } | null = null
   let term: TerminalRef | null = null
   let opened = 0
+  // Whether a citadel has sent this page the whole world, which the page
+  // keeps showing through a citadel's catching up.
+  let shown = false
 
   const send = (m: unknown): boolean => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return false
@@ -77,9 +100,10 @@ export function connectToCitadel(store: Store, onLive: (host: string, id: string
     if (r === 'unavailable') return retry()
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
     ws = new WebSocket(`${scheme}://${location.host}/ws`)
+    // The link counts as connected once the citadel's snapshot says where
+    // it stands, which it sends first.
     ws.addEventListener('open', () => {
       retryDelay = 1000
-      store.update({ link: 'connected', lastContact: Date.now() })
       // A reconnection picks the watch back up.
       if (watched) tell()
       if (term) tellTerm()
@@ -96,17 +120,14 @@ export function connectToCitadel(store: Store, onLive: (host: string, id: string
         case 'term':
           if (m.host && m.id && m.terminal && m.output && term && m.host === term.host && m.id === term.id && m.terminal === term.terminal) terms?.output(term, m.output)
           break
-        case 'snapshot': {
-          const islands: Record<string, Island> = {}
-          for (const i of m.islands ?? []) islands[i.host] = i
-          const repos: Record<string, Repo> = {}
-          for (const r of m.repos ?? []) repos[r.id] = r
-          const sessions: Record<string, Session> = {}
-          for (const x of m.sessions ?? []) sessions[x.id] = normalizeSession(x)
-          store.update({ server: m.server ?? null, world: m.world ?? null, approvers: m.approvers ?? [], islands, repos, sessions })
+        case 'snapshot':
+          store.update({ ...snapshotPatch(m, shown), link: 'connected' })
+          if (!m.loading) shown = true
           if (needsSetup(m.world)) location.assign('/setup')
           break
-        }
+        case 'loading':
+          store.update({ loading: m.loading ?? null })
+          break
         case 'approvers':
           store.update({ approvers: m.approvers ?? [] })
           break

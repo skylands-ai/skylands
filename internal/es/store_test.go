@@ -68,34 +68,59 @@ func TestAppendReplayFollow(t *testing.T) {
 		t.Fatalf("replay = %v, err %v", got, err)
 	}
 
-	// Follow replays, then delivers new events as they arrive.
-	events := make(chan v1.Event, 8)
+	// Follow replays, says it has caught up, then delivers new events as
+	// they arrive. The marker goes down the same channel, so its place
+	// among the events is checked.
+	const caughtUp = "caught up"
+	events := make(chan string, 8)
+	var last v1.Event
 	fctx, stop := context.WithCancel(ctx)
 	defer stop()
 	go func() {
-		_ = s.Follow(fctx, "island-ws", []string{v1.IslandEventFilter("ws")}, func(seq uint64, ev v1.Event) { events <- ev })
+		_ = s.Follow(fctx, "island-ws", []string{v1.IslandEventFilter("ws")}, func(seq uint64, ev v1.Event) { last = ev; events <- ev.Type }, func() { events <- caughtUp })
 	}()
-	for _, want := range []string{v1.EventRepoRegistered, v1.EventTerrainSnapshotted} {
+	next := func(what string) string {
+		t.Helper()
 		select {
-		case ev := <-events:
-			if ev.Type != want {
-				t.Fatalf("follow replay got %s, want %s", ev.Type, want)
-			}
+		case got := <-events:
+			return got
 		case <-time.After(5 * time.Second):
-			t.Fatal("follow replay stalled")
+			t.Fatalf("%s stalled", what)
+			return ""
+		}
+	}
+	for _, want := range []string{v1.EventRepoRegistered, v1.EventTerrainSnapshotted, caughtUp} {
+		if got := next("follow replay"); got != want {
+			t.Fatalf("follow replay got %s, want %s", got, want)
 		}
 	}
 	ev4, _ := v1.NewEvent(v1.EventRepoRegistered, "cmd-3", v1.RepoRegistered{RepoID: "r2"})
 	if _, err := s.Append(ctx, v1.IslandEventSubject("ws", v1.EventRepoRegistered), ev4); err != nil {
 		t.Fatal(err)
 	}
+	if got := next("live event"); got != v1.EventRepoRegistered {
+		t.Fatalf("live event = %s, want %s", got, v1.EventRepoRegistered)
+	}
+	var rr v1.RepoRegistered
+	if err := last.Decode(&rr); err != nil || rr.RepoID != "r2" {
+		t.Fatalf("live event = %+v, decode err %v", last, err)
+	}
+	// It catches up once: a new event's turn to be the last one stored
+	// doesn't say so again.
 	select {
-	case ev := <-events:
-		var rr v1.RepoRegistered
-		if err := ev.Decode(&rr); err != nil || rr.RepoID != "r2" {
-			t.Fatalf("live event = %+v, decode err %v", ev, err)
-		}
+	case got := <-events:
+		t.Fatalf("after the live event, got %s, want nothing", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// Following events of which none are stored catches up before any arrives.
+	quiet := make(chan struct{})
+	go func() {
+		_ = s.Follow(fctx, "island-ws", []string{v1.SessionEventSubject("ws", "nobody", "Nothing")}, func(uint64, v1.Event) { t.Error("an event matched a filter nothing matches") }, func() { close(quiet) })
+	}()
+	select {
+	case <-quiet:
 	case <-time.After(5 * time.Second):
-		t.Fatal("live event never arrived")
+		t.Fatal("following nothing stored never caught up")
 	}
 }

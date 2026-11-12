@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -76,6 +77,10 @@ type citadel struct {
 	store    *es.Store
 	// push sends push notifications, or is nil when this citadel doesn't.
 	push *pusher
+	// catch is what the citadel still has to read before browsers are sent
+	// what it has of a host, and listed lists the hosts it waits for once.
+	catch  *catchUp
+	listed sync.Once
 
 	mu sync.Mutex
 	// world is what the citadel knows about the world it serves.
@@ -107,6 +112,7 @@ func Run(ctx context.Context, cfg Config) error {
 	} else {
 		slog.Info("citadel: push notifications off", "why", why)
 	}
+	c.catch = newCatchUp(c.onLoading)
 	c.islands = projections.NewIslands(c.onIsland)
 	c.terrain = projections.NewTerrain(c.onRepo)
 	c.sessions = projections.NewSessions(c.onSession)
@@ -166,8 +172,6 @@ func Run(ctx context.Context, cfg Config) error {
 	return c.web.Run(ctx)
 }
 
-// snapshot is the world as this citadel sees it, sent to each browser as it
-// connects.
 // live relays one session's transcript appends from its island to a
 // browser, for as long as the browser watches.
 func (c *citadel) live(host, id string, deliver func(v1.Live)) (func(), error) {
@@ -197,9 +201,17 @@ func plainToken(s string) bool {
 	return s != "" && !strings.ContainsAny(s, ".*> \t\r\n")
 }
 
+// snapshot is the world as this citadel sees it, sent to each browser as it
+// connects, and to all of them once the citadel has caught up. While it is
+// still reading a host, the snapshot leaves the host out, so a browser sees
+// none of it rather than some point in its history.
 func (c *citadel) snapshot() web.Message {
 	info := c.serverInfo()
-	return web.Message{Type: "snapshot", Server: &info, World: c.worldInfo(), Approvers: c.approverInfo(), Islands: c.islands.List(), Repos: c.terrain.List(), Sessions: c.sessions.List()}
+	m := web.Message{Type: "snapshot", Server: &info, World: c.worldInfo(), Approvers: c.approverInfo(), Loading: c.catch.state()}
+	m.Islands = slices.DeleteFunc(c.islands.List(), func(i projections.Island) bool { return holding(m.Loading, i.Host) })
+	m.Repos = slices.DeleteFunc(c.terrain.List(), func(r projections.Repo) bool { return holding(m.Loading, r.Host) })
+	m.Sessions = slices.DeleteFunc(c.sessions.List(), func(s projections.Session) bool { return holding(m.Loading, s.Host) })
+	return m
 }
 
 // serverInfo describes the NATS server as the citadel sees it right now.
@@ -231,6 +243,7 @@ func (c *citadel) onConnect(nc *nats.Conn) {
 	slog.Info("citadel: connected to NATS", "server", info.Name, "version", info.Version, "url", info.URL, "domain", info.Domain)
 	c.web.Broadcast(web.Message{Type: "server", Server: &info})
 	go c.checkWorld(nc)
+	c.listed.Do(func() { go c.listHosts(nc) })
 }
 
 func (c *citadel) onDisconnect(nc *nats.Conn, err error) {
@@ -249,23 +262,33 @@ func (c *citadel) onIsland(isl projections.Island) {
 	} else {
 		slog.Info("citadel: island unreachable", "host", isl.Host, "lastSeen", isl.LastSeen.Format(time.RFC3339))
 	}
+	if c.catch.holds(isl.Host) {
+		return
+	}
 	c.web.Broadcast(web.Message{Type: "island", Island: &isl})
 }
 
 // onRepo runs whenever a repository is registered or its terrain changes.
 func (c *citadel) onRepo(r projections.Repo) {
+	if c.catch.holds(r.Host) {
+		return
+	}
 	slog.Info("citadel: terrace", "host", r.Host, "repo", r.Name, "files", len(r.Files))
 	c.web.Broadcast(web.Message{Type: "repo", Repo: &r})
 }
 
 // onSession runs whenever an agent session changes.
 func (c *citadel) onSession(s projections.Session) {
+	if c.catch.holds(s.Host) {
+		return
+	}
 	c.web.Broadcast(web.Message{Type: "session", Session: &s})
 }
 
 // followHost mirrors a host's stream into the world's domain the first time
 // the host is seen, then projects its events. Creating a mirror that already
-// exists changes nothing.
+// exists changes nothing. Until the events the mirror held have been read,
+// nothing about the host goes to browsers.
 func (c *citadel) followHost(host string) {
 	c.mu.Lock()
 	if c.following[host] {
@@ -275,6 +298,7 @@ func (c *citadel) followHost(host string) {
 	c.following[host] = true
 	store := c.store
 	c.mu.Unlock()
+	c.catch.start(host)
 
 	go func() {
 		name := v1.IslandStreamName(host)
@@ -302,12 +326,16 @@ func (c *citadel) followHost(host string) {
 				c.islands.Apply(host, ev)
 			}
 			c.markApplied(host, seq)
+		}, func() {
+			slog.Info("citadel: read host events", "host", host)
+			c.catch.done(host, true)
 		})
 		if err != nil && c.ctx.Err() == nil {
 			slog.Warn("citadel: follow host events", "host", host, "err", err)
 			c.mu.Lock()
 			delete(c.following, host)
 			c.mu.Unlock()
+			c.catch.done(host, false)
 		}
 	}()
 }

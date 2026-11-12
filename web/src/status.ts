@@ -12,6 +12,7 @@ export function citadelStatus(s: State): Status {
   if (s.link === 'connecting') return ['Connecting', 'var(--warn)']
   if (s.link === 'lost') return ['Unreachable', 'var(--bad)']
   if (!s.server?.connected) return ['Waiting for NATS', 'var(--warn)']
+  if (s.loading) return ['Catching up', 'var(--warn)']
   return ['Healthy', 'var(--ok)']
 }
 
@@ -23,7 +24,7 @@ export function islandCounts(s: State): { reachable: number; total: number } {
 
 /** What the citadel's floating label says under its name. */
 export function citadelLabelStatus(s: State): Status {
-  if (s.link !== 'connected' || !s.server?.connected) return citadelStatus(s)
+  if (s.link !== 'connected' || !s.server?.connected || s.loading) return citadelStatus(s)
   const { reachable, total } = islandCounts(s)
   return [total ? `${reachable} of ${total} islands connected` : 'No islands yet', 'var(--ok)']
 }

@@ -443,4 +443,19 @@ export interface Message {
   repo?: Repo
   sessions?: Session[]
   session?: Session
+  /** With "snapshot" and "loading": what the citadel is still reading, absent once it has caught up. */
+  loading?: Loading
+}
+
+/**
+ * What a citadel still has to read before what it sends is the world as it
+ * is now, as when it has just restarted and reads every host's events
+ * again. It sends nothing about the hosts it names until it has read them,
+ * then a new snapshot.
+ */
+export interface Loading {
+  /** Until the citadel has reached the world's NATS server. */
+  nats?: boolean
+  /** The hosts it is reading, or, as it starts, waiting to hear from. */
+  hosts?: string[]
 }

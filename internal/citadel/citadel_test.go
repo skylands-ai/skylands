@@ -12,6 +12,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/skylands-ai/skylands/internal/citadel/projections"
 	"github.com/skylands-ai/skylands/internal/citadel/web"
 	"github.com/skylands-ai/skylands/internal/daemon"
 	"github.com/skylands-ai/skylands/internal/daemon/agents"
@@ -112,34 +113,42 @@ func TestRunServesWebAndTracksIslands(t *testing.T) {
 		daemonDone <- daemon.Run(daemonCtx, daemon.Config{Host: "workstation", NATSURL: srv.LeafURL(), DataDir: t.TempDir(), TrustFirstWorld: true, Version: "v0.1.0",
 			Adapters: agents.Registry{"fake": {Name: "fake", Provider: "local", Command: fakeCmd, Env: fakeEnv}}})
 	}()
-	waitIsland := func(reachable bool) {
+	// The island arrives in a snapshot once the citadel has read the host's
+	// events, or on its own after that, so it is tracked as a browser does.
+	var island *projections.Island
+	waitIsland := func(what string, ok func(*projections.Island) bool) {
 		t.Helper()
-		for i := 0; i < 50; i++ {
+		for range 50 {
 			m := read()
-			if m.Type == "island" && m.Island != nil && m.Island.Host == "workstation" && m.Island.Reachable == reachable {
-				if reachable && (m.Island.Daemon.Version != "v0.1.0" || m.Island.Daemon.OS == "") {
-					t.Errorf("island daemon facts = %+v", m.Island.Daemon)
+			switch m.Type {
+			case "snapshot":
+				island = nil
+				for _, isl := range m.Islands {
+					if isl.Host == "workstation" {
+						island = &isl
+					}
 				}
+			case "island":
+				if m.Island != nil && m.Island.Host == "workstation" {
+					island = m.Island
+				}
+			}
+			if island != nil && ok(island) {
 				return
 			}
 		}
-		t.Fatalf("never saw workstation with reachable=%v", reachable)
+		t.Fatalf("never saw workstation %s", what)
 	}
-	waitIsland(true)
+	waitIsland("reachable", func(isl *projections.Island) bool { return isl.Reachable })
+	if island.Daemon.Version != "v0.1.0" || island.Daemon.OS == "" {
+		t.Errorf("island daemon facts = %+v", island.Daemon)
+	}
 
 	// The daemon checks which agents it can launch, and the island carries
 	// what it recorded.
-	for i := 0; ; i++ {
-		if i == 50 {
-			t.Fatal("the island never listed its agents")
-		}
-		m := read()
-		if m.Type == "island" && m.Island != nil && m.Island.Host == "workstation" && len(m.Island.Agents) > 0 {
-			if a := m.Island.Agents[0]; len(m.Island.Agents) != 1 || a.Name != "fake" || !a.Available {
-				t.Errorf("island agents = %+v, want the fake agent available", m.Island.Agents)
-			}
-			break
-		}
+	waitIsland("list its agents", func(isl *projections.Island) bool { return len(isl.Agents) > 0 })
+	if a := island.Agents[0]; len(island.Agents) != 1 || a.Name != "fake" || !a.Available {
+		t.Errorf("island agents = %+v, want the fake agent available", island.Agents)
 	}
 
 	// Stopping the daemon makes the island unreachable after a few misses.
@@ -147,7 +156,7 @@ func TestRunServesWebAndTracksIslands(t *testing.T) {
 	if err := <-daemonDone; err != nil {
 		t.Errorf("daemon.Run returned %v", err)
 	}
-	waitIsland(false)
+	waitIsland("unreachable", func(isl *projections.Island) bool { return !isl.Reachable })
 
 	stop()
 	select {

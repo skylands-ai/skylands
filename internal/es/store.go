@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -116,7 +117,13 @@ func (s *Store) Replay(ctx context.Context, stream string, filters []string, fn 
 // Follow delivers every stored event matching filters, then each new one as
 // it arrives, until ctx ends. Projections use it. Delivery is in order and
 // at least once, so handlers must tolerate a repeat after a reconnect.
-func (s *Store) Follow(ctx context.Context, stream string, filters []string, fn func(seq uint64, ev v1.Event)) error {
+//
+// caughtUp, if set, is called once, as soon as the events stored when
+// following began have all been delivered: what came before it is history
+// being read again, and what comes after is new. It runs on the goroutine
+// that delivers events, after the last stored one, or before any when
+// none matches.
+func (s *Store) Follow(ctx context.Context, stream string, filters []string, fn func(seq uint64, ev v1.Event), caughtUp func()) error {
 	st, err := s.js.Stream(ctx, stream)
 	if err != nil {
 		return fmt.Errorf("stream %s: %w", stream, err)
@@ -125,28 +132,45 @@ func (s *Store) Follow(ctx context.Context, stream string, filters []string, fn 
 	if err != nil {
 		return err
 	}
-	cc, err := cons.Consume(func(msg jetstream.Msg) {
-		seq, ev, _, err := decode(msg)
-		if err != nil {
-			return
+	var once sync.Once
+	caught := func() {
+		if caughtUp != nil {
+			once.Do(caughtUp)
 		}
-		fn(seq, ev)
+	}
+	// Each delivery counts the matching events still to come. The consumer
+	// counts them as it is made, which is how a stream with none says so.
+	cc, err := cons.Consume(func(msg jetstream.Msg) {
+		seq, ev, pending, err := decode(msg)
+		if err == nil {
+			fn(seq, ev)
+		}
+		if seq != 0 && pending == 0 {
+			caught()
+		}
 	})
 	if err != nil {
 		return err
+	}
+	if info := cons.CachedInfo(); info != nil && info.NumPending == 0 {
+		caught()
 	}
 	<-ctx.Done()
 	cc.Stop()
 	return nil
 }
 
+// decode reads one event and where it stands in the stream: its sequence,
+// and how many events matching the consumer's filters follow it. An event
+// that doesn't decode still says where it stands, unless its metadata is
+// missing too, when seq is 0.
 func decode(msg jetstream.Msg) (seq uint64, ev v1.Event, pending uint64, err error) {
 	meta, err := msg.Metadata()
 	if err != nil {
 		return 0, ev, 0, err
 	}
 	if err := json.Unmarshal(msg.Data(), &ev); err != nil {
-		return 0, ev, 0, fmt.Errorf("decode event at %d on %s: %w", meta.Sequence.Stream, msg.Subject(), err)
+		return meta.Sequence.Stream, ev, meta.NumPending, fmt.Errorf("decode event at %d on %s: %w", meta.Sequence.Stream, msg.Subject(), err)
 	}
 	return meta.Sequence.Stream, ev, meta.NumPending, nil
 }
