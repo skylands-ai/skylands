@@ -585,7 +585,7 @@ function listed(s: State): Session[] {
   return s.inboxFilter === 'all' ? all : all.filter((x) => isOpen(x) || x.id === s.inbox)
 }
 
-/** The row above the list: what is shown, what every conversation has cost in tokens, the switch between open and all, and New. */
+/** The row above the list: what is shown, what the listed conversations have cost in tokens, the switch between open and all, and New. */
 function tools(s: State, actions: InboxActions, compact: boolean): HTMLElement {
   const all = conversationList(s)
   const open = all.filter(isOpen).length
@@ -593,9 +593,9 @@ function tools(s: State, actions: InboxActions, compact: boolean): HTMLElement {
   const seg = (which: 'open' | 'all', text: string): HTMLElement =>
     el('button', { type: 'button', class: 'btn small', 'aria-pressed': s.inboxFilter === which ? 'true' : 'false', text, onclick: () => actions.filter(which) })
   const count = compact ? null : s.inboxFilter === 'all' ? `${all.length} conversations` : `${open} open${over ? `, ${over} finished hidden` : ''}`
-  // The total is over every conversation on every island, whatever the filter lists.
-  const tokens = sumTokens(all)
-  const spent = tokens.total ? el('span', { title: `${tokensBreakdown(tokens)}, across every conversation`, text: `${tokensText(tokens.total)} tokens${compact ? '' : ' used'}` }) : null
+  // The total is over exactly the conversations listed, so it follows the filter.
+  const tokens = sumTokens(listed(s))
+  const spent = tokens.total ? el('span', { title: `${tokensBreakdown(tokens)}, across ${s.inboxFilter === 'all' ? 'every conversation' : 'the conversations listed'}`, text: `${tokensText(tokens.total)} tokens${compact ? '' : ' used'}` }) : null
   const left = el('span', { class: 'muted' }, [count, count && spent ? ' · ' : null, spent])
   const which = el('div', { class: 'modes', role: 'group', 'aria-label': 'Which conversations' }, [seg('open', 'Open'), seg('all', 'All')])
   const start = el('button', { type: 'button', class: 'btn small primary', text: 'New', title: 'Start a session on any repository', onclick: () => actions.newSession() })
