@@ -10,6 +10,16 @@ or you can go directly to your inbox and click the _New_ button to create a new 
 When you create a new session, you'll need to choose the model provider (e.g. **Claude**, **Codex**, **Gemini**, etc) and
 select the model you want to use for the session. You can change models in the middle of a session, but not providers (e.g. a Claude session will always be a Claude session).
 
+The inbox's _New_ form asks for:
+
+- the repository, from every repository registered on any island
+- the agent, from the agents that repository's island can run
+- the mode and the model, for an agent that offers a choice
+- where the agent works: a worktree of its own, or the checkout itself
+- the first prompt
+
+Press _Start_, or ⌘ Enter (Ctrl Enter on Linux and Windows), and the new conversation opens in the inbox. Only a browser that's an approver for the world can start a session. The form keeps your choices until you reload the page.
+
 At the moment, the `skylands` CLI doesn't support creating new sessions or sending new text to an existing
 session. This limitation will likely be removed in the near future.
 

@@ -95,6 +95,20 @@ button:focus-visible,a:focus-visible{ outline:2px solid var(--accent); outline-o
 .inbox-list.narrow{ flex:0 0 340px; border-right:1px solid var(--line); display:flex; flex-direction:column; }
 .inbox-empty{ margin:0; padding:48px 24px; color:var(--muted); text-align:center; font-size:14px; }
 .inbox-tools{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 14px; border-bottom:1px solid var(--line); background:var(--surface); font-size:13px; }
+.inbox-tools .acts{ display:flex; align-items:center; gap:8px; }
+/* The inbox's New form, over the page. */
+.newsession{ width:min(680px, calc(100% - 24px)); max-height:calc(100% - 24px); padding:0; border-radius:12px; border:1px solid var(--line); background:var(--surface); color:var(--text); box-shadow:0 12px 40px rgba(0,0,0,0.28); }
+.newsession::backdrop{ background:rgba(0,0,0,0.35); }
+.newsession .ns-body{ display:flex; flex-direction:column; gap:12px; padding:16px 18px; }
+.newsession h2{ margin:0; font-size:16px; }
+.newsession .ns-row{ display:flex; align-items:center; gap:8px 14px; flex-wrap:wrap; font-size:13px; }
+.newsession .chip input{ min-height:32px; width:190px; padding:0 8px; border-radius:6px; border:1px solid var(--line); background:var(--surface); color:var(--text); font:inherit; font-size:13px; }
+.newsession textarea{ min-height:120px; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--surface); color:var(--text); font:inherit; font-size:14px; resize:vertical; }
+.newsession textarea:focus-visible{ outline:2px solid var(--accent); outline-offset:1px; }
+.newsession .ns-foot{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.newsession .ns-note{ margin-right:auto; flex:1 1 240px; font-size:12px; color:var(--muted); }
+.newsession .ns-note.bad{ color:var(--bad); }
+.newsession .ns-note a{ color:var(--accent); }
 .convo-head h2{ max-width:min(60%, 640px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .inbox-table{ width:100%; border-collapse:collapse; table-layout:fixed; font-size:14px; }
 .inbox-table th{ text-align:left; font-size:12px; font-weight:600; color:var(--muted); padding:10px 14px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--surface); z-index:1; }

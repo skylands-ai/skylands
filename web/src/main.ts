@@ -22,6 +22,7 @@ import { agentLabel, citadelLabelStatus, clockText, durationText, islandStatus, 
 import { islandList, isWaiting, level, pendingCount, pendingItems, reposOn, sessionsOn, Store, waitingCount, type State } from './store'
 import { growLive, lapsedText, renderInbox, type InboxActions } from './inbox'
 import { LiveText } from './live'
+import { NewSessionForm } from './newsession'
 import { refreshOpenChips } from './toolchip'
 import { renderMarkdown } from './markdown'
 import { providerOf } from './world/airship'
@@ -67,6 +68,8 @@ void fetch('/api/world')
   })
   .catch(() => {})
 const bar = new CommandBar()
+// A session started from the inbox's New form opens there.
+const newSession = new NewSessionForm((id) => openConversation(id))
 const cache = new FetchCache(() => store.touch())
 const live = new LiveText()
 
@@ -138,6 +141,7 @@ async function sessionCommand(host: string, id: string, action: string, body: un
 const inboxActions: InboxActions = {
   open: (id) => store.update({ inbox: id }),
   filter: (which) => store.setInboxFilter(which),
+  newSession: () => newSession.open(store.state),
   openInWorld: (x) => {
     store.setView('world')
     nav.selectAgent(x.host, x.repoId, x.id)
@@ -575,6 +579,7 @@ function afterRender(s: State): void {
 fitScreen()
 
 store.subscribe((s0) => {
+  newSession.update(s0)
   renderPhoneLayout(s0)
   if (s0.phone) {
     afterRender(s0)
@@ -645,7 +650,8 @@ modeInbox.addEventListener('click', () => store.setView('inbox'))
 window.addEventListener('keydown', (e) => {
   const t = e.target as HTMLElement | null
   const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
-  if (!typing && e.key === 'Escape' && !store.state.phone) world?.up()
+  // Escape in a dialog, such as the New form, closes the dialog and no more.
+  if (!typing && e.key === 'Escape' && !store.state.phone && !t?.closest('dialog')) world?.up()
 })
 
 // Times tick in place. Nothing is rebuilt for the clock. A running agent's
