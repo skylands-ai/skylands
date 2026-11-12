@@ -166,17 +166,31 @@ export function tokensText(n: number): string {
   return `${(n / 1_000_000).toFixed(1)}M`
 }
 
-/** "12.3k tokens", or "no tokens yet" before any request has been counted. */
-export function tokensLabel(t: TokenUsage): string {
-  return t.total ? `${tokensText(t.total)} tokens` : 'no tokens yet'
+/**
+ * "12.3k tokens", or "no tokens yet" before any request has been counted.
+ * While a turn runs, "12.3k tokens + this turn": agents report a turn's
+ * tokens only as it ends, so until then the total is the earlier turns' and
+ * the title request's.
+ */
+export function tokensLabel(t: TokenUsage, running = false): string {
+  if (!t.total) return 'no tokens yet'
+  return `${tokensText(t.total)} tokens${running ? ' + this turn' : ''}`
 }
 
-/** The exact counts behind a token total, for a tooltip: "12,345 tokens: 10,000 in, 2,000 out, 345 cache read". Empty when nothing was counted. */
-export function tokensBreakdown(t: TokenUsage): string {
-  if (!t.total) return ''
+/** What a total leaves out while a turn runs. */
+const TURN_UNCOUNTED = 'The turn in progress is counted when it ends.'
+
+/**
+ * The exact counts behind a token total, for a tooltip: "12,345 tokens:
+ * 10,000 in, 2,000 out, 345 cache read". While a turn runs it adds that the
+ * turn is not in them yet. Empty when nothing was counted and no turn runs.
+ */
+export function tokensBreakdown(t: TokenUsage, running = false): string {
+  if (!t.total) return running ? TURN_UNCOUNTED : ''
   const parts = [`${t.input.toLocaleString()} in`, `${t.output.toLocaleString()} out`]
   if (t.cachedRead) parts.push(`${t.cachedRead.toLocaleString()} cache read`)
   if (t.cachedWrite) parts.push(`${t.cachedWrite.toLocaleString()} cache write`)
   if (t.thought) parts.push(`${t.thought.toLocaleString()} thought`)
-  return `${t.total.toLocaleString()} tokens: ${parts.join(', ')}`
+  const counts = `${t.total.toLocaleString()} tokens: ${parts.join(', ')}`
+  return running ? `${counts}. ${TURN_UNCOUNTED}` : counts
 }
