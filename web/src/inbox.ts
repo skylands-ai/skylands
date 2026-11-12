@@ -13,10 +13,10 @@ import { canSign as canSignIn, myApprover } from './approvers'
 import { HOST_DEFAULTS, proposeRule, ruleText, rulesSheet } from './rules'
 import { agentLabel, isOpen, modelText, sessionLabel, sessionStatus, tokensBreakdown, tokensLabel, tokensText } from './status'
 import { conversationList, isUnread, isWaiting, sumTokens, type State } from './store'
-import { chipDeps, toolChip } from './toolchip'
+import { chipDeps, foldTools, toolChip, toolRun, toolsFolded } from './toolchip'
 import { canTerminal, convoMode, type ConvoMode, type Terminals } from './terminal'
 
-import { parseTranscript } from './transcript'
+import { parseTranscript, segments } from './transcript'
 import type { Rule } from './protocol'
 
 export interface InboxActions {
@@ -76,6 +76,27 @@ let rulesToggles = 0
 let lastDeps: unknown[] | null = null
 
 /**
+ * Where the reader was in a conversation before folding or unfolding its
+ * tool calls, which moves everything below them: the first piece still in
+ * sight, and how far from the top it showed.
+ */
+let place: { session: string; anchor: string; offset: number } | null = null
+
+/** Notes the first piece of the conversation in sight, unless the reader is at its end, where the rebuild keeps them anyway. */
+function holdPlace(convo: Element | null, session: string): void {
+  const box = convo?.querySelector<HTMLElement>('[data-scroll="convo"]')
+  if (!box || box.scrollHeight - box.scrollTop - box.clientHeight < 12) return
+  const top = box.getBoundingClientRect().top
+  for (const n of box.querySelectorAll<HTMLElement>('[data-anchor]')) {
+    const r = n.getBoundingClientRect()
+    if (r.bottom > top) {
+      place = { session, anchor: n.dataset.anchor as string, offset: r.top - top }
+      return
+    }
+  }
+}
+
+/**
  * The inbox: every conversation on every island in one table, and the one
  * that is open beside a shorter list. It is rebuilt only when something it
  * shows has changed. Scroll positions survive a rebuild, and the
@@ -95,7 +116,10 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live
   // host, and read again after each event, such as a commit.
   const changes = open && open.status !== 'running' && !open.worktreeRemoved ? cache.get('changes', open.host, open.id, 0, Date.parse(open.updatedAt)) : undefined
   const deps = [s.sessions, s.repos, s.viewed, s.inbox, s.inboxFilter, open, inputsVersion(), s.approvers, s.me, s.world, fetched?.at, fetched?.loading, fetched?.error, fetched?.text, changes?.at, changes?.loading, changes?.error, changes?.changes, rulesToggles, open ? settingsKey(s, open) : '', open ? convoMode(s, open) : '', terminals.version(), ...(open ? chipDeps(open, cache) : [])]
-  if (lastDeps && lastDeps.length === deps.length && lastDeps.every((d, i) => d === deps[i])) return
+  if (lastDeps && lastDeps.length === deps.length && lastDeps.every((d, i) => d === deps[i])) {
+    place = null
+    return
+  }
   lastDeps = deps
 
   const scrolls = new Map<string, { top: number; atEnd: boolean }>()
@@ -121,6 +145,14 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live
     const was = scrolls.get(key)
     if (key === 'convo' && (!was || openedBefore !== open?.id || was.atEnd)) box.scrollTop = box.scrollHeight
     else if (was) box.scrollTop = was.top
+  }
+  // After folding, the piece that was in sight goes back where it showed.
+  const held = place
+  place = null
+  if (held && open && held.session === open.id && openedBefore === open.id) {
+    const box = root.querySelector<HTMLElement>('[data-scroll="convo"]')
+    const n = box?.querySelector<HTMLElement>(`[data-anchor="${held.anchor}"]`)
+    if (box && n) box.scrollTop += n.getBoundingClientRect().top - box.getBoundingClientRect().top - held.offset
   }
 }
 
@@ -471,20 +503,29 @@ function trustSwitch(s: State, x: Session, actions: InboxActions): HTMLElement {
   return label
 }
 
-/** An agent message: its words as Markdown, with each tool call it made as a chip where it happened, and its record behind the chip. */
-function agentBody(x: Session, text: string, cache: FetchCache, refresh: () => void): HTMLElement {
+/**
+ * An agent message, at index turn in the conversation: its words as
+ * Markdown, with each run of tool calls it made where it happened, as
+ * chips with their records behind them, or as a badge when the
+ * conversation is folded. Each piece's first element is marked with its
+ * place, to keep the reader's place across folding.
+ */
+function agentBody(x: Session, text: string, turn: number, cache: FetchCache, refresh: () => void): HTMLElement {
   const body = el('div', { class: 'body md' })
-  for (const seg of segments(text)) {
-    if (seg.kind === 'tool') for (const n of toolChip(x, seg.text, seg.id, cache, refresh)) body.appendChild(n)
-    else body.appendChild(renderMarkdown(seg.text))
-  }
+  segments(text).forEach((seg, i) => {
+    const where = `${turn}:${i}`
+    const nodes = seg.kind === 'tools' ? toolRun(x, seg.calls, where, cache, refresh) : seg.kind === 'question' ? toolChip(x, seg.text, undefined, cache, refresh) : [renderMarkdown(seg.text)]
+    const first = nodes[0] instanceof DocumentFragment ? nodes[0].firstElementChild : nodes[0]
+    if (first instanceof HTMLElement) first.dataset.anchor = where
+    for (const n of nodes) body.appendChild(n)
+  })
   return body
 }
 
 /** The running turn's body: what the agent has said so far, or what it is doing. */
-function liveBody(x: Session, text: string, cache: FetchCache, refresh: () => void): HTMLElement {
+function liveBody(x: Session, text: string, turn: number, cache: FetchCache, refresh: () => void): HTMLElement {
   if (text.trim()) {
-    const body = agentBody(x, text, cache, refresh)
+    const body = agentBody(x, text, turn, cache, refresh)
     body.classList.add('md')
     return body
   }
@@ -492,35 +533,8 @@ function liveBody(x: Session, text: string, cache: FetchCache, refresh: () => vo
   return el('div', { class: 'body quiet', text: `${doing}\u2026` })
 }
 
-/**
- * A line the daemon writes between the agent's words: a tool call, or a
- * question and its answer. A tool call's line ends with a marker naming
- * the call, which Markdown would hide and the chip follows to its record.
- */
-const TOOL_LINE = /^[\u2699\u2753] (.*?)(?: <!-- tool:(\S+) -->)?\s*$/
-
-/** The marker, wherever it is, for text that leaves the page. */
+/** The marker the daemon ends a tool call's line with, wherever it is, for text that leaves the page. */
 const TOOL_MARKERS = / <!-- tool:\S+ -->/g
-
-/** Splits an agent turn into runs of words and the tool calls between them. */
-function segments(text: string): { kind: 'text' | 'tool'; text: string; id?: string }[] {
-  const out: { kind: 'text' | 'tool'; text: string; id?: string }[] = []
-  let words: string[] = []
-  const flush = (): void => {
-    const t = words.join('\n').trim()
-    if (t) out.push({ kind: 'text', text: t })
-    words = []
-  }
-  for (const line of text.split('\n')) {
-    const m = TOOL_LINE.exec(line)
-    if (m) {
-      flush()
-      out.push({ kind: 'tool', text: m[1], id: m[2] })
-    } else words.push(line)
-  }
-  flush()
-  return out
-}
 
 /**
  * Grows the open conversation's live bubble with what the feed brought,
@@ -539,7 +553,7 @@ export function growLive(root: HTMLElement, s: State, cache: FetchCache, live: L
   if (!bubble || !last || last.who !== 'agent') return
   const box = convo.querySelector<HTMLElement>('.convo-body')
   const atEnd = !!box && box.scrollHeight - box.scrollTop - box.clientHeight < 12
-  bubble.querySelector('.body')?.replaceWith(liveBody(open, last.text, cache, refresh))
+  bubble.querySelector('.body')?.replaceWith(liveBody(open, last.text, conv.turns.length - 1, cache, refresh))
   if (box && atEnd) box.scrollTop = box.scrollHeight
 }
 
@@ -667,6 +681,22 @@ function modeSwitch(s: State, x: Session, actions: InboxActions): HTMLElement | 
   ])
 }
 
+/** The button that folds every run of the conversation's tool calls into a badge, or unfolds them all, keeping the reader's place. */
+function foldSwitch(x: Session, actions: InboxActions): HTMLElement {
+  const folded = toolsFolded(x)
+  return el('button', {
+    type: 'button',
+    class: 'btn small ghost',
+    text: folded ? 'Expand tool calls' : 'Collapse tool calls',
+    title: folded ? 'Show every tool call as a chip' : 'Show each run of tool calls as one badge that counts them, so the words read on their own',
+    onclick: (e) => {
+      holdPlace((e.currentTarget as HTMLElement).closest('.convo'), x.id)
+      foldTools(x, !folded)
+      actions.refresh()
+    },
+  })
+}
+
 /** The program a shell path names, such as zsh for /bin/zsh. */
 function shellName(path: string): string {
   return path.slice(path.lastIndexOf('/') + 1) || path
@@ -739,6 +769,7 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
     el('span', { class: 'muted', title: tokensBreakdown(x.tokens, running) || null, text: tokensLabel(x.tokens, running) }),
     el('div', { class: 'acts' }, [
       modeSwitch(s, x, actions),
+      chat ? foldSwitch(x, actions) : null,
       ...(chat && isOpen(x) ? settingChips(s, x, actions) : []),
       chat && isOpen(x) ? trustSwitch(s, x, actions) : null,
       chat
@@ -770,13 +801,13 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
   // in place as the feed arrives rather than rebuilding the conversation.
   const last = conv.turns[conv.turns.length - 1]
   const liveTurn = running && last?.who === 'agent' ? last : null
-  for (const t of conv.turns) {
-    if (t.who === 'you') body.appendChild(el('div', { class: 'msg you' }, [el('span', { class: 'from', text: 'You' }), el('div', { class: 'body', text: t.text }), carriedRow(x, t)]))
-    else if (t.who === 'note') body.appendChild(el('p', { class: 'convo-note', text: t.text }))
-    else if (t === liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, t.text, cache, actions.refresh)]))
-    else if (t.text) body.appendChild(el('div', { class: 'msg agent' }, [el('span', { class: 'from' }, [name, copyButton(t.text)]), agentBody(x, t.text, cache, actions.refresh)]))
-  }
-  if (running && !liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, '', cache, actions.refresh)]))
+  conv.turns.forEach((t, i) => {
+    if (t.who === 'you') body.appendChild(el('div', { class: 'msg you', 'data-anchor': String(i) }, [el('span', { class: 'from', text: 'You' }), el('div', { class: 'body', text: t.text }), carriedRow(x, t)]))
+    else if (t.who === 'note') body.appendChild(el('p', { class: 'convo-note', 'data-anchor': String(i), text: t.text }))
+    else if (t === liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, t.text, i, cache, actions.refresh)]))
+    else if (t.text) body.appendChild(el('div', { class: 'msg agent' }, [el('span', { class: 'from' }, [name, copyButton(t.text)]), agentBody(x, t.text, i, cache, actions.refresh)]))
+  })
+  if (running && !liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, '', conv.turns.length, cache, actions.refresh)]))
   for (const p of x.pending) body.appendChild(approvalCard(s, x, p, actions))
   for (const q of x.questions) body.appendChild(questionCard(s, x, q, actions))
   if (fetchError) body.appendChild(el('p', { class: 'convo-end', style: 'color:var(--bad)', text: fetchError }))
