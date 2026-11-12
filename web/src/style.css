@@ -99,7 +99,8 @@ button:focus-visible,a:focus-visible{ outline:2px solid var(--accent); outline-o
 .inbox-tools{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 14px; border-bottom:1px solid var(--line); background:var(--surface); font-size:13px; }
 .inbox-tools .acts{ display:flex; align-items:center; gap:8px; }
 /* The inbox's New form, over the page. */
-.newsession{ width:min(680px, calc(100% - 24px)); max-height:calc(100% - 24px); padding:0; border-radius:12px; border:1px solid var(--line); background:var(--surface); color:var(--text); box-shadow:0 12px 40px rgba(0,0,0,0.28); }
+.newsession{ width:min(680px, calc(100% - 24px)); max-height:calc(100% - 24px); padding:0; border-radius:12px; border:1px solid var(--line); background:var(--surface); color:var(--text); box-shadow:0 12px 40px rgba(0,0,0,0.28); overflow:visible; }
+.newsession.scrolls{ overflow:auto; }
 .newsession::backdrop{ background:rgba(0,0,0,0.35); }
 .newsession .ns-body{ display:flex; flex-direction:column; gap:12px; padding:16px 18px; }
 .newsession h2{ margin:0; font-size:16px; }
@@ -178,6 +179,12 @@ button.toolchip:hover{ border-color:var(--text); color:var(--text); }
 button.toolchip[aria-expanded="true"]{ border-color:var(--accent); color:var(--text); margin-bottom:4px; }
 button.toolchip[aria-expanded="true"]::before{ content:"\25BE"; }
 .md .toolchip + *{ margin-top:0; }
+.toolrun{ display:inline-flex; align-items:center; gap:5px; margin:2px 6px 10px 0; padding:1px 9px; border-radius:999px; background:transparent; border:1px dashed var(--line); font-size:11px; font-weight:600; color:var(--muted); cursor:pointer; }
+.toolrun::before{ content:"\25B8"; }
+.toolrun:hover{ border-color:var(--text); color:var(--text); }
+.toolrun[aria-expanded="true"]{ border-style:solid; border-color:var(--accent); color:var(--text); }
+.toolrun[aria-expanded="true"]::before{ content:"\25BE"; }
+.md .toolrun + *{ margin-top:0; }
 .tooldetail{ display:flex; flex-direction:column; gap:8px; max-width:100%; margin:0 0 10px; padding:10px 12px; border-radius:10px; background:var(--surface-2); border:1px solid var(--line); font-size:12px; }
 .tooldetail .row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
 .tooldetail .state{ font-weight:600; }
@@ -271,7 +278,8 @@ button.toolchip[aria-expanded="true"]::before{ content:"\25BE"; }
 .cmd-menu .cmd span{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .cmd-menu .cmd[aria-selected="true"], .cmd-menu .cmd:hover{ background:var(--surface-2); }
 .cmd-menu .cmd-none{ padding:6px 8px; font-size:12px; color:var(--muted); }
-.mention-menu .cmd strong{ font-family:"JetBrains Mono",ui-monospace,monospace; font-weight:600; }
+.cmd-menu.below{ top:calc(100% + 4px); bottom:auto; }
+.mention-menu .cmd strong{ font-family:"JetBrains Mono",ui-monospace,monospace; font-weight:400; }
 .attach input[type="file"]{ display:none; }
 .attach-tray{ display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
 .attach-tray[hidden]{ display:none; }

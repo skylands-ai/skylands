@@ -2,6 +2,7 @@ import { el } from './dom'
 import type { FetchCache, Fetched } from './fetchcache'
 import { timeNode } from './panels/parts'
 import type { Session, ToolCallContent, ToolCallDetail } from './protocol'
+import type { ToolCall } from './transcript'
 
 /**
  * A tool call in a conversation is a chip where it happened, with the
@@ -10,13 +11,13 @@ import type { Session, ToolCallContent, ToolCallDetail } from './protocol'
  * fetched when the chip is opened and kept only while someone looks.
  */
 
-/** The chips a reader has opened, by host, session, and tool call id, and a counter so a rebuild notices a toggle. */
+/** The chips a reader has opened, by host, session, and tool call id, and a counter so a rebuild notices a toggle, of a chip or of folding. */
 const opened = new Set<string>()
 let toggles = 0
 
 const prefix = (x: Session): string => `${x.host}/${x.id}/`
 
-/** What a rebuild of the conversation must notice: the opened chips and what was fetched for them. */
+/** What a rebuild of the conversation must notice: the opened chips and what was fetched for them, and what is folded. */
 export function chipDeps(x: Session, cache: FetchCache): unknown[] {
   const deps: unknown[] = [toggles]
   const p = prefix(x)
@@ -41,6 +42,57 @@ export function refreshOpenChips(x: Session, cache: FetchCache): void {
 }
 
 const finished = (status: string): boolean => status === 'completed' || status === 'failed'
+
+/**
+ * A conversation's tool calls can be folded, so its words read on their
+ * own. Each run of calls between the words is then a badge that counts
+ * them and opens to their chips. Folding or unfolding the conversation
+ * closes or opens every run at once. Both last until the page reloads.
+ */
+const folded = new Set<string>()
+/** The runs opened in a folded conversation, by host, session, and where the run is in it. */
+const runsOpened = new Set<string>()
+
+export function toolsFolded(x: Session): boolean {
+  return folded.has(prefix(x))
+}
+
+/** Folds or unfolds every run of tool calls in a conversation. */
+export function foldTools(x: Session, fold: boolean): void {
+  const p = prefix(x)
+  if (fold) folded.add(p)
+  else folded.delete(p)
+  for (const k of runsOpened) if (k.startsWith(p)) runsOpened.delete(k)
+  toggles++
+}
+
+/**
+ * A run of tool calls an agent made in a row, as their chips, or in a
+ * folded conversation as a badge that counts them, followed by the chips
+ * once it is opened. `where` names the run's place in the conversation,
+ * which stays put as the transcript grows.
+ */
+export function toolRun(x: Session, calls: ToolCall[], where: string, cache: FetchCache, refresh: () => void): Node[] {
+  const chips = (): Node[] => calls.flatMap((c) => toolChip(x, c.title, c.id, cache, refresh))
+  if (!toolsFolded(x)) return chips()
+  const k = prefix(x) + where
+  const isOpen = runsOpened.has(k)
+  const n = calls.length
+  const badge = el('button', {
+    type: 'button',
+    class: 'toolrun',
+    'aria-expanded': isOpen ? 'true' : 'false',
+    title: isOpen ? 'Fold these tool calls' : 'Show these tool calls',
+    text: `${n} tool ${n === 1 ? 'call' : 'calls'}`,
+    onclick: () => {
+      if (runsOpened.has(k)) runsOpened.delete(k)
+      else runsOpened.add(k)
+      toggles++
+      refresh()
+    },
+  })
+  return isOpen ? [badge, ...chips()] : [badge]
+}
 
 /**
  * A tool call as a chip, and under it, once opened, its record. A chip
