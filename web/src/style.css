@@ -112,7 +112,6 @@ button:focus-visible,a:focus-visible{ outline:2px solid var(--accent); outline-o
 .newsession .ns-note{ margin-right:auto; flex:1 1 240px; font-size:12px; color:var(--muted); }
 .newsession .ns-note.bad{ color:var(--bad); }
 .newsession .ns-note a{ color:var(--accent); }
-.convo-head h2{ max-width:min(60%, 640px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .inbox-table{ width:100%; border-collapse:collapse; table-layout:fixed; font-size:14px; }
 .inbox-table th{ text-align:left; font-size:12px; font-weight:600; color:var(--muted); padding:10px 14px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--surface); z-index:1; }
 .inbox-table td{ padding:11px 14px; border-bottom:1px solid var(--line); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -133,17 +132,31 @@ button:focus-visible,a:focus-visible{ outline:2px solid var(--accent); outline-o
 .conv-row .repo{ flex:0 1 auto; min-width:0; color:var(--muted); overflow:hidden; text-overflow:ellipsis; }
 .conv-row .when{ margin-left:auto; color:var(--muted); font-size:12px; flex:none; }
 .convo{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
-.convo-head{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:12px 18px; background:var(--surface); border-bottom:1px solid var(--line); }
-.convo-head h2{ margin:0; font-size:16px; display:inline-flex; align-items:center; gap:8px; }
-.convo-head .acts{ margin-left:auto; display:flex; gap:8px; }
+/* A conversation's head, the same in chat and terminal: the title, and
+   under it the facts, which wrap only when the pane is too narrow for
+   them; and the buttons on the right, which never shrink or wrap. */
+.convo-head{ display:flex; align-items:center; gap:12px; padding:12px 18px; background:var(--surface); border-bottom:1px solid var(--line); }
+.convo-id{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:4px; }
+.convo-head h2{ margin:0; font-size:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.convo-facts{ display:flex; align-items:center; flex-wrap:wrap; gap:4px 12px; min-width:0; white-space:nowrap; }
+.convo-facts .who{ min-width:0; }
+.convo-facts .who .what{ min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.convo-head .acts{ flex:none; margin-left:auto; display:flex; align-items:center; gap:8px; }
 .convo-body{ flex:1 1 auto; min-height:0; overflow-y:auto; padding:18px; display:flex; flex-direction:column; gap:14px; }
 /* A conversation's terminal, in place of its chat. The screen is dark in
    either theme, as xterm.ts's colors are, and sits inset in the pane as
    the chat's messages do; the border keeps its edge in the dark theme,
    whose page is nearly the screen's color. */
 .term-pane{ flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
-.term-bar{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:6px 18px; background:var(--surface); border-bottom:1px solid var(--line); font-size:13px; }
-.term-bar .acts{ margin-left:auto; display:flex; gap:8px; }
+/* The bar under the head holds what only the mode shown has. The chat's
+   and the terminal's are the same height, a small button's and padding,
+   even with no button in them, so what is under them stays put too. */
+.term-bar, .chat-bar{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; min-height:49px; padding:6px 18px; background:var(--surface); border-bottom:1px solid var(--line); font-size:13px; }
+.term-bar .acts, .chat-bar .acts{ margin-left:auto; display:flex; gap:8px; }
+/* The terminal's bar shortens where its shell runs rather than wrap. */
+.term-bar{ flex-wrap:nowrap; }
+.term-bar > *{ flex:none; }
+.term-bar > .muted, .term-bar > .sub{ flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .term-screen{ flex:1 1 auto; min-height:0; margin:14px 18px 18px; padding:8px 0 8px 12px; border-radius:10px; border:1px solid var(--line); background:#0F1A26; overflow:hidden; }
 .term-screen .xterm{ height:100%; }
 .term-note{ margin:0; padding:8px 18px; background:var(--surface); border-top:1px solid var(--line); color:var(--bad); font-size:13px; }
