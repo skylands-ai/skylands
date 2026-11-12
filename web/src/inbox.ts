@@ -73,7 +73,61 @@ export interface InboxActions {
 const rulesOpen = new Set<string>()
 let rulesToggles = 0
 
-let lastDeps: unknown[] | null = null
+let lastList: unknown[] | null = null
+let lastConvo: unknown[] | null = null
+
+function same(a: unknown[] | null, b: unknown[]): boolean {
+  return !!a && a.length === b.length && a.every((d, i) => d === b[i])
+}
+
+/** What the list of conversations is drawn from: every session, so it follows activity anywhere. */
+function listDeps(s: State): unknown[] {
+  return [s.sessions, s.repos, s.viewed, s.inbox, s.inboxFilter]
+}
+
+/**
+ * What the open conversation is drawn from: that session alone, and never
+ * the others, so their activity leaves it, and the reply being typed in it,
+ * alone.
+ */
+export function conversationDeps(s: State, open: Session | undefined, fetched: Fetched | undefined, changes: Fetched | undefined, cache: FetchCache, terminals: Pick<Terminals, 'version'>): unknown[] {
+  if (!open) return [null]
+  return [open, s.repos[open.repoId], s.viewed[open.id], inputsVersion(), s.approvers, s.me, s.world, fetched?.at, fetched?.loading, fetched?.error, fetched?.text, changes?.at, changes?.loading, changes?.error, changes?.changes, rulesToggles, settingsKey(s, open), convoMode(s, open), terminals.version(), ...chipDeps(open, cache)]
+}
+
+/**
+ * The control that has the keyboard, when it carries a data-keep key: a
+ * control drawn again under the same key, such as a reply box that keeps
+ * its draft, gets the keyboard back with its caret where it was.
+ */
+function heldKeyboard(root: HTMLElement): (() => void) | null {
+  const a = document.activeElement
+  if (!(a instanceof HTMLElement) || !root.contains(a) || !a.dataset.keep) return null
+  const key = a.dataset.keep
+  const field = a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement ? a : null
+  // Some inputs, such as a number's, have no caret to read.
+  let caret: [number, number, 'forward' | 'backward' | 'none'] | null = null
+  try {
+    if (field && field.selectionStart !== null && field.selectionEnd !== null) caret = [field.selectionStart, field.selectionEnd, field.selectionDirection ?? 'none']
+  } catch {
+    caret = null
+  }
+  const top = a.scrollTop
+  return () => {
+    if (a.isConnected) return
+    const next = root.querySelector<HTMLElement>(`[data-keep="${CSS.escape(key)}"]`)
+    if (!next || next.matches(':disabled')) return
+    next.focus({ preventScroll: true })
+    if (caret && (next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement)) {
+      try {
+        next.setSelectionRange(...caret)
+      } catch {
+        // The new control has no caret either.
+      }
+    }
+    next.scrollTop = top
+  }
+}
 
 /**
  * Where the reader was in a conversation before folding or unfolding its
@@ -98,9 +152,11 @@ function holdPlace(convo: Element | null, session: string): void {
 
 /**
  * The inbox: every conversation on every island in one table, and the one
- * that is open beside a shorter list. It is rebuilt only when something it
- * shows has changed. Scroll positions survive a rebuild, and the
- * conversation stays pinned to its end while it was there.
+ * that is open beside a shorter list. The list and the conversation are
+ * each rebuilt only when something they show has changed, so activity in
+ * other sessions redraws the list and leaves the conversation alone. Scroll
+ * positions and the keyboard survive a rebuild, and the conversation stays
+ * pinned to its end while it was there.
  */
 export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live: LiveText, actions: InboxActions, terminals: Terminals): void {
   const open = s.inbox ? s.sessions[s.inbox] : undefined
@@ -115,30 +171,45 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live
   // Once the agent is not mid-turn, where its changes stand is read from the
   // host, and read again after each event, such as a commit.
   const changes = open && open.status !== 'running' && !open.worktreeRemoved ? cache.get('changes', open.host, open.id, 0, Date.parse(open.updatedAt)) : undefined
-  const deps = [s.sessions, s.repos, s.viewed, s.inbox, s.inboxFilter, open, inputsVersion(), s.approvers, s.me, s.world, fetched?.at, fetched?.loading, fetched?.error, fetched?.text, changes?.at, changes?.loading, changes?.error, changes?.changes, rulesToggles, open ? settingsKey(s, open) : '', open ? convoMode(s, open) : '', terminals.version(), ...(open ? chipDeps(open, cache) : [])]
-  if (lastDeps && lastDeps.length === deps.length && lastDeps.every((d, i) => d === deps[i])) {
+  const list = listDeps(s)
+  const convo = conversationDeps(s, open, fetched, changes, cache, terminals)
+  const redrawList = !same(lastList, list)
+  const redrawConvo = !same(lastConvo, convo)
+  if (!redrawList && !redrawConvo) {
     place = null
     return
   }
-  lastDeps = deps
+  lastList = list
+  lastConvo = convo
 
   const scrolls = new Map<string, { top: number; atEnd: boolean }>()
   for (const box of root.querySelectorAll<HTMLElement>('[data-scroll]')) {
     scrolls.set(box.dataset.scroll as string, { top: box.scrollTop, atEnd: box.scrollHeight - box.scrollTop - box.clientHeight < 12 })
   }
-  const openedBefore = root.querySelector<HTMLElement>('.convo')?.dataset.session
+  const shownConvo = root.querySelector<HTMLElement>(':scope > .convo')
+  const openedBefore = shownConvo?.dataset.session
+  const keyboard = heldKeyboard(root)
   // A terminal is moved into the new page, not drawn again, and gets the
   // keyboard back if it had it.
   const typing = terminals.focused()
 
-  root.textContent = ''
-  root.appendChild(open ? narrowList(s, open.id, actions) : table(s, actions))
-  if (open) {
-    const { text, gap } = live.compose(open.id, fetched)
-    if (gap && fetched && !fetched.loading) cache.get('transcript', open.host, open.id, 0, Date.now())
-    root.appendChild(conversation(s, open, text, fetched?.error, changes, cache, actions, terminals))
+  if (redrawList) {
+    const next = open ? narrowList(s, open.id, actions) : table(s, actions)
+    const shown = root.querySelector(':scope > .inbox-list')
+    if (shown) shown.replaceWith(next)
+    else root.prepend(next)
   }
-  terminals.reattached(typing)
+  if (redrawConvo) {
+    if (open) {
+      const { text, gap } = live.compose(open.id, fetched)
+      if (gap && fetched && !fetched.loading) cache.get('transcript', open.host, open.id, 0, Date.now())
+      const next = conversation(s, open, text, fetched?.error, changes, cache, actions, terminals)
+      if (shownConvo) shownConvo.replaceWith(next)
+      else root.appendChild(next)
+    } else shownConvo?.remove()
+    terminals.reattached(typing)
+  }
+  keyboard?.()
 
   for (const box of root.querySelectorAll<HTMLElement>('[data-scroll]')) {
     const key = box.dataset.scroll as string
@@ -149,7 +220,7 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live
   // After folding, the piece that was in sight goes back where it showed.
   const held = place
   place = null
-  if (held && open && held.session === open.id && openedBefore === open.id) {
+  if (held && redrawConvo && open && held.session === open.id && openedBefore === open.id) {
     const box = root.querySelector<HTMLElement>('[data-scroll="convo"]')
     const n = box?.querySelector<HTMLElement>(`[data-anchor="${held.anchor}"]`)
     if (box && n) box.scrollTop += n.getBoundingClientRect().top - box.getBoundingClientRect().top - held.offset
@@ -323,7 +394,7 @@ function changesCard(x: Session, f: Fetched | undefined, actions: InboxActions):
     const n = c.changed.length
     const shown = c.changed.slice(0, 6).join(', ') + (n > 6 ? ', \u2026' : '')
     box.appendChild(el('div', { class: 'sub' }, [`${n} ${n === 1 ? 'file' : 'files'} changed since the last commit: `, el('code', { text: shown })]))
-    const input = el('input', { type: 'text', 'aria-label': 'Commit message', placeholder: 'Commit message' }) as HTMLInputElement
+    const input = el('input', { type: 'text', 'aria-label': 'Commit message', placeholder: 'Commit message', 'data-keep': `commit-${x.id}` }) as HTMLInputElement
     input.value = messages.get(x.id) ?? sessionLabel(x, 72)
     input.addEventListener('input', () => messages.set(x.id, input.value))
     const commit = (): Promise<string> => actions.commit(x, input.value.trim())
@@ -621,7 +692,7 @@ function table(s: State, actions: InboxActions): HTMLElement {
   for (const x of list) {
     const status = sessionStatus(x, isWaiting(s, x))
     const unread = isUnread(s, x)
-    const row = el('tr', { tabindex: '0', class: unread ? 'unread' : '', 'aria-label': `${sessionLabel(x)}, ${agentLabel(x.agent)} on ${s.repos[x.repoId]?.name ?? x.repoId}` }, [
+    const row = el('tr', { tabindex: '0', class: unread ? 'unread' : '', 'data-keep': `row-${x.id}`, 'aria-label': `${sessionLabel(x)}, ${agentLabel(x.agent)} on ${s.repos[x.repoId]?.name ?? x.repoId}` }, [
       el('td', { title: x.prompt }, [el('span', { class: 'who' }, [unread ? el('span', { class: 'dot new', title: 'New since you last looked' }) : null, sessionLabel(x)])]),
       el('td', {}, [agentCell(x)]),
       el('td', { text: s.repos[x.repoId]?.name ?? x.repoId }),
@@ -655,7 +726,7 @@ function narrowList(s: State, openId: string, actions: InboxActions): HTMLElemen
     const unread = isUnread(s, x) && x.id !== openId
     const row = el(
       'button',
-      { type: 'button', class: `conv-row${unread ? ' unread' : ''}`, 'aria-current': x.id === openId ? 'true' : 'false', title: x.prompt, onclick: () => actions.open(x.id) },
+      { type: 'button', class: `conv-row${unread ? ' unread' : ''}`, 'data-keep': `row-${x.id}`, 'aria-current': x.id === openId ? 'true' : 'false', title: x.prompt, onclick: () => actions.open(x.id) },
       [
         mark(s, x),
         el('span', { class: 'name', text: sessionLabel(x, 48) }),
