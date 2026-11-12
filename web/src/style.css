@@ -136,11 +136,13 @@ button:focus-visible,a:focus-visible{ outline:2px solid var(--accent); outline-o
 .convo-head .acts{ margin-left:auto; display:flex; gap:8px; }
 .convo-body{ flex:1 1 auto; min-height:0; overflow-y:auto; padding:18px; display:flex; flex-direction:column; gap:14px; }
 /* A conversation's terminal, in place of its chat. The screen is dark in
-   either theme, as xterm.ts's colors are. */
+   either theme, as xterm.ts's colors are, and sits inset in the pane as
+   the chat's messages do; the border keeps its edge in the dark theme,
+   whose page is nearly the screen's color. */
 .term-pane{ flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
 .term-bar{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:6px 18px; background:var(--surface); border-bottom:1px solid var(--line); font-size:13px; }
 .term-bar .acts{ margin-left:auto; display:flex; gap:8px; }
-.term-screen{ flex:1 1 auto; min-height:0; padding:8px 0 8px 12px; background:#0F1A26; overflow:hidden; }
+.term-screen{ flex:1 1 auto; min-height:0; margin:14px 18px 18px; padding:8px 0 8px 12px; border-radius:10px; border:1px solid var(--line); background:#0F1A26; overflow:hidden; }
 .term-screen .xterm{ height:100%; }
 .term-note{ margin:0; padding:8px 18px; background:var(--surface); border-top:1px solid var(--line); color:var(--bad); font-size:13px; }
 .term-empty{ flex:1 1 auto; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:24px; color:var(--muted); text-align:center; }

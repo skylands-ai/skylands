@@ -53,7 +53,7 @@ export function renderAgentPanel(
     ['Started', timeNode(s.startedAt)],
     running ? ['Last activity', timeNode(s.activeAt)] : s.status === 'idle' ? ['Idle since', timeNode(s.activeAt)] : ['Ended', s.endedAt ? timeNode(s.endedAt) : 'unknown'],
     ['Context', pct(s.used, s.size)],
-    ['Tokens used', tokensNode(s.tokens)],
+    ['Tokens used', tokensNode(s.tokens, running)],
     ['Tool calls', String(s.recent.length)],
   ]
   if (s.commits) facts.push(['Commits', `${s.commits}, last ${s.commit?.slice(0, 7) ?? ''}`])

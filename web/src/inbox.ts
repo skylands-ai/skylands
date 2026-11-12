@@ -727,6 +727,7 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
   const status = sessionStatus(x, isWaiting(s, x))
   const repo = s.repos[x.repoId]
   const name = agentLabel(x.agent)
+  const running = x.status === 'running'
   // The mode and model chips, the trust switch, and the rules are about
   // the chat with the agent, so the terminal leaves them out.
   const chat = convoMode(s, x) === 'chat'
@@ -735,7 +736,7 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
     el('span', { class: 'who muted' }, [agentGlyph(x.agent), `${name} \u00b7 ${repo?.name ?? x.repoId} on ${x.host}`]),
     statusPill(status),
     el('span', { class: 'muted', text: `${x.turns} ${x.turns === 1 ? 'turn' : 'turns'}` }),
-    el('span', { class: 'muted', title: tokensBreakdown(x.tokens) || null, text: tokensLabel(x.tokens) }),
+    el('span', { class: 'muted', title: tokensBreakdown(x.tokens, running) || null, text: tokensLabel(x.tokens, running) }),
     el('div', { class: 'acts' }, [
       modeSwitch(s, x, actions),
       ...(chat && isOpen(x) ? settingChips(s, x, actions) : []),
@@ -765,7 +766,6 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
   const body = el('div', { class: 'convo-body', 'data-scroll': 'convo' })
   const conv = parseTranscript(transcript ?? '')
   if (!conv.turns.length) conv.turns.push({ who: 'you', text: x.prompt })
-  const running = x.status === 'running'
   // While a turn runs, its last agent turn is the live bubble, which grows
   // in place as the feed arrives rather than rebuilding the conversation.
   const last = conv.turns[conv.turns.length - 1]
