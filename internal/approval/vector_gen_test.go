@@ -51,6 +51,12 @@ func TestWriteDecisionVector(t *testing.T) {
 	list := []v1.Rule{{Decision: "allow", Kind: "execute", Pattern: "go test *"}, {Decision: "deny", Kind: "*", Pattern: "worktree", Source: "repo"}}
 	rulesHash, _ := RulesHash(list)
 	prHash, _ := PullRequestHash("Make it faster", "It was slow.\n\nNow it isn't.")
+	mentions := []string{"internal/main.go", "docs/é \U0001F600.md"}
+	images := []v1.PromptImage{{Name: "screen shot.png", MimeType: "image/png", Hash: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", Size: 1234567}}
+	attachmentsHash, err := AttachmentsHash(mentions, images)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	decisions := []Decision{
 		ToolCall{V: DecisionVersion, Kind: KindToolCall, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Request: "Req1", Decision: "allow", Option: "allow_once", Input: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"},
@@ -65,6 +71,8 @@ func TestWriteDecisionVector(t *testing.T) {
 		Change{V: DecisionVersion, Kind: KindChange, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Revision: 5, Action: ChangeMerge},
 		Change{V: DecisionVersion, Kind: KindChange, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Revision: 5, Action: ChangePullRequest, Text: prHash},
 		Change{V: DecisionVersion, Kind: KindChange, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Revision: 6, Action: ChangeRemove},
+		Start{V: DecisionVersion, Kind: KindStart, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Repo: "R3po", Agent: "claude", Prompt: TextHash("Look at @internal/main.go"), Attachments: attachmentsHash},
+		Prompt{V: DecisionVersion, Kind: KindPrompt, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Revision: 7, Prompt: TextHash("And this one"), Attachments: attachmentsHash},
 	}
 	var out []vectorDecision
 	for _, d := range decisions {
@@ -78,12 +86,13 @@ func TestWriteDecisionVector(t *testing.T) {
 		out = append(out, vectorDecision{Decision: raw, Canonical: string(c), Digest: hex.EncodeToString(digest), Signature: sig})
 	}
 	data, _ := json.MarshalIndent(vector{
-		Comment:   "A test key and decisions it signed, and the hashes they name, which Go and the browser must reproduce byte for byte. The seed is for tests only.",
-		Seed:      string(seed),
-		Decisions: out,
-		Form:      vectorForm{Message: message, Fields: fields, Hash: form},
-		Answers:   vectorAnswers{Answers: answers, Hash: answersHash},
-		Rules:     vectorRules{Rules: list, Hash: rulesHash},
+		Comment:     "A test key and decisions it signed, and the hashes they name, which Go and the browser must reproduce byte for byte. The seed is for tests only.",
+		Seed:        string(seed),
+		Decisions:   out,
+		Form:        vectorForm{Message: message, Fields: fields, Hash: form},
+		Answers:     vectorAnswers{Answers: answers, Hash: answersHash},
+		Rules:       vectorRules{Rules: list, Hash: rulesHash},
+		Attachments: vectorAttachments{Mentions: mentions, Images: images, Hash: attachmentsHash},
 	}, "", "  ")
 	if err := os.WriteFile("testdata/decision-vector.json", append(data, '\n'), 0o644); err != nil {
 		t.Fatal(err)

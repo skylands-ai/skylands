@@ -6,6 +6,7 @@ package fakeagent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -82,6 +83,15 @@ const EnvNoRawInput = "SKYLANDS_FAKE_AGENT_NO_RAW_INPUT"
 // text followed by the mode, as Gemini CLI does, in place of
 // current_mode_update.
 const EnvModeMarker = "SKYLANDS_FAKE_AGENT_MODE_MARKER"
+
+// EnvImages, when set to 1, makes the fake agent advertise ACP's image
+// prompt capability, and EnvEmbeddedContext, its embeddedContext one,
+// which lets a prompt carry a file's contents. A prompt that carries what
+// the agent didn't advertise is refused, as ACP lets an agent do.
+const (
+	EnvImages          = "SKYLANDS_FAKE_AGENT_IMAGES"
+	EnvEmbeddedContext = "SKYLANDS_FAKE_AGENT_EMBEDDED_CONTEXT"
+)
 
 // The values the fake agent's config options take, the first of each
 // being what a session starts with.
@@ -181,7 +191,8 @@ func Run(ctx context.Context) error {
 	return acp.RunAgent(ctx, &acp.StdioTransport{}, func(conn *acp.AgentConnection) any {
 		return &agent{conn: conn, delay: delay, noLoad: os.Getenv(EnvNoLoad) == "1", auth: os.Getenv(EnvAuth),
 			systemPrompt: os.Getenv(EnvSystemPrompt) == "1", config: os.Getenv(EnvConfigOptions), requireMeta: os.Getenv(EnvRequireMeta) == "1",
-			modeMarker: os.Getenv(EnvModeMarker), noRawInput: os.Getenv(EnvNoRawInput) == "1", sessions: map[acp.SessionId]*session{}}
+			modeMarker: os.Getenv(EnvModeMarker), noRawInput: os.Getenv(EnvNoRawInput) == "1",
+			images: os.Getenv(EnvImages) == "1", embedded: os.Getenv(EnvEmbeddedContext) == "1", sessions: map[acp.SessionId]*session{}}
 	})
 }
 
@@ -252,6 +263,8 @@ type agent struct {
 	modeMarker string
 	// noRawInput is EnvNoRawInput.
 	noRawInput bool
+	// images and embedded are EnvImages and EnvEmbeddedContext.
+	images, embedded bool
 	// canAsk means the client fills in forms, so the agent may ask a person
 	// a question.
 	canAsk   bool
@@ -264,6 +277,9 @@ func (a *agent) Initialize(_ context.Context, req *acp.InitializeRequest) (*acp.
 	a.canAsk = req.ClientCapabilities != nil && req.ClientCapabilities.Elicitation != nil && req.ClientCapabilities.Elicitation.Form != nil
 	a.mu.Unlock()
 	caps := &acp.AgentCapabilities{LoadSession: !a.noLoad}
+	if a.images || a.embedded {
+		caps.PromptCapabilities = &acp.PromptCapabilities{Image: a.images, EmbeddedContext: a.embedded}
+	}
 	if a.systemPrompt {
 		caps.SessionCapabilities = &acp.SessionCapabilities{SystemPrompt: &acp.SessionSystemPromptCapabilities{}}
 	}
@@ -547,6 +563,10 @@ func (a *agent) SessionPrompt(ctx context.Context, req *acp.PromptRequest) (*acp
 	if !ok {
 		return nil, fmt.Errorf("unknown session %s", req.SessionID)
 	}
+	given, err := a.given(req.Prompt)
+	if err != nil {
+		return nil, err
+	}
 	send := func(u acp.SessionUpdate) error {
 		return a.conn.SessionUpdate(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: u})
 	}
@@ -817,6 +837,9 @@ func (a *agent) SessionPrompt(ctx context.Context, req *acp.PromptRequest) (*acp
 	if context > 0 {
 		msg += fmt.Sprintf(" The request came with %d lines of context.", context)
 	}
+	if len(given) > 0 {
+		msg += " It was given " + strings.Join(given, "; ") + "."
+	}
 	switch {
 	case declined && len(files) > 0:
 		msg += " You declined to choose, so I took " + files[0] + "."
@@ -834,6 +857,53 @@ func (a *agent) SessionPrompt(ctx context.Context, req *acp.PromptRequest) (*acp
 	// The turn's cost comes back with its end, as it does from a real
 	// agent: a share per file read, and the answer as output.
 	return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn, Usage: usage(TurnInputTokens+uint64(n)*FileInputTokens, uint64(len(msg)))}, nil
+}
+
+// given describes the blocks that follow a prompt's text, as the fake
+// agent's reply names them: "resource <uri> (<n> bytes)" for a file's
+// contents, "resource_link <name> <uri>" for a link, and "image <type>
+// (<n> bytes)". A block the agent didn't advertise is refused.
+func (a *agent) given(blocks []acp.ContentBlock) ([]string, error) {
+	var out []string
+	for i, b := range blocks {
+		switch b.Type {
+		case acp.ContentBlockTypeText:
+			if i > 0 {
+				out = append(out, "text")
+			}
+		case acp.ContentBlockTypeResourceLink:
+			uri := ""
+			if b.URI != nil {
+				uri = *b.URI
+			}
+			out = append(out, "resource_link "+b.Name+" "+uri)
+		case acp.ContentBlockTypeResource:
+			if !a.embedded {
+				return nil, fmt.Errorf("this agent takes no embedded context")
+			}
+			text := ""
+			if b.Resource.Text != nil {
+				text = *b.Resource.Text
+			}
+			out = append(out, fmt.Sprintf("resource %s (%d bytes)", b.Resource.URI, len(text)))
+		case acp.ContentBlockTypeImage:
+			if !a.images {
+				return nil, fmt.Errorf("this agent takes no images")
+			}
+			data, err := base64.StdEncoding.DecodeString(b.Data)
+			if err != nil {
+				return nil, fmt.Errorf("the image isn't base64: %w", err)
+			}
+			mime := ""
+			if b.MimeType != nil {
+				mime = *b.MimeType
+			}
+			out = append(out, fmt.Sprintf("image %s (%d bytes)", mime, len(data)))
+		default:
+			return nil, fmt.Errorf("this agent takes no %s blocks", b.Type)
+		}
+	}
+	return out, nil
 }
 
 // What the fake agent says its requests cost, in tokens. The figures are

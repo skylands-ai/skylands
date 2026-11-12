@@ -68,6 +68,17 @@ func Decide(rules []v1.Rule, c Call) string {
 	return best
 }
 
+// Denying returns the first rule in rules that denies a call, which is
+// what Decide's deny rests on.
+func Denying(rules []v1.Rule, c Call) (v1.Rule, bool) {
+	for _, r := range rules {
+		if r.Decision == v1.RuleDeny && Matches(r, c) {
+			return r, true
+		}
+	}
+	return v1.Rule{}, false
+}
+
 func rank(decision string) int {
 	switch decision {
 	case v1.RuleDeny:

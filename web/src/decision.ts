@@ -3,7 +3,7 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { bytesToHex } from '@noble/hashes/utils.js'
 import { toBase64url } from './approver'
 import { canonicalize } from './canonical'
-import type { QuestionField, Rule } from './protocol'
+import type { PromptImage, QuestionField, Rule } from './protocol'
 
 /** The version of the decision formats, which a daemon checks. */
 export const DECISION_VERSION = 1
@@ -95,6 +95,8 @@ export interface StartDecision {
   inCheckout: boolean
   /** textHash of the prompt. */
   prompt: string
+  /** attachmentsHash of what the prompt carries besides its text, and absent when it carries nothing else. */
+  attachments?: string
 }
 
 /** Another prompt to a session, at the session's revision, which the prompt moves on. */
@@ -106,6 +108,8 @@ export interface PromptDecision {
   session: string
   revision: number
   prompt: string
+  /** As in StartDecision. */
+  attachments?: string
 }
 
 /** A commit, merge, pull request, or removal of a session's worktree, at its revision. */
@@ -141,6 +145,17 @@ export function signDecision(kp: KeyPair, d: Decision): DecisionSignature {
 /** The SHA-256 of a text's UTF-8 bytes, in lowercase hex. */
 export function textHash(text: string): string {
   return bytesToHex(sha256(new TextEncoder().encode(text)))
+}
+
+/**
+ * The SHA-256 of what a prompt carries besides its text, as canonical JSON:
+ * the paths it mentions and its images, each in the command's order and
+ * with every property. Empty for a prompt that carries neither, which a
+ * decision then leaves out.
+ */
+export function attachmentsHash(mentions: string[], images: PromptImage[]): string {
+  if (!mentions.length && !images.length) return ''
+  return hashJSON({ mentions, images: images.map((i) => ({ name: i.name, mimeType: i.mimeType, hash: i.hash, size: i.size })) })
 }
 
 /** The SHA-256 of a pull request's title and body as canonical JSON. */

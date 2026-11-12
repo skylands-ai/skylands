@@ -1,5 +1,5 @@
 import { newSessionId, signStart } from './approvers'
-import type { AgentMode, Island, Repo } from './protocol'
+import type { AgentMode, Island, PromptImage, Repo } from './protocol'
 import { api } from './signin'
 import { agentLabel, modelText } from './status'
 import type { State } from './store'
@@ -91,6 +91,20 @@ export interface Start {
   model: string
   inCheckout: boolean
   prompt: string
+  /** The files the prompt mentions and the images uploaded for it, which its signature covers. */
+  mentions?: string[]
+  images?: PromptImage[]
+}
+
+/**
+ * Why a prompt to the agent on the island can't carry images, or empty
+ * when it can: the agent's daemon read whether it takes them when it last
+ * checked, and checks again when the prompt arrives.
+ */
+export function imagesRefused(island: Island | null | undefined, agent: string): string {
+  const known = island?.agents?.find((a) => a.name === agent)
+  if (!island || !known) return `${island?.host ?? 'The island'} hasn’t said yet whether ${agentLabel(agent)} takes images.`
+  return known.images ? '' : `${agentLabel(agent)} doesn’t take images.`
 }
 
 /**
@@ -106,7 +120,7 @@ export async function startSession(s: State, start: Start): Promise<{ session: s
     const resp = await api('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ host: start.host, sessionId: session, repoId: start.repo, agent: start.agent, model: start.model, mode: start.mode, prompt: start.prompt, inCheckout: start.inCheckout, signature: signed.signature }),
+      body: JSON.stringify({ host: start.host, sessionId: session, repoId: start.repo, agent: start.agent, model: start.model, mode: start.mode, prompt: start.prompt, mentions: start.mentions ?? [], images: start.images ?? [], inCheckout: start.inCheckout, signature: signed.signature }),
     })
     const body = (await resp.json().catch(() => ({}))) as { error?: string }
     if (!resp.ok) return { error: body.error ?? `The citadel answered ${resp.status}.` }

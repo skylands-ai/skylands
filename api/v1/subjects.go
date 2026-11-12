@@ -63,3 +63,7 @@ func IslandFetchSubject(host, kind string) string { return "v1.island." + host +
 
 // IslandFetchFilter matches every fetch request for host.
 func IslandFetchFilter(host string) string { return "v1.island." + host + ".fetch.>" }
+
+// IslandUploadSubject is where the pieces of an image for a prompt are
+// sent to host's daemon, by request-reply, as UploadPieces.
+func IslandUploadSubject(host string) string { return "v1.island." + host + ".upload" }

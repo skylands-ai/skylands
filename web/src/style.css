@@ -37,7 +37,8 @@ button{ font:inherit; color:inherit; cursor:pointer; }
 .scope{ display:inline-flex; align-items:center; gap:6px; min-height:44px; padding:0 6px 0 12px; border-radius:8px; border:2px solid var(--accent); background:var(--accent-bg); font-size:13px; font-weight:600; }
 .scope select{ min-height:40px; max-width:280px; border:none; background:transparent; color:var(--text); font:inherit; font-weight:600; }
 .scope-to{ padding-right:8px; }
-#cmdInput{ flex:1 1 260px; min-width:0; min-height:44px; padding:0 12px; border-radius:8px; border:1px solid var(--line); background:var(--surface); color:var(--text); font:inherit; font-size:15px; }
+.cmd-anchor.cmd-input{ flex:1 1 260px; min-width:0; flex-direction:row; align-items:center; gap:6px; }
+#cmdInput{ flex:1 1 auto; min-width:0; min-height:44px; padding:0 12px; border-radius:8px; border:1px solid var(--line); background:var(--surface); color:var(--text); font:inherit; font-size:15px; }
 #cmdInput:focus-visible{ outline:2px solid var(--accent); outline-offset:1px; }
 .why{ font-size:12px; color:var(--muted); margin-right:auto; }
 .chip{ display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); }
@@ -244,6 +245,26 @@ button.toolchip[aria-expanded="true"]::before{ content:"\25BE"; }
 .cmd-menu .cmd span{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .cmd-menu .cmd[aria-selected="true"], .cmd-menu .cmd:hover{ background:var(--surface-2); }
 .cmd-menu .cmd-none{ padding:6px 8px; font-size:12px; color:var(--muted); }
+.mention-menu .cmd strong{ font-family:"JetBrains Mono",ui-monospace,monospace; font-weight:600; }
+.attach input[type="file"]{ display:none; }
+.attach-tray{ display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.attach-tray[hidden]{ display:none; }
+.attached{ display:inline-flex; align-items:center; gap:6px; max-width:260px; padding:3px 4px 3px 3px; border-radius:8px; border:1px solid var(--line); background:var(--surface-2); font-size:12px; }
+.attached img{ width:36px; height:36px; object-fit:cover; border-radius:5px; flex:none; background:var(--surface); }
+.attached .name{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.attached.uploading img{ opacity:.55; }
+.attached.failed{ border-color:var(--bad); }
+.attached.failed .muted{ color:var(--bad); }
+.attached .remove{ flex:none; width:24px; height:24px; border-radius:6px; border:none; background:transparent; color:var(--muted); font-size:16px; line-height:1; cursor:pointer; }
+.attached .remove:hover{ background:var(--surface); color:var(--text); }
+.attach-problem{ font-size:12px; color:var(--bad); }
+.msg .carried{ display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; align-items:center; margin-top:6px; }
+.mention-chip{ display:inline-flex; align-items:center; max-width:100%; padding:3px 9px; border-radius:999px; background:var(--surface-2); border:1px solid var(--line); font-size:12px; color:var(--muted); font-family:"JetBrains Mono",ui-monospace,monospace; overflow-wrap:anywhere; }
+.mention-chip.linked{ border-style:dashed; }
+.thumb{ display:inline-flex; flex-direction:column; gap:3px; max-width:180px; padding:3px; border-radius:8px; border:1px solid var(--line); background:var(--surface-2); font-size:11px; color:var(--muted); text-decoration:none; }
+.thumb img{ display:block; max-width:172px; max-height:132px; border-radius:5px; object-fit:contain; background:var(--surface); }
+.thumb .placeholder{ display:flex; align-items:center; justify-content:center; width:172px; height:96px; border-radius:5px; background:var(--surface); }
+.thumb .name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:0 3px; }
 @media (max-width: 860px){ .inbox{ flex-direction:column; } .inbox-list.narrow{ flex:0 0 auto; max-height:30vh; border-right:none; border-bottom:1px solid var(--line); } }
 .panel{ width:360px; flex:none; overflow-y:auto; background:var(--surface); border-left:1px solid var(--line); padding:16px 18px 24px; display:flex; flex-direction:column; gap:18px; }
 .ph{ display:flex; gap:12px; align-items:flex-start; }

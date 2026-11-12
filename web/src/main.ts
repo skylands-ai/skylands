@@ -146,11 +146,11 @@ const inboxActions: InboxActions = {
     store.setView('world')
     nav.selectAgent(x.host, x.repoId, x.id)
   },
-  prompt: (x, text) => {
+  prompt: (x, text, carried) => {
     const revision = x.revision ?? 0
-    const signed = signPrompt(store.state, x, text, revision)
+    const signed = signPrompt(store.state, x, text, revision, carried)
     if (signed.error) return Promise.resolve(signed.error)
-    return sessionCommand(x.host, x.id, 'prompt', { text, revision, signature: signed.signature })
+    return sessionCommand(x.host, x.id, 'prompt', { text, mentions: carried.mentions, images: carried.images, revision, signature: signed.signature })
   },
   cancel: (x) => sessionCommand(x.host, x.id, 'cancel', {}),
   setMode: (x, mode) => sessionCommand(x.host, x.id, 'mode', { mode }),

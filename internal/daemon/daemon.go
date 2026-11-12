@@ -185,11 +185,15 @@ func Run(ctx context.Context, cfg Config) error {
 		return err
 	}
 	transcriptsDir := filepath.Join(cfg.DataDir, "transcripts", hostName)
+	kept := blobs.New(filepath.Join(cfg.DataDir, "blobs", hostName))
+	uploads := blobs.NewUploads(filepath.Join(cfg.DataDir, "uploads", hostName), kept)
 	sessions, err := session.Load(ctx, store, session.Config{
 		Host:           hostName,
 		WorktreesDir:   filepath.Join(cfg.DataDir, "worktrees", hostName),
 		TranscriptsDir: transcriptsDir,
-		Blobs:          blobs.New(filepath.Join(cfg.DataDir, "blobs", hostName)),
+		Blobs:          kept,
+		Uploads:        uploads,
+		Agents:         func(name string) (v1.AgentAvailability, bool) { return agentNamed(agg, name) },
 		Registry:       cfg.Adapters,
 		Repos:          agg,
 		Publish:        nc.Publish,
@@ -222,12 +226,22 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	// On-demand reads of transcripts and diffs leave the host only when asked.
-	responder := fetch.New(hostName, sessions, transcriptsDir)
+	responder := fetch.New(hostName, sessions, agg, transcriptsDir)
+	responder.MaxPiece = v1.PieceSize(nc.MaxPayload())
 	fetchSub, err := nc.Subscribe(v1.IslandFetchFilter(hostName), func(msg *nats.Msg) { go responder.Handle(ctx, msg) })
 	if err != nil {
 		return fmt.Errorf("subscribe to fetch requests: %w", err)
 	}
 	defer func() { _ = fetchSub.Unsubscribe() }()
+
+	// Images for prompts arrive in pieces, and wait until a prompt names
+	// them. One that none names within the hour is removed.
+	uploadSub, err := nc.Subscribe(v1.IslandUploadSubject(hostName), func(msg *nats.Msg) { receiveUpload(uploads, msg) })
+	if err != nil {
+		return fmt.Errorf("subscribe to uploads: %w", err)
+	}
+	defer func() { _ = uploadSub.Unsubscribe() }()
+	go sweepUploads(ctx, uploads)
 
 	// Session and repository commands arrive by request-reply, one subject
 	// per session or repository.
@@ -321,6 +335,56 @@ func Run(ctx context.Context, cfg Config) error {
 		return nil
 	case err := <-errc:
 		return err
+	}
+}
+
+// agentNamed is what the host last found of one agent.
+func agentNamed(agg *host.Host, name string) (v1.AgentAvailability, bool) {
+	for _, a := range agg.Agents() {
+		if a.Name == name {
+			return a, true
+		}
+	}
+	return v1.AgentAvailability{}, false
+}
+
+// receiveUpload takes one piece of an image for a prompt. Pieces of one
+// image come one at a time, each after the last was answered, so they
+// are taken in the order they arrive.
+func receiveUpload(uploads *blobs.Uploads, msg *nats.Msg) {
+	var p v1.UploadPiece
+	reply := v1.Reply{}
+	if err := json.Unmarshal(msg.Data, &p); err != nil {
+		reply.Error = "bad UploadPiece: " + err.Error()
+	} else if res, err := uploads.Receive(p); err != nil {
+		reply.Error = err.Error()
+	} else {
+		reply.Result, _ = json.Marshal(res)
+		if res.Hash != "" {
+			slog.Info("daemon: image uploaded", "hash", res.Hash, "size", res.Received, "type", p.MimeType)
+		}
+	}
+	data, _ := json.Marshal(reply)
+	if err := msg.Respond(data); err != nil {
+		slog.Warn("daemon: reply to an upload", "err", err)
+	}
+}
+
+// sweepEvery is how often the uploads nobody sent are looked for.
+const sweepEvery = 10 * time.Minute
+
+// sweepUploads removes the uploads no prompt named within the hour, now
+// and then every sweepEvery, until ctx ends.
+func sweepUploads(ctx context.Context, uploads *blobs.Uploads) {
+	for {
+		if n := uploads.Sweep(time.Now(), blobs.UploadsExpire); n > 0 {
+			slog.Info("daemon: removed images uploaded for prompts never sent", "count", n)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(sweepEvery):
+		}
 	}
 }
 
