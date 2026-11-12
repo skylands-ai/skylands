@@ -728,6 +728,9 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
   const repo = s.repos[x.repoId]
   const name = agentLabel(x.agent)
   const running = x.status === 'running'
+  // The mode and model chips, the trust switch, and the rules are about
+  // the chat with the agent, so the terminal leaves them out.
+  const chat = convoMode(s, x) === 'chat'
   const head = el('div', { class: 'convo-head' }, [
     el('h2', { text: sessionLabel(x), title: x.prompt }),
     el('span', { class: 'who muted' }, [agentGlyph(x.agent), `${name} \u00b7 ${repo?.name ?? x.repoId} on ${x.host}`]),
@@ -736,25 +739,27 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
     el('span', { class: 'muted', title: tokensBreakdown(x.tokens, running) || null, text: tokensLabel(x.tokens, running) }),
     el('div', { class: 'acts' }, [
       modeSwitch(s, x, actions),
-      ...(isOpen(x) ? settingChips(s, x, actions) : []),
-      isOpen(x) ? trustSwitch(s, x, actions) : null,
-      el('button', {
-        type: 'button',
-        class: 'btn small ghost',
-        text: isOpen(x) && x.rulesLapsed ? `Rules (${x.rules.length}, lapsed)` : `Rules (${x.rules.length})`,
-        'aria-expanded': rulesOpen.has(x.id) ? 'true' : 'false',
-        onclick: () => {
-          if (rulesOpen.has(x.id)) rulesOpen.delete(x.id)
-          else rulesOpen.add(x.id)
-          rulesToggles++
-          actions.refresh()
-        },
-      }),
+      ...(chat && isOpen(x) ? settingChips(s, x, actions) : []),
+      chat && isOpen(x) ? trustSwitch(s, x, actions) : null,
+      chat
+        ? el('button', {
+            type: 'button',
+            class: 'btn small ghost',
+            text: isOpen(x) && x.rulesLapsed ? `Rules (${x.rules.length}, lapsed)` : `Rules (${x.rules.length})`,
+            'aria-expanded': rulesOpen.has(x.id) ? 'true' : 'false',
+            onclick: () => {
+              if (rulesOpen.has(x.id)) rulesOpen.delete(x.id)
+              else rulesOpen.add(x.id)
+              rulesToggles++
+              actions.refresh()
+            },
+          })
+        : null,
       el('button', { type: 'button', class: 'btn small ghost', text: 'Show in world', onclick: () => actions.openInWorld(x) }),
       el('button', { type: 'button', class: 'btn small ghost', text: 'Close', 'aria-label': 'Close the conversation', onclick: () => actions.open(null) }),
     ]),
   ])
-  if (convoMode(s, x) === 'terminal') {
+  if (!chat) {
     return el('section', { class: 'convo', 'aria-label': `${sessionLabel(x)}, with ${name}`, 'data-session': x.id }, [head, terminalPane(s, x, terminals)])
   }
 
