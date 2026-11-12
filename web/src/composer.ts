@@ -1,7 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import { bytesToHex } from '@noble/hashes/utils.js'
 import { el } from './dom'
-import { mentionsIn, pickMention, sizeText, typingMention } from './mentions'
+import { menuRoom, mentionsIn, pickMention, sizeText, typingMention } from './mentions'
 import type { Carried, FilesResult, PromptImage } from './protocol'
 import { api } from './signin'
 
@@ -175,6 +175,26 @@ export interface ComposeParts {
 /** How long typing after an @ pauses before the host is asked. */
 const SEARCH_PAUSE_MS = 120
 
+/**
+ * The top and bottom of what would cut off a list opening off el: the
+ * window, and each box around el that hides or scrolls what overflows it,
+ * up to a fixed box such as an open dialog, which nothing outside clips.
+ */
+function clipEdges(el: HTMLElement): { top: number; bottom: number } {
+  let top = 0
+  let bottom = window.innerHeight
+  for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+    const style = getComputedStyle(p)
+    if (style.overflowY !== 'visible') {
+      const inner = p.getBoundingClientRect().top + p.clientTop
+      top = Math.max(top, inner)
+      bottom = Math.min(bottom, inner + p.clientHeight)
+    }
+    if (style.position === 'fixed') break
+  }
+  return { top, bottom }
+}
+
 let menus = 0
 
 /**
@@ -212,10 +232,19 @@ export function compose(input: HTMLInputElement | HTMLTextAreaElement, draft: Dr
       document.getElementById(`${id}-${active}`)?.scrollIntoView({ block: 'nearest' })
     } else input.removeAttribute('aria-activedescendant')
   }
+  // The list fits in the room its box has, so a dialog doesn't cut it off.
+  const open = (): void => {
+    menu.hidden = false
+    const anchor = menu.parentElement
+    if (!anchor) return
+    const room = menuRoom(anchor.getBoundingClientRect(), clipEdges(anchor))
+    menu.classList.toggle('below', room.below)
+    menu.style.maxHeight = `${room.height}px`
+  }
   const say = (text: string): void => {
     shown = []
     menu.replaceChildren(el('div', { class: 'cmd-none', text }))
-    menu.hidden = false
+    open()
     input.removeAttribute('aria-activedescendant')
   }
   const pick = (path: string): void => {
@@ -267,7 +296,7 @@ export function compose(input: HTMLInputElement | HTMLTextAreaElement, draft: Dr
       }),
       ...(got.more ? [el('div', { class: 'cmd-none', text: 'More files match; keep typing to narrow them.' })] : []),
     )
-    menu.hidden = false
+    open()
     highlight()
   }
   const follow = (): void => {
