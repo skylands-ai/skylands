@@ -94,6 +94,12 @@ func decode(t *testing.T, raw json.RawMessage) Decision {
 	case KindRepoRules:
 		var x RepoRules
 		err, d = json.Unmarshal(raw, &x), x
+	case KindTerminal:
+		var x Terminal
+		err, d = json.Unmarshal(raw, &x), x
+	case KindTerminalIn:
+		var x TerminalInput
+		err, d = json.Unmarshal(raw, &x), x
 	default:
 		t.Fatalf("the vector has a decision of kind %q", head.Kind)
 	}
@@ -128,7 +134,7 @@ func TestDecisionVector(t *testing.T) {
 			t.Errorf("%s: the vector's signature doesn't verify: %v", kind, err)
 		}
 	}
-	for _, k := range []string{KindToolCall, KindAnswer, KindTrust, KindSessionRules, KindRepoRules} {
+	for _, k := range []string{KindToolCall, KindAnswer, KindTrust, KindSessionRules, KindRepoRules, KindStart, KindPrompt, KindChange, KindTerminal, KindTerminalIn} {
 		if !kinds[k] {
 			t.Errorf("the vector has no %s decision", k)
 		}
@@ -211,6 +217,12 @@ func TestVerifyDecisionRefuses(t *testing.T) {
 			changed = x
 		case Change:
 			x.Action = ChangeCommit + "s"
+			changed = x
+		case Terminal:
+			x.Terminal += "2"
+			changed = x
+		case TerminalInput:
+			x.Seq++
 			changed = x
 		}
 		if err := VerifyDecision(changed, vd.Signature); !errors.Is(err, ErrBadSignature) {

@@ -2,7 +2,7 @@ import { fromSeed } from '@nats-io/nkeys'
 import { bytesToHex } from '@noble/hashes/utils.js'
 import { describe, expect, it } from 'vitest'
 import { canonicalize } from './canonical'
-import { answersHash, decisionDigest, formHash, normalizeRules, pullRequestHash, rulesHash, signDecision, textHash, type Decision, type DecisionSignature } from './decision'
+import { answersHash, bytesHash, decisionDigest, formHash, normalizeRules, pullRequestHash, rulesHash, signDecision, textHash, type Decision, type DecisionSignature } from './decision'
 import type { QuestionField, Rule } from './protocol'
 import raw from '../../internal/approval/testdata/decision-vector.json?raw'
 
@@ -18,7 +18,7 @@ const kp = () => fromSeed(new TextEncoder().encode(v.seed))
 
 describe('signDecision', () => {
   it('reproduces every Go decision byte for byte', () => {
-    expect(new Set(v.decisions.map((d) => d.decision.kind))).toEqual(new Set(['toolcall', 'answer', 'trust', 'session-rules', 'repo-rules', 'start', 'prompt', 'change']))
+    expect(new Set(v.decisions.map((d) => d.decision.kind))).toEqual(new Set(['toolcall', 'answer', 'trust', 'session-rules', 'repo-rules', 'start', 'prompt', 'change', 'terminal', 'terminal-input']))
     for (const d of v.decisions) {
       expect(canonicalize(d.decision)).toBe(d.canonical)
       expect(bytesToHex(decisionDigest(d.decision))).toBe(d.digest)
@@ -46,6 +46,7 @@ describe('hashes', () => {
     const changes = of('change')
     expect(textHash('Make it faster')).toBe(changes.find((c) => c.action === 'commit')?.text)
     expect(pullRequestHash('Make it faster', "It was slow.\n\nNow it isn't.")).toBe(changes.find((c) => c.action === 'pull-request')?.text)
+    expect(bytesHash(new TextEncoder().encode('go test ./...\r\x03\u00e9'))).toBe(of('terminal-input')[0].data)
   })
 
   it('hashes a form the same whether its empty properties are there or not', () => {

@@ -11,6 +11,7 @@ import { HOST_DEFAULTS, proposeRule, ruleText, rulesSheet } from './rules'
 import { agentLabel, isOpen, modelText, sessionLabel, sessionStatus, tokensBreakdown, tokensLabel, tokensText } from './status'
 import { conversationList, isUnread, isWaiting, sumTokens, type State } from './store'
 import { chipDeps, toolChip } from './toolchip'
+import { canTerminal, convoMode, type ConvoMode, type Terminals } from './terminal'
 
 import { parseTranscript } from './transcript'
 import type { Rule } from './protocol'
@@ -24,6 +25,8 @@ export interface InboxActions {
   newSession(): void
   /** Shows the session in the world instead. */
   openInWorld(s: Session): void
+  /** Shows a conversation's chat, or a terminal in its worktree, opening one the first time. */
+  mode(s: Session, mode: ConvoMode): void
   prompt(s: Session, text: string): Promise<string>
   /** Interrupts the turn in progress and keeps the session. */
   cancel(s: Session): Promise<string>
@@ -74,7 +77,7 @@ let lastDeps: unknown[] | null = null
  * shows has changed. Scroll positions survive a rebuild, and the
  * conversation stays pinned to its end while it was there.
  */
-export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live: LiveText, actions: InboxActions): void {
+export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live: LiveText, actions: InboxActions, terminals: Terminals): void {
   const open = s.inbox ? s.sessions[s.inbox] : undefined
   // While a turn runs the live feed carries the transcript, with a slow
   // re-read as a safety net. Once the turn is over it is read again, so
@@ -87,7 +90,7 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live
   // Once the agent is not mid-turn, where its changes stand is read from the
   // host, and read again after each event, such as a commit.
   const changes = open && open.status !== 'running' && !open.worktreeRemoved ? cache.get('changes', open.host, open.id, 0, Date.parse(open.updatedAt)) : undefined
-  const deps = [s.sessions, s.repos, s.viewed, s.inbox, s.inboxFilter, open, inputsVersion(), s.approvers, s.me, s.world, fetched?.at, fetched?.loading, fetched?.error, fetched?.text, changes?.at, changes?.loading, changes?.error, changes?.changes, rulesToggles, open ? settingsKey(s, open) : '', ...(open ? chipDeps(open, cache) : [])]
+  const deps = [s.sessions, s.repos, s.viewed, s.inbox, s.inboxFilter, open, inputsVersion(), s.approvers, s.me, s.world, fetched?.at, fetched?.loading, fetched?.error, fetched?.text, changes?.at, changes?.loading, changes?.error, changes?.changes, rulesToggles, open ? settingsKey(s, open) : '', open ? convoMode(s, open) : '', terminals.version(), ...(open ? chipDeps(open, cache) : [])]
   if (lastDeps && lastDeps.length === deps.length && lastDeps.every((d, i) => d === deps[i])) return
   lastDeps = deps
 
@@ -96,14 +99,18 @@ export function renderInbox(root: HTMLElement, s: State, cache: FetchCache, live
     scrolls.set(box.dataset.scroll as string, { top: box.scrollTop, atEnd: box.scrollHeight - box.scrollTop - box.clientHeight < 12 })
   }
   const openedBefore = root.querySelector<HTMLElement>('.convo')?.dataset.session
+  // A terminal is moved into the new page, not drawn again, and gets the
+  // keyboard back if it had it.
+  const typing = terminals.focused()
 
   root.textContent = ''
   root.appendChild(open ? narrowList(s, open.id, actions) : table(s, actions))
   if (open) {
     const { text, gap } = live.compose(open.id, fetched)
     if (gap && fetched && !fetched.loading) cache.get('transcript', open.host, open.id, 0, Date.now())
-    root.appendChild(conversation(s, open, text, fetched?.error, changes, cache, actions))
+    root.appendChild(conversation(s, open, text, fetched?.error, changes, cache, actions, terminals))
   }
+  terminals.reattached(typing)
 
   for (const box of root.querySelectorAll<HTMLElement>('[data-scroll]')) {
     const key = box.dataset.scroll as string
@@ -644,8 +651,75 @@ function narrowList(s: State, openId: string, actions: InboxActions): HTMLElemen
   return box
 }
 
+/** The switch between a conversation's chat and a terminal in its worktree, shown while it can have one. */
+function modeSwitch(s: State, x: Session, actions: InboxActions): HTMLElement | null {
+  if (!canTerminal(x)) return null
+  const mode = convoMode(s, x)
+  const seg = (which: ConvoMode, text: string, title: string): HTMLElement =>
+    el('button', { type: 'button', class: 'btn small', 'aria-pressed': mode === which ? 'true' : 'false', text, title, onclick: () => actions.mode(x, which) })
+  return el('div', { class: 'modes', role: 'group', 'aria-label': 'Show' }, [
+    seg('chat', 'Chat', 'The conversation with the agent'),
+    seg('terminal', 'Terminal', `A shell where the agent works, on ${x.host}`),
+  ])
+}
+
+/** The program a shell path names, such as zsh for /bin/zsh. */
+function shellName(path: string): string {
+  return path.slice(path.lastIndexOf('/') + 1) || path
+}
+
+/**
+ * The conversation's terminal: a shell in the session's worktree on its
+ * island, with a tab for each when more than one is open, and the way to
+ * open another or close this one.
+ */
+function terminalPane(s: State, x: Session, terminals: Terminals): HTMLElement {
+  const v = terminals.view(x)
+  const where = x.inCheckout ? `the checkout of ${s.repos[x.repoId]?.name ?? x.repoId}` : `the worktree on ${x.branch}`
+  const bar = el('div', { class: 'term-bar' })
+  const pane = el('section', { class: 'term-pane', 'aria-label': `Terminal in ${where} on ${x.host}` }, [bar])
+  if (x.terminals.length > 1) {
+    bar.appendChild(
+      el(
+        'div',
+        { class: 'modes', role: 'group', 'aria-label': 'Terminals' },
+        x.terminals.map((t, i) => el('button', { type: 'button', class: 'btn small', 'aria-pressed': v.current?.id === t.id ? 'true' : 'false', text: `${i + 1}`, title: `${shellName(t.shell)}, opened ${new Date(t.openedAt).toLocaleTimeString()}`, onclick: () => terminals.choose(x, t.id) })),
+      ),
+    )
+  }
+  const open = el('button', { type: 'button', class: 'btn small ghost', text: v.current ? 'New terminal' : 'Open a terminal', disabled: v.opening ? 'true' : null, onclick: () => void terminals.open(x) })
+  const canOpen = x.status === 'running' || x.status === 'idle'
+  if (!v.current) {
+    bar.appendChild(el('span', { class: 'muted', text: `A shell in ${where} on ${x.host}` }))
+    const say = v.opening ? 'Opening a terminal…' : v.error || (canOpen ? 'No terminal is open in this session.' : 'This session is over, so no terminal can open in it.')
+    pane.appendChild(el('div', { class: 'term-empty' }, [el('p', { text: say, style: v.error && !v.opening ? 'color:var(--bad)' : null }), canOpen && !v.opening ? open : null]))
+    return pane
+  }
+  const t = v.current
+  const note = el('span', { class: 'sub', style: 'color:var(--bad)' })
+  const close = el('button', {
+    type: 'button',
+    class: 'btn small ghost',
+    text: 'Close terminal',
+    title: 'End this shell and whatever runs in it',
+    onclick: async () => {
+      close.disabled = true
+      const err = await terminals.close(x, t.id)
+      if (err) {
+        note.textContent = err
+        close.disabled = false
+      }
+    },
+  }) as HTMLButtonElement
+  bar.append(el('span', { class: 'muted', text: `${shellName(t.shell)} in ${where} on ${x.host}` }), note, el('div', { class: 'acts' }, [canOpen ? open : null, close]))
+  pane.appendChild(terminals.screen(x, t.id))
+  const trouble = terminals.note(x, t.id)
+  if (trouble) pane.appendChild(el('p', { class: 'term-note', text: trouble }))
+  return pane
+}
+
 /** One conversation: its turns, the notes between them, how it ended, and the reply box while it is open. */
-function conversation(s: State, x: Session, transcript: string | undefined, fetchError: string | undefined, changes: Fetched | undefined, cache: FetchCache, actions: InboxActions): HTMLElement {
+function conversation(s: State, x: Session, transcript: string | undefined, fetchError: string | undefined, changes: Fetched | undefined, cache: FetchCache, actions: InboxActions, terminals: Terminals): HTMLElement {
   const status = sessionStatus(x, isWaiting(s, x))
   const repo = s.repos[x.repoId]
   const name = agentLabel(x.agent)
@@ -656,6 +730,7 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
     el('span', { class: 'muted', text: `${x.turns} ${x.turns === 1 ? 'turn' : 'turns'}` }),
     el('span', { class: 'muted', title: tokensBreakdown(x.tokens) || null, text: tokensLabel(x.tokens) }),
     el('div', { class: 'acts' }, [
+      modeSwitch(s, x, actions),
       ...(isOpen(x) ? settingChips(s, x, actions) : []),
       isOpen(x) ? trustSwitch(s, x, actions) : null,
       el('button', {
@@ -674,6 +749,9 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
       el('button', { type: 'button', class: 'btn small ghost', text: 'Close', 'aria-label': 'Close the conversation', onclick: () => actions.open(null) }),
     ]),
   ])
+  if (convoMode(s, x) === 'terminal') {
+    return el('section', { class: 'convo', 'aria-label': `${sessionLabel(x)}, with ${name}`, 'data-session': x.id }, [head, terminalPane(s, x, terminals)])
+  }
 
   const body = el('div', { class: 'convo-body', 'data-scroll': 'convo' })
   const conv = parseTranscript(transcript ?? '')

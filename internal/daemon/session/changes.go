@@ -294,6 +294,8 @@ func (m *Manager) remove(ctx context.Context, commandID string, s Session, force
 				return s, false, ErrUncommitted
 			}
 		}
+		// A shell left open in a failed session's worktree goes with it.
+		m.closeTerminals(ctx, s.ID, v1.TerminalWorktreeRemoved)
 		args := []string{"worktree", "remove"}
 		if force {
 			args = append(args, "--force")

@@ -1,6 +1,7 @@
 import { keepStorage, keyFromSeed, loadApprover, newApproverKey, seedOf, sign, type Signed } from './approver'
 import { citadelAddress, linkAt } from './address'
-import { answersHash, DECISION_VERSION, formHash, normalizeRules, rulesHash, signDecision, textHash, type Decision, type DecisionSignature } from './decision'
+import type { KeyPair } from '@nats-io/nkeys'
+import { answersHash, bytesHash, DECISION_VERSION, formHash, normalizeRules, rulesHash, signDecision, textHash, type Decision, type DecisionSignature } from './decision'
 import type { ApproverInfo, Permission, Question, Repo, Rule, Session, VoucherInfo } from './protocol'
 import { api } from './signin'
 import type { State, Store } from './store'
@@ -226,6 +227,29 @@ export function signPrompt(s: State, x: Session, text: string, revision: number)
 /** This browser's signature over a commit, merge, pull request, or removal, at the revision it names. */
 export function signChange(s: State, x: Session, action: 'commit' | 'merge' | 'pull-request' | 'remove', text: string, revision: number) {
   return signOnceWorld(s, (world) => ({ v: DECISION_VERSION, kind: 'change', world, host: x.host, session: x.id, revision, action, text }))
+}
+
+/** This browser's signature over opening a terminal in a session, with the id it picked. */
+export function signTerminal(s: State, x: Session, terminal: string) {
+  return signOnceWorld(s, (world) => ({ v: DECISION_VERSION, kind: 'terminal', world, host: x.host, session: x.id, terminal }))
+}
+
+/** The key last made from this browser's seed, so signing every keystroke doesn't make it again. */
+let typingKey: { seed: string; kp: KeyPair } | null = null
+
+/**
+ * This browser's signature over one input to a terminal, once the world
+ * exists, or nothing before it does, or why it can't sign. Every keystroke
+ * is signed, so the key is made once and kept.
+ */
+export function signTerminalInput(s: State, x: Session, terminal: string, attach: string, seq: number, data: Uint8Array): { signature?: DecisionSignature; error?: string } {
+  if (!s.world?.owner) return {}
+  const mine = myApprover(s)
+  if (!s.me || !mine) return { error: 'This browser isn’t an approver for this world, so it can watch this terminal but not type in it.' }
+  if (!mine.valid) return { error: 'This browser no longer approves for this world, so it can watch this terminal but not type in it.' }
+  if (typingKey?.seed !== s.me.seed) typingKey = { seed: s.me.seed, kp: keyFromSeed(s.me.seed) }
+  const d: Decision = { v: DECISION_VERSION, kind: 'terminal-input', world: s.world.owner, host: x.host, session: x.id, terminal, attach, seq, data: bytesHash(data) }
+  return { signature: signDecision(typingKey.kp, d) }
 }
 
 /** Whether this browser can sign for the world it shows. */

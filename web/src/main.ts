@@ -31,7 +31,8 @@ import type { AgentCommand, Rule } from './protocol'
 import type { World } from './world/world'
 import { connectToCitadel } from './ws'
 import { api } from './signin'
-import { approverActions, canSign, keepThisBrowser, loadThisBrowser, signAnswer, signChange, signFor, signPrompt, signRepoRules, signSessionRules, signTrust } from './approvers'
+import { approverActions, canSign, keepThisBrowser, loadThisBrowser, signAnswer, signChange, signFor, signPrompt, signRepoRules, signSessionRules, signTerminal, signTerminalInput, signTrust } from './approvers'
+import { terminalInSight, Terminals } from './terminal'
 import { pullRequestHash, textHash } from './decision'
 import { browserNotices, Notifier, notifySupport, waitingItems } from './notify'
 import { closeStale, pushSupport, subscribePush, unsubscribePush } from './push'
@@ -73,17 +74,31 @@ const newSession = new NewSessionForm((id) => openConversation(id))
 const cache = new FetchCache(() => store.touch())
 const live = new LiveText()
 
+// Terminals in sessions' worktrees, each signed for by this browser: the
+// opening and every keystroke.
+const terminals = new Terminals({
+  signOpen: (x, terminal) => signTerminal(store.state, x, terminal),
+  signInput: (x, terminal, attach, seq, data) => signTerminalInput(store.state, x, terminal, attach, seq, data),
+  api,
+  redraw: () => store.touch(),
+})
+
 // Live pieces grow the open conversation's last bubble, at most once a frame.
 let growQueued = false
-const link = connectToCitadel(store, (_host, id, piece) => {
-  live.push(id, piece)
-  if (growQueued) return
-  growQueued = true
-  requestAnimationFrame(() => {
-    growQueued = false
-    growLive(inboxEl, store.state, cache, live, () => store.touch())
-  })
-})
+const link = connectToCitadel(
+  store,
+  (_host, id, piece) => {
+    live.push(id, piece)
+    if (growQueued) return
+    growQueued = true
+    requestAnimationFrame(() => {
+      growQueued = false
+      growLive(inboxEl, store.state, cache, live, () => store.touch())
+    })
+  },
+  { output: (t, out) => terminals.output(t, out), reconnected: () => terminals.reconnected() },
+)
+terminals.link = link
 
 // The 3D world is loaded and built only for a screen that shows it, so a
 // phone never downloads it.
@@ -145,6 +160,11 @@ const inboxActions: InboxActions = {
   openInWorld: (x) => {
     store.setView('world')
     nav.selectAgent(x.host, x.repoId, x.id)
+  },
+  // The first switch to a terminal opens one; after that it shows what is open.
+  mode: (x, mode) => {
+    store.update({ convoMode: { ...store.state.convoMode, [x.id]: mode } })
+    if (mode === 'terminal' && !x.terminals.length) void terminals.open(x)
   },
   prompt: (x, text) => {
     const revision = x.revision ?? 0
@@ -505,6 +525,7 @@ function renderPhoneLayout(s: State): void {
   document.title = n ? `(${n}) Skylands` : 'Skylands'
   renderHeader(crumbsEl, connectedEl, linkEl, s, nav, versionEl)
   link.watch(null, null)
+  terminals.show(null)
   renderPhone(phoneEl, s, s.route, phoneActions)
 }
 
@@ -580,6 +601,7 @@ fitScreen()
 
 store.subscribe((s0) => {
   newSession.update(s0)
+  terminals.update(s0.sessions)
   renderPhoneLayout(s0)
   if (s0.phone) {
     afterRender(s0)
@@ -595,9 +617,10 @@ store.subscribe((s0) => {
   renderHeader(crumbsEl, connectedEl, linkEl, s, nav, versionEl)
   renderVeil(s)
   bar.update(s)
-  if (s.view === 'inbox') renderInbox(inboxEl, s, cache, live, inboxActions)
+  if (s.view === 'inbox') renderInbox(inboxEl, s, cache, live, inboxActions, terminals)
   const reading = s.view === 'inbox' && s.inbox ? s.sessions[s.inbox] : undefined
   link.watch(reading?.host ?? null, reading?.id ?? null)
+  terminals.show(terminalInSight(s, terminals))
   if (world) {
     for (const i of islandList(s)) {
       world.upsertIsland(i.host, i.reachable)

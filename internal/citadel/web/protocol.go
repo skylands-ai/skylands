@@ -17,13 +17,17 @@ import (
 //   - "session" carries Session whenever an agent session changes.
 //   - "live" carries Live, with Host and ID, for the session the browser
 //     is watching: text as it is appended to the transcript.
+//   - "term" carries Output, with Host, ID, and Terminal, for the terminal
+//     the browser is watching: what its shell wrote.
 type Message struct {
-	Type   string      `json:"type"`
-	Host   string      `json:"host,omitempty"`
-	ID     string      `json:"id,omitempty"`
-	Live   *v1.Live    `json:"live,omitempty"`
-	Server *ServerInfo `json:"server,omitempty"`
-	World  *WorldInfo  `json:"world,omitempty"`
+	Type     string             `json:"type"`
+	Host     string             `json:"host,omitempty"`
+	ID       string             `json:"id,omitempty"`
+	Terminal string             `json:"terminal,omitempty"`
+	Live     *v1.Live           `json:"live,omitempty"`
+	Output   *v1.TerminalOutput `json:"output,omitempty"`
+	Server   *ServerInfo        `json:"server,omitempty"`
+	World    *WorldInfo         `json:"world,omitempty"`
 	// Approvers is every approver key ever enrolled, in a snapshot and in
 	// an "approvers" message, which replaces the whole list.
 	Approvers []ApproverInfo        `json:"approvers,omitempty"`
@@ -39,10 +43,19 @@ type Message struct {
 // session's transcript as it is written, or "unwatch" to stop, and
 // "visible" or "hidden" when its page comes into sight or leaves it. A
 // browser watches at most one session at a time.
+//
+// For a terminal, named by Host, ID, and Terminal, it sends "term-watch"
+// to follow what the shell writes, or "term-unwatch" to stop, following
+// at most one terminal at a time; "term-input" with Input, what a person
+// typed, signed in the browser for the daemon to check; and "term-size"
+// with Size when its view of the terminal changes size.
 type Inbound struct {
-	Type string `json:"type"`
-	Host string `json:"host,omitempty"`
-	ID   string `json:"id,omitempty"`
+	Type     string            `json:"type"`
+	Host     string            `json:"host,omitempty"`
+	ID       string            `json:"id,omitempty"`
+	Terminal string            `json:"terminal,omitempty"`
+	Input    *v1.TerminalInput `json:"input,omitempty"`
+	Size     *v1.TerminalSize  `json:"size,omitempty"`
 }
 
 // ApproverInfo is one approver key, as the world's registry decides it.

@@ -74,6 +74,9 @@ func (c *citadel) api() http.Handler {
 	signedIn("POST /api/sessions/{host}/{id}/merge", c.merge)
 	signedIn("POST /api/sessions/{host}/{id}/pull-request", c.pullRequest)
 	signedIn("POST /api/sessions/{host}/{id}/remove-worktree", c.removeWorktree)
+	signedIn("POST /api/sessions/{host}/{id}/terminals", c.openTerminal)
+	signedIn("POST /api/sessions/{host}/{id}/terminals/{term}/close", c.closeTerminal)
+	signedIn("GET /api/sessions/{host}/{id}/terminals/{term}", c.fetchFromHost(v1.FetchTerminal))
 	signedIn("GET /api/sessions/{host}/{id}/transcript", c.fetchFromHost(v1.FetchTranscript))
 	signedIn("GET /api/sessions/{host}/{id}/diff", c.fetchFromHost(v1.FetchDiff))
 	signedIn("GET /api/sessions/{host}/{id}/changes", c.fetchFromHost(v1.FetchChanges))
@@ -166,6 +169,31 @@ func (c *citadel) removeWorktree(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	cmd := v1.RemoveWorktree{ID: nuid.Next(), SessionID: id, Revision: body.Revision, Signature: body.Signature}
 	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandRemoveWorktree), cmd, http.StatusOK)
+}
+
+// openTerminal opens a shell in a session's worktree on its island. The
+// browser picks the terminal's id, which its signature names.
+func (c *citadel) openTerminal(w http.ResponseWriter, r *http.Request) {
+	host, id := r.PathValue("host"), r.PathValue("id")
+	var body struct {
+		TerminalID string                `json:"terminalId"`
+		Cols       int                   `json:"cols"`
+		Rows       int                   `json:"rows"`
+		Signature  *v1.DecisionSignature `json:"signature"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || !sessionIDPattern.MatchString(body.TerminalID) {
+		writeError(w, http.StatusBadRequest, "a terminal id of 8 to 64 letters and digits is required")
+		return
+	}
+	cmd := v1.OpenTerminal{ID: nuid.Next(), SessionID: id, TerminalID: body.TerminalID, Cols: body.Cols, Rows: body.Rows, Signature: body.Signature}
+	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandOpenTerminal), cmd, http.StatusCreated)
+}
+
+// closeTerminal ends a terminal's shell on its island.
+func (c *citadel) closeTerminal(w http.ResponseWriter, r *http.Request) {
+	host, id, term := r.PathValue("host"), r.PathValue("id"), r.PathValue("term")
+	cmd := v1.CloseTerminal{ID: nuid.Next(), SessionID: id, TerminalID: term}
+	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandCloseTerminal), cmd, http.StatusOK)
 }
 
 // setMode sets an idle session's mode to one its adapter lists. Every
@@ -309,7 +337,7 @@ func (c *citadel) relay(w http.ResponseWriter, host, subject string, cmd any, ok
 func (c *citadel) fetchFromHost(kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		host, id := r.PathValue("host"), r.PathValue("id")
-		result, err := c.sendCommand(r.Context(), v1.IslandFetchSubject(host, kind), v1.FetchSessionRequest{SessionID: id, ToolCallID: r.PathValue("tid"), RequestID: r.PathValue("rid")})
+		result, err := c.sendCommand(r.Context(), v1.IslandFetchSubject(host, kind), v1.FetchSessionRequest{SessionID: id, ToolCallID: r.PathValue("tid"), RequestID: r.PathValue("rid"), TerminalID: r.PathValue("term")})
 		switch {
 		case errors.Is(err, nats.ErrNoResponders), errors.Is(err, nats.ErrTimeout):
 			writeError(w, http.StatusBadGateway, host+" did not answer; it may be unreachable")

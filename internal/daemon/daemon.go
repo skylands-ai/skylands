@@ -242,6 +242,18 @@ func Run(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("subscribe to repository commands: %w", err)
 	}
 	defer func() { _ = repoSub.Unsubscribe() }()
+	// What people type into terminals is handled in the order it arrives,
+	// so not on goroutines of its own; nothing here waits on the shell.
+	inSub, err := nc.Subscribe(v1.TerminalInputFilter(hostName), func(msg *nats.Msg) { cmds.terminalInput(ctx, msg) })
+	if err != nil {
+		return fmt.Errorf("subscribe to terminal input: %w", err)
+	}
+	defer func() { _ = inSub.Unsubscribe() }()
+	sizeSub, err := nc.Subscribe(v1.TerminalSizeFilter(hostName), cmds.terminalSize)
+	if err != nil {
+		return fmt.Errorf("subscribe to terminal sizes: %w", err)
+	}
+	defer func() { _ = sizeSub.Unsubscribe() }()
 
 	started := time.Now().UTC()
 	svc, err := micro.AddService(nc, micro.Config{
@@ -609,6 +621,32 @@ func (c *commands) handle(ctx context.Context, msg *nats.Msg) {
 			return
 		}
 		c.replyResult(msg, map[string]any{"sessionId": s.ID, "pullRequest": s.PullRequest})
+	case v1.CommandOpenTerminal:
+		var cmd v1.OpenTerminal
+		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+			c.reply(msg, v1.Reply{Error: "bad OpenTerminal: " + err.Error()})
+			return
+		}
+		cmd.SessionID = sessionID
+		t, err := c.sessions.OpenTerminal(ctx, cmd, "citadel")
+		if err != nil {
+			c.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		c.replyResult(msg, v1.OpenTerminalResult{SessionID: sessionID, TerminalID: t.ID, Shell: t.Shell})
+	case v1.CommandCloseTerminal:
+		var cmd v1.CloseTerminal
+		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+			c.reply(msg, v1.Reply{Error: "bad CloseTerminal: " + err.Error()})
+			return
+		}
+		cmd.SessionID = sessionID
+		s, err := c.sessions.CloseTerminal(ctx, cmd, "citadel")
+		if err != nil {
+			c.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		c.replyResult(msg, map[string]any{"sessionId": s.ID, "terminals": len(s.Terminals)})
 	case v1.CommandRemoveWorktree:
 		var cmd v1.RemoveWorktree
 		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
@@ -624,6 +662,52 @@ func (c *commands) handle(ctx context.Context, msg *nats.Msg) {
 		c.replyResult(msg, map[string]any{"sessionId": s.ID, "worktreeRemoved": s.WorktreeRemoved, "branchDeleted": branchDeleted})
 	default:
 		c.reply(msg, v1.Reply{Error: "unknown command " + commandType})
+	}
+}
+
+// terminalSubject reads the session and terminal from a terminal's input or
+// size subject: v1.island.<host>.session.<session>.term.<terminal>.<kind>.
+func terminalSubject(subject string) (sessionID, terminalID string, ok bool) {
+	parts := strings.Split(subject, ".")
+	if len(parts) != 8 || parts[3] != "session" || parts[5] != "term" {
+		return "", "", false
+	}
+	return parts[4], parts[6], true
+}
+
+// terminalInput takes one input for a terminal. Nothing answers it: an
+// input refused, such as one whose signature doesn't verify, is logged.
+func (c *commands) terminalInput(ctx context.Context, msg *nats.Msg) {
+	sessionID, terminalID, ok := terminalSubject(msg.Subject)
+	if !ok {
+		return
+	}
+	var in v1.TerminalInput
+	if err := json.Unmarshal(msg.Data, &in); err != nil {
+		slog.Debug("daemon: bad terminal input", "subject", msg.Subject, "err", err)
+		return
+	}
+	if err := c.sessions.TerminalInput(ctx, sessionID, terminalID, in, "citadel"); err != nil {
+		level := slog.LevelDebug
+		if errors.Is(err, approval.ErrUnsigned) || errors.Is(err, approval.ErrBadSignature) || errors.Is(err, session.ErrStaleInput) {
+			level = slog.LevelWarn
+		}
+		slog.Log(ctx, level, "daemon: terminal input refused", "session", sessionID, "terminal", terminalID, "err", err)
+	}
+}
+
+// terminalSize resizes a terminal to what a browser's view of it shows.
+func (c *commands) terminalSize(msg *nats.Msg) {
+	sessionID, terminalID, ok := terminalSubject(msg.Subject)
+	if !ok {
+		return
+	}
+	var size v1.TerminalSize
+	if json.Unmarshal(msg.Data, &size) != nil {
+		return
+	}
+	if err := c.sessions.ResizeTerminal(sessionID, terminalID, size); err != nil {
+		slog.Debug("daemon: terminal resize refused", "session", sessionID, "terminal", terminalID, "err", err)
 	}
 }
 

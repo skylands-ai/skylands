@@ -342,6 +342,21 @@ export interface Session {
   size?: number
   /** What the session has cost so far: every turn's tokens and the title request's, summed. */
   tokens: TokenUsage
+  /** The shells people have open in the worktree, oldest first. */
+  terminals: TerminalInfo[]
+}
+
+/** A shell a person has open in a session's worktree. */
+export interface TerminalInfo {
+  id: string
+  shell: string
+  openedAt: string
+}
+
+/** What a terminal's shell wrote, from byte off among everything it has written, as base64. */
+export interface TerminalOutput {
+  off: number
+  data: string
 }
 
 /** Where a session's changes stand on the host's disk, as git sees them right now. */
@@ -392,7 +407,10 @@ export interface Message {
   type: string
   host?: string
   id?: string
+  /** With "term": the terminal its output is from. */
+  terminal?: string
   live?: Live
+  output?: TerminalOutput
   server?: ServerInfo
   world?: WorldInfo
   approvers?: ApproverInfo[]

@@ -50,6 +50,13 @@ type Question struct {
 	At         time.Time          `json:"at"`
 }
 
+// Terminal is a shell a person has open in the session's worktree.
+type Terminal struct {
+	ID       string    `json:"id"`
+	Shell    string    `json:"shell"`
+	OpenedAt time.Time `json:"openedAt"`
+}
+
 // ToolCall is one tool call as the session last reported it.
 type ToolCall struct {
 	ID        string    `json:"id"`
@@ -161,6 +168,9 @@ type Session struct {
 	// the title request's, summed. Always sent, so a browser can add
 	// sessions up without checking.
 	Tokens v1.TokenUsage `json:"tokens"`
+	// Terminals are the shells people have open in the worktree, oldest
+	// first.
+	Terminals []Terminal `json:"terminals"`
 }
 
 // Sessions is the projection of every host's sessions. It is safe for
@@ -188,7 +198,7 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 	case v1.EventSessionStarted:
 		var d v1.SessionStarted
 		if ev.Decode(&d) == nil {
-			s := &Session{Host: host, ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Mode: d.Mode, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Rules: append([]v1.Rule{}, d.Rules...), RulesBy: d.RulesBy, RulesApprover: d.RulesApprover, RulesLapsed: d.RulesLapsed, Status: "running", StartedAt: ev.Time, ActiveAt: ev.Time, Recent: []ToolCall{}, Files: map[string]string{}, Pending: []Permission{}, Questions: []Question{}}
+			s := &Session{Host: host, ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Mode: d.Mode, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Rules: append([]v1.Rule{}, d.Rules...), RulesBy: d.RulesBy, RulesApprover: d.RulesApprover, RulesLapsed: d.RulesLapsed, Status: "running", StartedAt: ev.Time, ActiveAt: ev.Time, Recent: []ToolCall{}, Files: map[string]string{}, Pending: []Permission{}, Questions: []Question{}, Terminals: []Terminal{}}
 			p.byID[d.SessionID] = s
 			changed = s
 		}
@@ -459,6 +469,28 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 				changed = s
 			}
 		}
+	case v1.EventTerminalOpened:
+		var d v1.TerminalOpened
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				s.Terminals = append(s.Terminals, Terminal{ID: d.TerminalID, Shell: d.Shell, OpenedAt: ev.Time})
+				changed = s
+			}
+		}
+	case v1.EventTerminalClosed:
+		var d v1.TerminalClosed
+		if ev.Decode(&d) == nil {
+			if s, ok := p.byID[d.SessionID]; ok {
+				kept := make([]Terminal, 0, len(s.Terminals))
+				for _, t := range s.Terminals {
+					if t.ID != d.TerminalID {
+						kept = append(kept, t)
+					}
+				}
+				s.Terminals = kept
+				changed = s
+			}
+		}
 	}
 	var copy Session
 	if changed != nil {
@@ -528,5 +560,6 @@ func cloneSession(s *Session) Session {
 	c.Pending = append(make([]Permission, 0, len(s.Pending)), s.Pending...)
 	c.Questions = append(make([]Question, 0, len(s.Questions)), s.Questions...)
 	c.Rules = append(make([]v1.Rule, 0, len(s.Rules)), s.Rules...)
+	c.Terminals = append(make([]Terminal, 0, len(s.Terminals)), s.Terminals...)
 	return c
 }

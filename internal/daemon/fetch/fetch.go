@@ -1,6 +1,6 @@
 // Package fetch answers on-demand reads from the host's disk: a session's
-// transcript, the diff in its worktree, where its changes stand, and the
-// record of one of its tool calls. The citadel asks through the island's
+// transcript, the diff in its worktree, where its changes stand, the
+// record of one of its tool calls, and what one of its terminals shows. The citadel asks through the island's
 // fetch subjects, and the daemon decides what leaves the host.
 package fetch
 
@@ -34,6 +34,7 @@ type Sessions interface {
 	ToolCall(sessionID, toolCallID string) (v1.ToolCallDetail, error)
 	RequestInput(sessionID, requestID string) (v1.RequestInput, error)
 	Commands(id string) (v1.CommandsResult, error)
+	TerminalScreen(sessionID, terminalID string) (v1.TerminalOutput, error)
 }
 
 // Responder answers fetch requests for one host.
@@ -101,6 +102,15 @@ func (r *Responder) Handle(ctx context.Context, msg *nats.Msg) {
 			return
 		}
 		data, _ := json.Marshal(commands)
+		r.reply(msg, v1.Reply{Result: data})
+		return
+	case v1.FetchTerminal:
+		screen, err := r.sessions.TerminalScreen(s.ID, req.TerminalID)
+		if err != nil {
+			r.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		data, _ := json.Marshal(screen)
 		r.reply(msg, v1.Reply{Result: data})
 		return
 	case v1.FetchToolCall:

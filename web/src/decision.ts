@@ -121,7 +121,35 @@ export interface ChangeDecision {
   text: string
 }
 
-export type Decision = ToolCallDecision | AnswerDecision | TrustDecision | SessionRulesDecision | RepoRulesDecision | StartDecision | PromptDecision | ChangeDecision
+/** Opening a shell in a session's worktree. The browser picks the terminal's id, so a signed opening opens one terminal. */
+export interface TerminalDecision {
+  v: number
+  kind: 'terminal'
+  world: string
+  host: string
+  session: string
+  terminal: string
+}
+
+/**
+ * Typing or pasting into a terminal. attach names this browser's view of
+ * the terminal and seq counts its inputs from one, which the daemon takes
+ * only in increasing order, so a signature can't be used again.
+ */
+export interface TerminalInputDecision {
+  v: number
+  kind: 'terminal-input'
+  world: string
+  host: string
+  session: string
+  terminal: string
+  attach: string
+  seq: number
+  /** bytesHash of the input. */
+  data: string
+}
+
+export type Decision = ToolCallDecision | AnswerDecision | TrustDecision | SessionRulesDecision | RepoRulesDecision | StartDecision | PromptDecision | ChangeDecision | TerminalDecision | TerminalInputDecision
 
 /** An approver's signature over a decision, which the command through the citadel carries. */
 export interface DecisionSignature {
@@ -140,7 +168,12 @@ export function signDecision(kp: KeyPair, d: Decision): DecisionSignature {
 
 /** The SHA-256 of a text's UTF-8 bytes, in lowercase hex. */
 export function textHash(text: string): string {
-  return bytesToHex(sha256(new TextEncoder().encode(text)))
+  return bytesHash(new TextEncoder().encode(text))
+}
+
+/** The SHA-256 of some bytes, in lowercase hex. */
+export function bytesHash(b: Uint8Array): string {
+  return bytesToHex(sha256(b))
 }
 
 /** The SHA-256 of a pull request's title and body as canonical JSON. */

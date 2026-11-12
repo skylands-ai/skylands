@@ -158,6 +158,7 @@ type browser struct {
 	ctx       context.Context
 	mu        sync.Mutex
 	live      []v1.Live
+	term      bytes.Buffer
 	server    web.ServerInfo
 	islands   map[string]projections.Island
 	repos     map[string]projections.Repo
@@ -192,6 +193,10 @@ func (w *world) openBrowser() *browser {
 			case "live":
 				if m.Live != nil {
 					b.live = append(b.live, *m.Live)
+				}
+			case "term":
+				if m.Output != nil {
+					b.term.Write(m.Output.Data)
 				}
 			case "snapshot":
 				b.snapshots++

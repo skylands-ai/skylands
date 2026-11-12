@@ -73,6 +73,8 @@ export interface State extends Nav {
   inbox: string | null
   /** Which conversations the inbox lists: open ones, or all. */
   inboxFilter: 'open' | 'all'
+  /** How each conversation shows, by session id: its chat, or a terminal in its worktree. Chat unless switched here. */
+  convoMode: Record<string, 'chat' | 'terminal'>
   /** How the 3D world is drawn, as chosen in this browser. */
   worldTheme: WorldThemeId
   /** Whether this browser notifies when an agent asks for approval or has a question. */
@@ -141,7 +143,7 @@ type Listener = (s: State) => void
 
 /** One place for everything the page renders from. Every change notifies every listener. */
 export class Store {
-  state: State = { link: 'connecting', server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), inbox: null, inboxFilter: loadFilter(), worldTheme: loadWorldTheme(), notify: loadNotify(), push: false, pushError: null, phone: false, route: {}, install: 'no' }
+  state: State = { link: 'connecting', server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), inbox: null, inboxFilter: loadFilter(), convoMode: {}, worldTheme: loadWorldTheme(), notify: loadNotify(), push: false, pushError: null, phone: false, route: {}, install: 'no' }
   private listeners: Listener[] = []
 
   subscribe(fn: Listener): void {

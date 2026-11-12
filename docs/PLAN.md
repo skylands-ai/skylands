@@ -381,6 +381,30 @@ specifies. No events, streams, or aggregates are needed for it.
   deletes its subscriptions. No push closes a notification; the page
   closes those that no longer wait. Not yet run: a push through a real
   push service.
+- Terminals are done. A conversation switches between Chat and Terminal,
+  as the inbox does between Open and All, and the first switch opens a
+  shell on the session's island, in its worktree, as the host user's
+  login shell in a pseudo-terminal (`internal/daemon/terminal`, on
+  creack/pty), with xterm.js in the browser, in a chunk of its own.
+  OpenTerminal and CloseTerminal are session commands, and
+  TerminalOpened and TerminalClosed session events, so the inbox knows
+  what is open; what goes in and out is plain NATS on the terminal's
+  `in`, `size`, and `out` subjects, which no stream captures. The daemon
+  keeps the newest 256 KB a terminal printed, which a browser reads by
+  the terminal fetch and then follows live by byte offset, reading again
+  on a gap, and publishes at most 1 MB a second, so a flood waits on the
+  shell rather than the browser. Opening a terminal and every keystroke
+  are signed (the `terminal` and `terminal-input` kinds, which the shared
+  vector covers): each browser view counts its inputs, and the daemon
+  takes them only in increasing order, checking each against the
+  registry it holds, so the citadel can relay typing but not forge it.
+  A terminal closes when a person closes it, its shell exits, the
+  session ends, or its worktree is removed; a restart ends every shell,
+  and the next daemon records them closed. A failed session keeps its
+  terminals until they close. Checked in headless Chrome against a set-up
+  world: opening, typing, Ctrl-C, a 20 KB paste in signed pieces,
+  switching back and forth, a second terminal, closing, ending the
+  session, a restart, and unsigned and forged input refused.
 
 ## After the MVP
 

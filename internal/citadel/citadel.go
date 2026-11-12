@@ -121,7 +121,7 @@ func Run(ctx context.Context, cfg Config) error {
 		slog.Warn("web: this binary has no web client, so the browser gets a placeholder page; " +
 			"use a release binary from " + web.ReleasesURL + ", or build with make web && make build")
 	}
-	c.web = web.New(web.Config{Addr: cfg.HTTPAddr, Snapshot: c.snapshot, Dist: dist, API: c.api(), Live: c.live, NeedsSetup: c.needsSetup, Canonical: c.publicURL(), SignedIn: c.signedInAs, InSight: c.inSight})
+	c.web = web.New(web.Config{Addr: cfg.HTTPAddr, Snapshot: c.snapshot, Dist: dist, API: c.api(), Live: c.live, Terminal: terminals{c}, NeedsSetup: c.needsSetup, Canonical: c.publicURL(), SignedIn: c.signedInAs, InSight: c.inSight})
 
 	opts := []nats.Option{
 		nats.Name("skylands-citadel"),
@@ -310,4 +310,59 @@ func (c *citadel) followHost(host string) {
 			c.mu.Unlock()
 		}
 	}()
+}
+
+// terminals relays terminals between browsers and their islands over plain
+// NATS. The citadel keeps none of what passes through, and can't make up
+// input: the daemon takes only what an approver signed.
+type terminals struct{ c *citadel }
+
+func (t terminals) conn(host, id, terminal string) (*nats.Conn, error) {
+	if !plainToken(host) || !plainToken(id) || !plainToken(terminal) {
+		return nil, errors.New("not a terminal")
+	}
+	t.c.mu.Lock()
+	nc := t.c.nc
+	t.c.mu.Unlock()
+	if nc == nil {
+		return nil, errors.New("not connected to NATS")
+	}
+	return nc, nil
+}
+
+func (t terminals) Watch(host, id, terminal string, deliver func(v1.TerminalOutput)) (func(), error) {
+	nc, err := t.conn(host, id, terminal)
+	if err != nil {
+		return nil, err
+	}
+	sub, err := nc.Subscribe(v1.TerminalOutputSubject(host, id, terminal), func(m *nats.Msg) {
+		var o v1.TerminalOutput
+		if json.Unmarshal(m.Data, &o) == nil {
+			deliver(o)
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	return func() { _ = sub.Unsubscribe() }, nil
+}
+
+func (t terminals) Input(host, id, terminal string, in v1.TerminalInput) error {
+	return t.publish(host, id, terminal, v1.TerminalInputSubject(host, id, terminal), in)
+}
+
+func (t terminals) Resize(host, id, terminal string, size v1.TerminalSize) error {
+	return t.publish(host, id, terminal, v1.TerminalSizeSubject(host, id, terminal), size)
+}
+
+func (t terminals) publish(host, id, terminal, subject string, v any) error {
+	nc, err := t.conn(host, id, terminal)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return nc.Publish(subject, data)
 }

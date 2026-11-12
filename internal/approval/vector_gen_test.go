@@ -65,6 +65,8 @@ func TestWriteDecisionVector(t *testing.T) {
 		Change{V: DecisionVersion, Kind: KindChange, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Revision: 5, Action: ChangeMerge},
 		Change{V: DecisionVersion, Kind: KindChange, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Revision: 5, Action: ChangePullRequest, Text: prHash},
 		Change{V: DecisionVersion, Kind: KindChange, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Revision: 6, Action: ChangeRemove},
+		Terminal{V: DecisionVersion, Kind: KindTerminal, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Terminal: "T3rm1nal"},
+		TerminalInput{V: DecisionVersion, Kind: KindTerminalIn, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Terminal: "T3rm1nal", Attach: "Att4ch3d", Seq: 7, Data: BytesHash([]byte("go test ./...\r\x03é"))},
 	}
 	var out []vectorDecision
 	for _, d := range decisions {

@@ -243,7 +243,7 @@ func IsSessionEvent(eventType string) bool {
 		EventPermissionRequested, EventPermissionGranted, EventPermissionDenied, EventPermissionExpired, EventSessionTrusted,
 		EventSessionResumed, EventChangesCommitted, EventChangesMerged, EventPullRequestOpened, EventWorktreeRemoved,
 		EventSessionRulesSet, EventSessionRulesLapsed, EventQuestionAsked, EventQuestionAnswered, EventQuestionExpired, EventTurnCancelled,
-		EventTokensUsed, EventSessionModeChanged, EventSessionModelChanged:
+		EventTokensUsed, EventSessionModeChanged, EventSessionModelChanged, EventTerminalOpened, EventTerminalClosed:
 		return true
 	}
 	return false
@@ -540,12 +540,14 @@ type ChangesResult struct {
 }
 
 // FetchSessionRequest asks for one session's transcript, diff, or changes,
-// with ToolCallID for one of its tool calls, or with RequestID for the
-// input of one of its waiting requests.
+// with ToolCallID for one of its tool calls, with RequestID for the input
+// of one of its waiting requests, or with TerminalID for what one of its
+// terminals shows.
 type FetchSessionRequest struct {
 	SessionID  string `json:"sessionId"`
 	ToolCallID string `json:"toolCallId,omitempty"`
 	RequestID  string `json:"requestId,omitempty"`
+	TerminalID string `json:"terminalId,omitempty"`
 }
 
 // TextResult is a fetched text, cut off at the daemon's size limit when
