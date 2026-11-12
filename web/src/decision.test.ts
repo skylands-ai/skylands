@@ -2,8 +2,8 @@ import { fromSeed } from '@nats-io/nkeys'
 import { bytesToHex } from '@noble/hashes/utils.js'
 import { describe, expect, it } from 'vitest'
 import { canonicalize } from './canonical'
-import { answersHash, decisionDigest, formHash, normalizeRules, pullRequestHash, rulesHash, signDecision, textHash, type Decision, type DecisionSignature } from './decision'
-import type { QuestionField, Rule } from './protocol'
+import { answersHash, attachmentsHash, decisionDigest, formHash, normalizeRules, pullRequestHash, rulesHash, signDecision, textHash, type Decision, type DecisionSignature } from './decision'
+import type { PromptImage, QuestionField, Rule } from './protocol'
 import raw from '../../internal/approval/testdata/decision-vector.json?raw'
 
 // The vector Go's tests check too: both must produce its bytes.
@@ -13,6 +13,7 @@ const v = JSON.parse(raw) as {
   form: { message: string; fields: QuestionField[]; hash: string }
   answers: { answers: Record<string, unknown>; hash: string }
   rules: { rules: Rule[]; hash: string }
+  attachments: { mentions: string[]; images: PromptImage[]; hash: string }
 }
 const kp = () => fromSeed(new TextEncoder().encode(v.seed))
 
@@ -37,6 +38,14 @@ describe('hashes', () => {
     expect(formHash(v.form.message, v.form.fields)).toBe(v.form.hash)
     expect(answersHash(v.answers.answers)).toBe(v.answers.hash)
     expect(rulesHash(v.rules.rules)).toBe(v.rules.hash)
+  })
+
+  it('reproduces the Go attachments hash, which the vector signs, and leaves it out for none', () => {
+    expect(attachmentsHash(v.attachments.mentions, v.attachments.images)).toBe(v.attachments.hash)
+    const carrying = v.decisions.filter((d) => (d.decision as { attachments?: string }).attachments)
+    expect(carrying.map((d) => d.decision.kind).sort()).toEqual(['prompt', 'start'])
+    for (const d of carrying) expect((d.decision as { attachments?: string }).attachments).toBe(v.attachments.hash)
+    expect(attachmentsHash([], [])).toBe('')
   })
 
   it('reproduces the Go text and pull request hashes the vector signs', () => {

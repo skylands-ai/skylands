@@ -151,6 +151,9 @@ type Session struct {
 	// Tokens is what the session has cost so far: the sum of every turn's
 	// tokens and the title request's.
 	Tokens v1.TokenUsage
+	// Images are the images the session's prompts carried, oldest first,
+	// which the host keeps and a conversation's reader may fetch.
+	Images []v1.PromptImage
 }
 
 // Resumed says how a session's agent came back after a daemon restart.
@@ -222,9 +225,17 @@ type Config struct {
 	// TranscriptsDir holds each session's agent messages, which stay on the
 	// host.
 	TranscriptsDir string
-	// Blobs, when set, keeps each request's exact input and each finished
-	// tool call's whole output under their SHA-256.
-	Blobs    *blobs.Store
+	// Blobs, when set, keeps each request's exact input, each finished
+	// tool call's whole output, and what a prompt gave the agent, under
+	// their SHA-256.
+	Blobs *blobs.Store
+	// Uploads, when set, holds the images uploaded for prompts until a
+	// prompt names them. Without it, a prompt carries no images.
+	Uploads *blobs.Uploads
+	// Agents, when set, finds what the host last found an agent accepts in
+	// a prompt, which a new session's first prompt is checked against
+	// before its agent is up to say.
+	Agents   func(name string) (v1.AgentAvailability, bool)
 	Registry agents.Registry
 	Repos    Repos
 	// Publish, when set, sends each transcript append on the session's live
@@ -1008,6 +1019,7 @@ func (s *Session) copy() Session {
 	c.Questions = slices.Clone(s.Questions)
 	c.ToolCalls = slices.Clone(s.ToolCalls)
 	c.Plan = slices.Clone(s.Plan)
+	c.Images = slices.Clone(s.Images)
 	return c
 }
 
@@ -1067,26 +1079,40 @@ func (m *Manager) Prompt(ctx context.Context, cmd v1.SendPrompt) (Session, error
 		m.mu.Unlock()
 		return *s, ErrNotIdle
 	}
+	cur := s.copy()
 	m.mu.Unlock()
 	if strings.TrimSpace(cmd.Text) == "" {
-		return *s, ErrEmptyPrompt
+		return cur, ErrEmptyPrompt
 	}
-	approver, signature, err := m.signedAt(ctx, *s, cmd.Revision, cmd.Signature, "a prompt to "+cmd.SessionID, func(world string) approval.Decision {
-		return approval.Prompt{V: approval.DecisionVersion, Kind: approval.KindPrompt, World: world, Host: m.cfg.Host, Session: cmd.SessionID, Revision: s.Revision, Prompt: approval.TextHash(cmd.Text)}
+	if err := checkAttachments(cmd.Mentions, cmd.Images); err != nil {
+		return cur, err
+	}
+	approver, signature, err := m.signedAt(ctx, cur, cmd.Revision, cmd.Signature, "a prompt to "+cmd.SessionID, func(world string) approval.Decision {
+		attachments, _ := approval.AttachmentsHash(cmd.Mentions, cmd.Images)
+		return approval.Prompt{V: approval.DecisionVersion, Kind: approval.KindPrompt, World: world, Host: m.cfg.Host, Session: cmd.SessionID, Revision: cur.Revision, Prompt: approval.TextHash(cmd.Text), Attachments: attachments}
 	})
 	if err != nil {
-		return *s, err
+		return cur, err
 	}
 	if err := l.run.CheckPrompt(ctx, cmd.Text, CommandWait); err != nil {
-		return *s, err
+		return cur, err
 	}
-	if err := m.record(ctx, cmd.SessionID, cmd.ID, v1.EventPromptSent, v1.PromptSent{SessionID: cmd.SessionID, Text: cmd.Text, Approver: approver, Signature: signature}); err != nil {
+	// What goes with the text is decided as it is sent, by the running
+	// agent and the session's rules and trust as they stand.
+	att, err := m.attach(cur, cur.Worktree, l.run.Accepts(), cmd.Text, cmd.Mentions, cmd.Images)
+	if err != nil {
+		return cur, err
+	}
+	if err := m.keep(att); err != nil {
+		return cur, err
+	}
+	if err := m.record(ctx, cmd.SessionID, cmd.ID, v1.EventPromptSent, v1.PromptSent{SessionID: cmd.SessionID, Text: cmd.Text, Mentions: att.mentions, Images: att.images, Approver: approver, Signature: signature}); err != nil {
 		return Session{}, err
 	}
-	m.transcript(cmd.SessionID).Append("## You\n\n" + strings.TrimSpace(cmd.Text) + "\n\n## Agent\n\n")
+	m.transcript(cmd.SessionID).Append(youSection(cmd.Text, att.mentions, att.images))
 	l.turnDone = make(chan struct{})
 	m.runs.Add(1)
-	go m.turn(cmd.SessionID, l, cmd.Text)
+	go m.turn(cmd.SessionID, l, cmd.Text, att.send...)
 	out, _ := m.Get(cmd.SessionID)
 	return out, nil
 }
@@ -1259,6 +1285,14 @@ func (m *Manager) Start(ctx context.Context, cmd v1.StartSession) (Session, erro
 	if err := adapter.CheckPrompt(cmd.Prompt); err != nil {
 		return Session{}, err
 	}
+	if err := checkAttachments(cmd.Mentions, cmd.Images); err != nil {
+		return Session{}, err
+	}
+	// Until the agent is up, what it accepts is what the host last found.
+	accepts := m.accepts(cmd.Agent)
+	if len(cmd.Images) > 0 && !accepts.Images {
+		return Session{}, fmt.Errorf("%w: %s", ErrNoImages, cmd.Agent)
+	}
 	mode := cmd.Mode
 	switch {
 	case mode == "" && len(adapter.Modes) > 0:
@@ -1275,8 +1309,9 @@ func (m *Manager) Start(ctx context.Context, cmd v1.StartSession) (Session, erro
 		return Session{}, fmt.Errorf("%w: %s", ErrSessionExists, id)
 	}
 	approver, signature, err := m.signed(ctx, "citadel", cmd.Signature, "the start of "+id, func(world string) approval.Decision {
+		attachments, _ := approval.AttachmentsHash(cmd.Mentions, cmd.Images)
 		return approval.Start{V: approval.DecisionVersion, Kind: approval.KindStart, World: world, Host: m.cfg.Host, Session: cmd.SessionID, Repo: cmd.RepoID, Agent: cmd.Agent,
-			Mode: cmd.Mode, Model: cmd.Model, InCheckout: cmd.InCheckout, Prompt: approval.TextHash(cmd.Prompt)}
+			Mode: cmd.Mode, Model: cmd.Model, InCheckout: cmd.InCheckout, Prompt: approval.TextHash(cmd.Prompt), Attachments: attachments}
 	})
 	if err != nil {
 		return Session{}, err
@@ -1302,23 +1337,36 @@ func (m *Manager) Start(ctx context.Context, cmd v1.StartSession) (Session, erro
 	// list it copies.
 	started := v1.SessionStarted{SessionID: id, RepoID: repo.ID, Agent: cmd.Agent, Model: cmd.Model, Mode: mode, Worktree: worktree, Branch: branch, Base: base, InCheckout: cmd.InCheckout, Rules: rules.Inherit(repo.Rules),
 		RulesBy: repo.RulesBy, RulesApprover: repo.RulesApprover, RulesSignature: repo.RulesSignature, RulesRevision: max(repo.RulesRevision-1, 0), RulesLapsed: repo.RulesLapsed}
+	// The prompt's mentions are resolved in the session's own directory,
+	// by the rules it starts with. A prompt refused for one leaves no
+	// worktree behind.
+	att, err := m.attach(Session{Agent: cmd.Agent, Rules: started.Rules, RulesBy: started.RulesBy, RulesApprover: started.RulesApprover, RulesLapsed: started.RulesLapsed}, worktree, accepts, cmd.Prompt, cmd.Mentions, cmd.Images)
+	if err == nil {
+		err = m.keep(att)
+	}
+	if err != nil {
+		if !cmd.InCheckout {
+			dropWorktree(repo.Path, worktree, branch)
+		}
+		return Session{}, err
+	}
 	if err := m.record(ctx, id, cmd.ID, v1.EventSessionStarted, started); err != nil {
 		return Session{}, err
 	}
-	if err := m.record(ctx, id, cmd.ID, v1.EventPromptSent, v1.PromptSent{SessionID: id, Text: cmd.Prompt, Approver: approver, Signature: signature}); err != nil {
+	if err := m.record(ctx, id, cmd.ID, v1.EventPromptSent, v1.PromptSent{SessionID: id, Text: cmd.Prompt, Mentions: att.mentions, Images: att.images, Approver: approver, Signature: signature}); err != nil {
 		return Session{}, err
 	}
-	slog.Info("session: started", "session", id, "repo", repo.Name, "agent", cmd.Agent, "model", cmd.Model, "mode", mode, "worktree", worktree, "branch", branch, "base", base)
-	m.transcript(id).Append("## You\n\n" + strings.TrimSpace(cmd.Prompt) + "\n\n## Agent\n\n")
+	slog.Info("session: started", "session", id, "repo", repo.Name, "agent", cmd.Agent, "model", cmd.Model, "mode", mode, "worktree", worktree, "branch", branch, "base", base, "mentions", len(att.mentions), "images", len(att.images))
+	m.transcript(id).Append(youSection(cmd.Prompt, att.mentions, att.images))
 
 	m.runs.Add(1)
-	go m.begin(id, adapter, worktree, cmd.Prompt, agents.Settings{Mode: mode, Model: cmd.Model})
+	go m.begin(id, adapter, worktree, cmd.Prompt, agents.Settings{Mode: mode, Model: cmd.Model}, att)
 	s, _ := m.Get(id)
 	return s, nil
 }
 
 // begin launches a session's agent and runs its first turn.
-func (m *Manager) begin(id string, adapter agents.Adapter, worktree, prompt string, settings agents.Settings) {
+func (m *Manager) begin(id string, adapter agents.Adapter, worktree, prompt string, settings agents.Settings, att attached) {
 	defer m.runs.Done()
 	obs := &observer{m: m, id: id, t: m.transcript(id)}
 	run, err := agents.Start(m.ctx, adapter, worktree, settings, obs)
@@ -1337,13 +1385,23 @@ func (m *Manager) begin(id string, adapter agents.Adapter, worktree, prompt stri
 		}
 		return
 	}
+	// The agent that is up is asked again whether it takes what the
+	// prompt carries, which was decided by what the host last found. The
+	// prompt is refused rather than sent without it.
+	if err := att.checkAccepts(adapter.Name, run.Accepts()); err != nil {
+		_ = run.Close()
+		if m.ctx.Err() == nil {
+			m.failed(id, err)
+		}
+		return
+	}
 	l := &live{run: run, turnDone: make(chan struct{}), asks: map[string]chan agents.Decision{}, answers: map[string]chan agents.Answer{}, inputs: map[string][]byte{}}
 	m.mu.Lock()
 	m.live[id] = l
 	m.mu.Unlock()
 	m.runs.Add(2)
 	go m.title(id, run, prompt)
-	m.turn(id, l, prompt)
+	m.turn(id, l, prompt, att.send...)
 }
 
 // title asks the agent to name the conversation while its first turn runs,
@@ -1364,10 +1422,10 @@ func (m *Manager) title(id string, run *agents.Run, prompt string) {
 
 // turn runs one prompt and records how it ends: TurnEnded leaves the
 // session idle for the next prompt, AgentFailed ends it.
-func (m *Manager) turn(id string, l *live, text string) {
+func (m *Manager) turn(id string, l *live, text string, attachments ...agents.Attachment) {
 	defer m.runs.Done()
 	defer close(l.turnDone)
-	stop, err := l.run.Prompt(m.ctx, text)
+	stop, err := l.run.Prompt(m.ctx, text, attachments...)
 	m.mu.Lock()
 	stopping := l.stopping
 	m.mu.Unlock()
@@ -1535,6 +1593,7 @@ func (m *Manager) apply(ev v1.Event) {
 				s.Revision++
 				s.Status = StatusRunning
 				s.Cancelling = false
+				s.Images = append(s.Images, d.Images...)
 				if ev.CommandID != "" {
 					m.handled[ev.CommandID] = d.SessionID
 				}
@@ -2017,17 +2076,7 @@ func (o *observer) Permission(ctx context.Context, req agents.PermissionRequest)
 	tc := req.ToolCall
 	o.started(tc, req.Input)
 	s, _ := m.Get(o.id)
-	// A list stands on the approver who signed it: once that approver no
-	// longer approves, its allow rules ask. A deny is final, so trust only
-	// settles what the rules would ask about.
-	list := s.Rules
-	if rules.HasAllow(list) && !m.stands(m.ctx, s.RulesBy, s.RulesApprover, s.RulesLapsed) {
-		list = rules.WithoutAllows(list)
-	}
-	decision := rules.Decide(append(append([]v1.Rule{}, list...), m.hostRules()...), rules.Call{Kind: tc.Kind, Title: tc.Title, Locations: tc.Locations, Input: req.Input})
-	if decision == v1.RuleAsk && s.Trusted && m.stands(m.ctx, s.TrustedBy, s.TrustApprover, false) {
-		decision = v1.RuleAllow
-	}
+	decision, _ := m.decideCall(s, rules.Call{Kind: tc.Kind, Title: tc.Title, Locations: tc.Locations, Input: req.Input})
 	switch decision {
 	case v1.RuleAllow:
 		if opt := pickOption(req.Options, true, ""); opt != "" {
@@ -2161,6 +2210,19 @@ func (o *observer) Question(ctx context.Context, q agents.Question) agents.Answe
 		}
 		return agents.Answer{Cancelled: true}
 	}
+}
+
+// accepts is what the host last found an agent accepts in a prompt, or
+// nothing when it hasn't found out.
+func (m *Manager) accepts(agent string) agents.Accepts {
+	if m.cfg.Agents == nil {
+		return agents.Accepts{}
+	}
+	a, ok := m.cfg.Agents(agent)
+	if !ok || !a.Available {
+		return agents.Accepts{}
+	}
+	return agents.Accepts{Images: a.Images, EmbeddedContext: a.EmbeddedContext}
 }
 
 // hostRules are the rules that apply when none of the session's do.

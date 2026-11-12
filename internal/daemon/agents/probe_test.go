@@ -20,8 +20,22 @@ func TestProbeAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Name != "skylands-fakeagent" || !p.LoadSession || p.ReportsAuth || p.Auth != nil {
-		t.Errorf("probe = %+v, want the fake agent, able to load, reporting no login", p)
+	if p.Name != "skylands-fakeagent" || !p.LoadSession || p.ReportsAuth || p.Auth != nil || p.Accepts != (Accepts{}) {
+		t.Errorf("probe = %+v, want the fake agent, able to load, reporting no login, taking text and links alone", p)
+	}
+	// What a prompt can carry is read from the agent's prompt capabilities.
+	for _, tc := range []struct {
+		env  []string
+		want Accepts
+	}{
+		{[]string{fakeagent.EnvImages + "=1"}, Accepts{Images: true}},
+		{[]string{fakeagent.EnvEmbeddedContext + "=1"}, Accepts{EmbeddedContext: true}},
+		{[]string{fakeagent.EnvImages + "=1", fakeagent.EnvEmbeddedContext + "=1"}, Accepts{Images: true, EmbeddedContext: true}},
+	} {
+		got, err := ProbeAgent(ctx, Adapter{Name: "fake", Command: cmd, Env: append(append([]string(nil), env...), tc.env...)}, t.TempDir(), ProbeOptions{AuthWait: time.Second})
+		if err != nil || got.Accepts != tc.want {
+			t.Errorf("%v: accepts %+v, %v; want %+v", tc.env, got.Accepts, err, tc.want)
+		}
 	}
 	if d := time.Since(start); d > 5*time.Second {
 		t.Errorf("probe took %s, want no wait for a login report", d)

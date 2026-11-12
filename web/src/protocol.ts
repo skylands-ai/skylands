@@ -107,6 +107,29 @@ export interface AgentAvailability {
    * where a session starts. None means the agent has no mode setting.
    */
   modes?: AgentMode[]
+  /** Whether the agent takes images in a prompt, and files' contents, as it said when it started. */
+  images?: boolean
+  embeddedContext?: boolean
+}
+
+/** An image sent with a prompt, uploaded to the host first and named by its SHA-256 in lowercase hex. */
+export interface PromptImage {
+  name: string
+  mimeType: string
+  hash: string
+  size: number
+}
+
+/** The files that best match what was typed after an @, best first, and whether more matched. */
+export interface FilesResult {
+  files: string[]
+  more?: boolean
+}
+
+/** What a prompt carries besides its text: the files it mentions, in the order the text has them, and its images. */
+export interface Carried {
+  mentions: string[]
+  images: PromptImage[]
 }
 
 /** One mode a session may be in: the id its mode is set to, and what the agent calls it. */

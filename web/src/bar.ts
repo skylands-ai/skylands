@@ -1,5 +1,6 @@
+import { compose, Draft, type ComposeParts } from './composer'
 import { byId } from './dom'
-import { startSession } from './start'
+import { imagesRefused, startSession } from './start'
 import { StartChips } from './startchips'
 import { isStale } from './status'
 import { level, type State } from './store'
@@ -29,12 +30,33 @@ export class CommandBar {
   /** The state last shown, which a start is signed against. */
   private state: State | null = null
   private busy = false
+  /** The files the order mentions and the images attached to it. */
+  private readonly draft = new Draft()
+  private readonly compose: ComposeParts
   /** What the status line is showing: the default hint, a link problem, a dispatch error, or a dispatch result. */
   private kind: 'hint' | 'blocked' | 'error' | 'info' = 'hint'
 
   private static readonly HINT = 'Dispatches straight to this island’s daemon.'
 
   constructor() {
+    // The @ list takes the keys it uses before the bar does, so picking a
+    // file doesn't launch the order.
+    this.compose = compose(this.input, this.draft, {
+      files: () => (this.host && this.repoId ? `/api/repos/${encodeURIComponent(this.host)}/${encodeURIComponent(this.repoId)}/files` : null),
+      host: () => this.host || null,
+      noImages: () => (this.state ? imagesRefused(this.state.islands[this.host], this.chips.chosen().agent) : 'The world isn’t loaded yet.'),
+    })
+    const anchor = byId<HTMLElement>('cmdAnchor')
+    anchor.prepend(this.compose.menu)
+    anchor.appendChild(this.compose.attach)
+    const tray = byId<HTMLElement>('cmdTray')
+    tray.appendChild(this.compose.tray)
+    const showTray = (): void => {
+      tray.hidden = this.compose.tray.hidden
+    }
+    new MutationObserver(showTray).observe(this.compose.tray, { attributes: true, attributeFilter: ['hidden'] })
+    showTray()
+    byId<HTMLElement>('agentSel').addEventListener('change', () => this.compose.refresh())
     this.go.addEventListener('click', () => void this.submit())
     this.input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
@@ -57,10 +79,14 @@ export class CommandBar {
     const show = (l === 'terrace' || l === 'file') && !!repo && !!island
     this.root.hidden = !show
     if (!show || !repo || !island) return
+    // Images attached go to the island the order goes to, which may have
+    // changed since they were attached.
+    if (this.host !== island.host) this.draft.sendTo(island.host)
     this.host = island.host
     this.repoId = repo.id
     this.scopeTo.textContent = `${repo.name} on ${island.host}`
     this.chips.show(island)
+    this.compose.refresh()
     const blocked = isStale(s)
       ? 'The citadel is unreachable, so nothing can be dispatched.'
       : !island.reachable
@@ -87,14 +113,22 @@ export class CommandBar {
     if (!prompt || this.busy || !this.host || !this.state) return
     this.busy = true
     this.go.disabled = true
-    this.setWhy('Dispatching…', 'info')
+    this.setWhy(this.draft.images.length ? 'Sending the images…' : 'Dispatching…', 'info')
     try {
-      const out = await startSession(this.state, { host: this.host, repo: this.repoId, ...this.chips.chosen(), prompt })
+      const host = this.host
+      const carried = await this.draft.carried(prompt, host)
+      if (typeof carried === 'string') {
+        this.setWhy(carried, 'error')
+        return
+      }
+      if (carried.images.length) this.setWhy('Dispatching…', 'info')
+      const out = await startSession(this.state, { host, repo: this.repoId, ...this.chips.chosen(), prompt, ...carried })
       if (out.error !== undefined) {
         this.setWhy(out.error, 'error')
         return
       }
       this.input.value = ''
+      this.draft.clear()
       this.setWhy('Dispatched. The agent appears on the terrace as it starts.', 'info')
     } finally {
       this.busy = false

@@ -2,11 +2,14 @@ package agents
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -59,8 +62,64 @@ type Run struct {
 	// meta is the adapter's Meta, which goes with every session the agent
 	// opens or loads.
 	meta acp.Meta
+	// accepts is what the agent said, when it started, a prompt can carry
+	// besides text and links.
+	accepts Accepts
 	// ctx lives as long as the agent process.
 	ctx context.Context
+}
+
+// Accepts is what an agent takes in a prompt besides text and links to
+// files, which every agent takes: images, and files' contents.
+type Accepts struct {
+	Images          bool
+	EmbeddedContext bool
+}
+
+// accepted reads an agent's prompt capabilities.
+func accepted(init *acp.InitializeResponse) Accepts {
+	if init == nil || init.AgentCapabilities == nil || init.AgentCapabilities.PromptCapabilities == nil {
+		return Accepts{}
+	}
+	c := init.AgentCapabilities.PromptCapabilities
+	return Accepts{Images: c.Image, EmbeddedContext: c.EmbeddedContext}
+}
+
+// Accepts says what the running agent takes in a prompt.
+func (r *Run) Accepts() Accepts { return r.accepts }
+
+// Attachment is something a prompt carries after its text: a file's
+// contents, a link to a file, or an image.
+type Attachment struct {
+	// Path is a file's absolute path, for contents or a link, and Name
+	// what the agent is told it is called: its path in the session's
+	// directory, or an image's file name.
+	Path string
+	Name string
+	// Text is a file's contents, which make it a resource block rather
+	// than a link.
+	Text     string
+	Embedded bool
+	// Image and MimeType are an image's bytes and type.
+	Image    []byte
+	MimeType string
+}
+
+// block is an attachment as an ACP content block.
+func (a Attachment) block() acp.ContentBlock {
+	switch {
+	case a.Image != nil:
+		return acp.ImageContentBlock(base64.StdEncoding.EncodeToString(a.Image), a.MimeType)
+	case a.Embedded:
+		return acp.ResourceContentBlock(acp.TextResourceContentsEmbeddedResourceResource(a.Text, fileURI(a.Path)))
+	default:
+		return acp.ResourceLinkContentBlock(a.Name, fileURI(a.Path))
+	}
+}
+
+// fileURI is the file: URI of an absolute path.
+func fileURI(path string) string {
+	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
 }
 
 // Settings are what a session's agent is set to through its ACP config
@@ -167,9 +226,10 @@ const (
 // session's first prompt. A longer one keeps its end.
 const MaxSeed = 256 * 1024
 
-// toolMarkers matches the marker a transcript's tool call lines end with,
-// which names the call for a reader's browser and means nothing to an agent.
-var toolMarkers = regexp.MustCompile(` <!-- tool:[^ >]* -->`)
+// toolMarkers matches the marker a transcript's tool call and image lines
+// end with, which names the call or the image for a reader's browser and
+// means nothing to an agent.
+var toolMarkers = regexp.MustCompile(` <!-- (?:tool|image):[^ >]* -->`)
 
 // seedText is what a new agent session is told before its first prompt
 // when it stands in for one that could not be loaded: the conversation so
@@ -191,6 +251,8 @@ func seedText(transcript string) string {
 	return "The daemon that runs you restarted, and this conversation continues in a new session that has no memory of it. " +
 		"Between the two rules below is the conversation so far, as it was recorded: \"## You\" opens what the person wrote, " +
 		"\"## Agent\" opens what you answered, and a line that starts with ⚙ is a tool call you made. " +
+		"Under what the person wrote, a line that starts with 📄 names a file they mentioned, and one that starts with 🖼 an image they sent; " +
+		"what those held isn't repeated here, so read a file again if you need it. " +
 		"Carry on from the end of it, and do not repeat what was already said.\n\n" + omitted +
 		"-----\n\n" + transcript + "\n\n-----\n\n"
 }
@@ -255,6 +317,7 @@ func launch(ctx context.Context, ad Adapter, cwd string, s Settings, obs Observe
 		return nil, nil, r.fail("initialize "+ad.Name, err)
 	}
 	r.system = systemPrompt(ad, init)
+	r.accepts = accepted(init)
 	return r, init, nil
 }
 
@@ -590,8 +653,9 @@ func identity(ad Adapter, init *acp.InitializeResponse) (name, version string) {
 }
 
 // Prompt sends one prompt and returns the stop reason when the turn ends.
-// Cancel ends the turn early with the cancelled stop reason.
-func (r *Run) Prompt(ctx context.Context, text string) (string, error) {
+// The attachments follow the text, in their order. Cancel ends the turn
+// early with the cancelled stop reason.
+func (r *Run) Prompt(ctx context.Context, text string, attachments ...Attachment) (string, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	r.mu.Lock()
 	if r.closed {
@@ -608,7 +672,11 @@ func (r *Run) Prompt(ctx context.Context, text string) (string, error) {
 		r.mu.Unlock()
 		cancel()
 	}()
-	resp, err := r.client.SessionPrompt(ctx, &acp.PromptRequest{SessionID: r.session, Prompt: []acp.ContentBlock{acp.TextContentBlock(text)}})
+	blocks := []acp.ContentBlock{acp.TextContentBlock(text)}
+	for _, a := range attachments {
+		blocks = append(blocks, a.block())
+	}
+	resp, err := r.client.SessionPrompt(ctx, &acp.PromptRequest{SessionID: r.session, Prompt: blocks})
 	if err != nil {
 		return "", r.fail("prompt", err)
 	}
