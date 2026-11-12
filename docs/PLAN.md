@@ -338,8 +338,8 @@ specifies. No events, streams, or aggregates are needed for it.
   Gemini's own allow rules.
 - Removing what ended sessions leave behind is done from the citadel
   (#64, part of #43). An ended session's changes card offers Remove
-  worktree when the worktree is clean, and the island and terrace panels
-  list ended sessions' worktrees with Remove them. Each removal is signed
+  worktree when the worktree is clean, and the terrace panel lists ended
+  sessions' worktrees with Remove them. Each removal is signed
   over the session's revision, recorded in WorktreeRemoved, and keeps a
   dirty worktree or a branch with unmerged commits, as `session remove`
   does without `--force`. The daemon runs `git worktree prune` in each

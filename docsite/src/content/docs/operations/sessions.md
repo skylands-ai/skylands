@@ -47,7 +47,7 @@ skylands session stop <id>
 
 Ending a session leaves its worktree and branch in place.
 
-From the citadel, use "Remove worktree" on an ended session's changes card, or "Remove them" under Worktrees in an island's or terrace's panel. Both need an approver's browser.
+From the citadel, use "Remove worktree" on an ended session's changes card, or "Remove them" under Worktrees in a terrace's panel. Both need an approver's browser.
 
 From the host:
 
