@@ -2,6 +2,7 @@ import { el } from './dom'
 import type { FetchCache, Fetched } from './fetchcache'
 import { timeNode } from './panels/parts'
 import type { Session, ToolCallContent, ToolCallDetail } from './protocol'
+import { titleAdds } from './tooltitle'
 
 /**
  * A tool call in a conversation is a chip where it happened, with the
@@ -88,10 +89,8 @@ function detailPanel(label: string, f: Fetched): HTMLElement {
   if (d.startedAt) row.appendChild(el('span', { class: 'muted' }, ['started ', timeNode(d.startedAt, 'ago')]))
   if (d.endedAt) row.appendChild(el('span', { class: 'muted', text: `took ${took(d.startedAt, d.endedAt)}` }))
   box.appendChild(row)
-  // The line shows the title on one line and cut short; the whole of it
-  // goes here when that lost something.
   const full = d.title ?? ''
-  if (full && full.split(/\s+/).join(' ') !== label) box.appendChild(el('pre', { class: 'title', text: full }))
+  if (titleAdds(full, label, d.input)) box.appendChild(el('pre', { class: 'title', text: full }))
   if (d.locations?.length) box.appendChild(el('div', { class: 'field' }, [el('span', { class: 'key', text: d.locations.length === 1 ? 'file' : 'files' }), el('code', { text: d.locations.join(', ') })]))
   for (const n of inputFields(d.input)) box.appendChild(n)
   const out = outputBlocks(d)
