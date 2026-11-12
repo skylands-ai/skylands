@@ -76,6 +76,10 @@ Open sessions don't end when the daemon restarts. When the daemon comes back up,
 
 A turn the restart cut short is picked up again. The conversation notes where the restart happened.
 
+An agent that loads its own session still has the files and images your prompts gave it. A new session given the transcript sees which files were mentioned and which images were sent, but not what they held, so it reads a file again if it needs it.
+
+The files a prompt gave the agent whole, and the images it carried, are kept under `blobs/` in the data directory, named by their SHA-256, which the session's events record. Images you attached but didn't send wait under `uploads/` and are removed after an hour.
+
 ## Agent Processes
 
 Each agent runs in its own process group. When a session ends or the daemon stops, the agent is asked to exit, and is stopped if it doesn't. Anything it started that's still running, such as a dev server or a test run, is stopped with it.

@@ -1,7 +1,8 @@
 import { canSign, myApprover } from './approvers'
+import { compose, Draft } from './composer'
 import { el } from './dom'
 import type { Island, Repo } from './protocol'
-import { repoChoices, startSession } from './start'
+import { imagesRefused, repoChoices, startSession } from './start'
 import { StartChips } from './startchips'
 import { isStale } from './status'
 import type { State } from './store'
@@ -18,7 +19,9 @@ export class NewSessionForm {
   private readonly repo = el('select', { 'aria-label': 'Repository' })
   private readonly island = el('span', { class: 'muted' })
   private readonly chips: StartChips
-  private readonly prompt = el('textarea', { 'aria-label': 'First prompt', placeholder: 'Describe the work for the agent' })
+  private readonly prompt = el('textarea', { 'aria-label': 'First prompt', placeholder: 'Describe the work for the agent. @ mentions a file; paste or drop an image to attach it.' })
+  /** The files the prompt mentions and the images attached to it. */
+  private readonly draft = new Draft()
   private readonly start = el('button', { type: 'button', class: 'btn small primary', text: 'Start' })
   private readonly note = el('span', { class: 'ns-note', role: 'status' })
   /** The state last shown, which a start is signed against. */
@@ -29,6 +32,10 @@ export class NewSessionForm {
   /** The repositories the repository choice lists, and the note shown, so each is rebuilt only when it changes. */
   private reposShown: string | null = null
   private noteShown: string | null = null
+  /** Brings the attach button up to date with the chosen agent. */
+  private readonly refreshCarry: () => void
+  /** The island the attached images were last sent to. */
+  private sentTo = ''
 
   /** started opens the session's conversation once its daemon has taken the start. */
   constructor(private readonly started: (session: string) => void) {
@@ -40,13 +47,27 @@ export class NewSessionForm {
     const otherModel = el('input', { type: 'text', hidden: '', placeholder: 'Full model id', autocomplete: 'off', 'aria-label': 'Other model id' })
     const where = el('select', { 'aria-label': 'Where the agent works' })
     this.chips = new StartChips({ agent, modeChip, mode, model, otherModel, where })
+    // The @ list takes the keys it uses before the form does.
+    const carry = compose(this.prompt, this.draft, {
+      files: () => {
+        const repo = this.state?.repos[this.repo.value]
+        return repo ? `/api/repos/${encodeURIComponent(repo.host)}/${encodeURIComponent(repo.id)}/files` : null
+      },
+      host: () => this.state?.repos[this.repo.value]?.host ?? null,
+      noImages: () => {
+        const repo = this.state?.repos[this.repo.value]
+        return repo ? imagesRefused(this.state?.islands[repo.host], this.chips.chosen().agent) : 'Choose a repository first.'
+      },
+    })
+    this.refreshCarry = carry.refresh
     const cancel = el('button', { type: 'button', class: 'btn small ghost', text: 'Cancel', onclick: () => this.dialog.close() })
     this.dialog.append(
       el('div', { class: 'ns-body' }, [
         el('h2', { id: 'newsessionTitle', text: 'New conversation' }),
         el('div', { class: 'ns-row' }, [el('label', { class: 'chip' }, ['Repository', this.repo]), this.island]),
         el('div', { class: 'ns-row' }, [el('label', { class: 'chip' }, ['Agent', agent]), modeChip, el('span', { class: 'chip' }, [el('label', {}, ['Model', model]), otherModel]), el('label', { class: 'chip' }, ['Where', where])]),
-        this.prompt,
+        el('div', { class: 'cmd-anchor' }, [carry.menu, this.prompt]),
+        el('div', { class: 'ns-row' }, [carry.attach, carry.tray]),
         el('div', { class: 'ns-foot' }, [this.note, cancel, this.start]),
       ]),
     )
@@ -123,6 +144,12 @@ export class NewSessionForm {
     const island = repo ? s.islands[repo.host] : undefined
     this.island.textContent = repo ? `on ${repo.host}` : ''
     this.chips.show(island ?? null)
+    // Images attached go to the island of the repository chosen now.
+    if (repo && repo.host !== this.sentTo) {
+      this.sentTo = repo.host
+      this.draft.sendTo(repo.host)
+    }
+    this.refreshCarry()
     const blocked = this.blocked(s, repo, island)
     // Once the world exists, only an approver's browser can sign a start.
     const signs = !s.world?.owner || canSign(s)
@@ -152,7 +179,8 @@ export class NewSessionForm {
     if (!s || !repo || !prompt || this.start.disabled) return
     this.busy = true
     this.refresh()
-    const out = await startSession(s, { host: repo.host, repo: repo.id, ...this.chips.chosen(), prompt })
+    const carried = await this.draft.carried(prompt, repo.host)
+    const out = typeof carried === 'string' ? { error: carried } : await startSession(s, { host: repo.host, repo: repo.id, ...this.chips.chosen(), prompt, ...carried })
     this.busy = false
     if (out.error !== undefined) {
       this.error = out.error
@@ -160,6 +188,7 @@ export class NewSessionForm {
       return
     }
     this.prompt.value = ''
+    this.draft.clear()
     this.dialog.close()
     this.refresh()
     this.started(out.session)

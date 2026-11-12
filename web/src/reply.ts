@@ -1,9 +1,12 @@
+import { compose, Draft } from './composer'
 import { el } from './dom'
-import type { AgentCommand, Session } from './protocol'
+import type { AgentCommand, Carried, Session } from './protocol'
 
 export interface ReplyActions {
-  /** Sends another prompt to an idle session. Resolves with an error message, or empty on success. */
-  prompt(text: string): Promise<string>
+  /** Sends another prompt to an idle session, with what it carries. Resolves with an error message, or empty on success. */
+  prompt(text: string, carried: Carried): Promise<string>
+  /** Why the session's agent can't be sent images, or empty when it can. */
+  noImages(): string
   /**
    * The slash commands the session's agent announced, less the ones the
    * host withholds, or an error message.
@@ -15,8 +18,9 @@ export interface ReplyActions {
   stop(): Promise<string>
 }
 
-/** Unsent replies by session, so a rebuild keeps what was typed. */
+/** Unsent replies by session, so a rebuild keeps what was typed, and what they mention and attach. */
 const drafts = new Map<string, string>()
+const carriedDrafts = new Map<string, Draft>()
 
 /** Each session's commands as last fetched, and when, kept across rebuilds. */
 const commandsBySession = new Map<string, { at: number; commands: Promise<AgentCommand[] | string> }>()
@@ -46,6 +50,20 @@ export function replyBox(s: Session, actions: ReplyActions): HTMLElement {
   input.disabled = !idle
   input.value = drafts.get(s.id) ?? ''
   input.addEventListener('input', () => drafts.set(s.id, input.value))
+
+  // Typing @ lists the files in the session's directory, and an image
+  // pasted, dropped, or picked goes with the reply. The @ list takes the
+  // keys it uses before the command list and Send do.
+  let draft = carriedDrafts.get(s.id)
+  if (!draft) {
+    draft = new Draft()
+    carriedDrafts.set(s.id, draft)
+  }
+  const carry = compose(input, draft, {
+    files: () => `/api/sessions/${encodeURIComponent(s.host)}/${encodeURIComponent(s.id)}/files`,
+    host: () => s.host,
+    noImages: () => actions.noImages(),
+  })
 
   // Typing a slash at the start lists the agent's commands, filtered as
   // the name is typed. Picking one puts it in the box, and the line below
@@ -162,11 +180,13 @@ export function replyBox(s: Session, actions: ReplyActions): HTMLElement {
   const hint = el('span', { class: 'muted', style: 'font-size:12px', text: idle ? '\u2318 Enter sends' : '' })
   const submit = async (): Promise<void> => {
     const text = input.value.trim()
-    if (!text || send.disabled) return
+    if (!text || send.disabled || !draft) return
     send.disabled = true
     input.disabled = true
-    note.textContent = 'Sending\u2026'
-    const err = await actions.prompt(text)
+    note.textContent = draft.images.length ? 'Sending the images\u2026' : 'Sending\u2026'
+    note.style.color = ''
+    const carried = await draft.carried(text, s.host)
+    const err = typeof carried === 'string' ? carried : await actions.prompt(text, carried)
     if (err) {
       note.textContent = err
       note.style.color = 'var(--bad)'
@@ -175,6 +195,8 @@ export function replyBox(s: Session, actions: ReplyActions): HTMLElement {
     } else {
       note.textContent = ''
       drafts.delete(s.id)
+      draft.clear()
+      carriedDrafts.delete(s.id)
       input.value = ''
     }
   }
@@ -207,5 +229,5 @@ export function replyBox(s: Session, actions: ReplyActions): HTMLElement {
       stop.disabled = false
     }
   })
-  return el('div', { class: 'reply' }, [el('div', { class: 'cmd-anchor' }, [menu, input]), el('div', { class: 'acts' }, [send, cancel, stop, hint, note])])
+  return el('div', { class: 'reply' }, [el('div', { class: 'cmd-anchor' }, [menu, carry.menu, input]), carry.tray, el('div', { class: 'acts' }, [send, carry.attach, cancel, stop, hint, note])])
 }

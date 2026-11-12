@@ -1,8 +1,8 @@
 import { keepStorage, keyFromSeed, loadApprover, newApproverKey, seedOf, sign, type Signed } from './approver'
 import { citadelAddress, linkAt } from './address'
 import type { KeyPair } from '@nats-io/nkeys'
-import { answersHash, bytesHash, DECISION_VERSION, formHash, normalizeRules, rulesHash, signDecision, textHash, type Decision, type DecisionSignature } from './decision'
-import type { ApproverInfo, Permission, Question, Repo, Rule, Session, VoucherInfo } from './protocol'
+import { answersHash, attachmentsHash, bytesHash, DECISION_VERSION, formHash, normalizeRules, rulesHash, signDecision, textHash, type Decision, type DecisionSignature } from './decision'
+import type { ApproverInfo, Carried, Permission, Question, Repo, Rule, Session, VoucherInfo } from './protocol'
 import { api } from './signin'
 import type { State, Store } from './store'
 
@@ -214,14 +214,21 @@ export function newSessionId(): string {
   return Array.from(bytes, (b) => chars[b % chars.length]).join('')
 }
 
-/** This browser's signature over starting a session, as the daemon will check it. */
-export function signStart(s: State, start: { host: string; session: string; repo: string; agent: string; mode: string; model: string; inCheckout: boolean; prompt: string }) {
-  return signOnceWorld(s, (world) => ({ v: DECISION_VERSION, kind: 'start', world, host: start.host, session: start.session, repo: start.repo, agent: start.agent, mode: start.mode, model: start.model, inCheckout: start.inCheckout, prompt: textHash(start.prompt) }))
+/** What a decision says a prompt carries besides its text: nothing for a prompt of text alone. */
+function attachmentsOf(carried: Carried | undefined): { attachments?: string } {
+  const h = carried ? attachmentsHash(carried.mentions, carried.images) : ''
+  return h ? { attachments: h } : {}
 }
 
-/** This browser's signature over another prompt to a session, at the revision it names. */
-export function signPrompt(s: State, x: Session, text: string, revision: number) {
-  return signOnceWorld(s, (world) => ({ v: DECISION_VERSION, kind: 'prompt', world, host: x.host, session: x.id, revision, prompt: textHash(text) }))
+/** This browser's signature over starting a session, as the daemon will check it, covering what its prompt carries. */
+export function signStart(s: State, start: { host: string; session: string; repo: string; agent: string; mode: string; model: string; inCheckout: boolean; prompt: string } & Partial<Carried>) {
+  const carried = { mentions: start.mentions ?? [], images: start.images ?? [] }
+  return signOnceWorld(s, (world) => ({ v: DECISION_VERSION, kind: 'start', world, host: start.host, session: start.session, repo: start.repo, agent: start.agent, mode: start.mode, model: start.model, inCheckout: start.inCheckout, prompt: textHash(start.prompt), ...attachmentsOf(carried) }))
+}
+
+/** This browser's signature over another prompt to a session, at the revision it names, covering what it carries. */
+export function signPrompt(s: State, x: Session, text: string, revision: number, carried?: Carried) {
+  return signOnceWorld(s, (world) => ({ v: DECISION_VERSION, kind: 'prompt', world, host: x.host, session: x.id, revision, prompt: textHash(text), ...attachmentsOf(carried) }))
 }
 
 /** This browser's signature over a commit, merge, pull request, or removal, at the revision it names. */

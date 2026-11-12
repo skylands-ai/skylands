@@ -38,9 +38,10 @@
       <div class="cmdbar" id="cmdbar" role="group" aria-label="Command bar" hidden>
         <div class="cmdrow">
           <div class="scope"><span>Scope</span><span class="scope-to" id="scopeTo"></span></div>
-          <input id="cmdInput" type="text" autocomplete="off" aria-label="Work order" placeholder="Describe work for this repo">
+          <div class="cmd-anchor cmd-input" id="cmdAnchor"><input id="cmdInput" type="text" autocomplete="off" aria-label="Work order" placeholder="Describe work for this repo; @ mentions a file"></div>
           <button type="button" class="btn primary" id="cmdGo">Launch</button>
         </div>
+        <div class="cmdrow" id="cmdTray" hidden></div>
         <div class="cmdrow">
           <span class="why" id="scopeWhy">Dispatches straight to this island’s daemon.</span>
           <label class="chip">Agent <select id="agentSel" aria-label="Agent"></select></label>

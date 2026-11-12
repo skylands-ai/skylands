@@ -3,8 +3,11 @@ import type { FetchCache, Fetched } from './fetchcache'
 import type { LiveText } from './live'
 import { renderMarkdown } from './markdown'
 import { agentGlyph, statusPill, timeNode } from './panels/parts'
-import type { AgentAvailability, AgentCommand, Permission, Question, QuestionField, Session } from './protocol'
+import type { AgentAvailability, AgentCommand, Carried, Permission, Question, QuestionField, Session } from './protocol'
 import { replyBox } from './reply'
+import { imagesRefused } from './start'
+import { imageThumb } from './thumbs'
+import type { Turn } from './transcript'
 import { inputsVersion, requestInput } from './requestinput'
 import { canSign as canSignIn, myApprover } from './approvers'
 import { HOST_DEFAULTS, proposeRule, ruleText, rulesSheet } from './rules'
@@ -27,7 +30,8 @@ export interface InboxActions {
   openInWorld(s: Session): void
   /** Shows a conversation's chat, or a terminal in its worktree, opening one the first time. */
   mode(s: Session, mode: ConvoMode): void
-  prompt(s: Session, text: string): Promise<string>
+  /** Sends another prompt, with the files it mentions and the images uploaded for it. */
+  prompt(s: Session, text: string, carried: Carried): Promise<string>
   /** Interrupts the turn in progress and keeps the session. */
   cancel(s: Session): Promise<string>
   /** The slash commands the session's agent announced, less the ones the host withholds, or an error message. */
@@ -762,7 +766,7 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
   const last = conv.turns[conv.turns.length - 1]
   const liveTurn = running && last?.who === 'agent' ? last : null
   for (const t of conv.turns) {
-    if (t.who === 'you') body.appendChild(el('div', { class: 'msg you' }, [el('span', { class: 'from', text: 'You' }), el('div', { class: 'body', text: t.text })]))
+    if (t.who === 'you') body.appendChild(el('div', { class: 'msg you' }, [el('span', { class: 'from', text: 'You' }), el('div', { class: 'body', text: t.text }), carriedRow(x, t)]))
     else if (t.who === 'note') body.appendChild(el('p', { class: 'convo-note', text: t.text }))
     else if (t === liveTurn) body.appendChild(el('div', { class: 'msg agent live' }, [el('span', { class: 'from', text: name }), liveBody(x, t.text, cache, actions.refresh)]))
     else if (t.text) body.appendChild(el('div', { class: 'msg agent' }, [el('span', { class: 'from' }, [name, copyButton(t.text)]), agentBody(x, t.text, cache, actions.refresh)]))
@@ -776,7 +780,16 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
 
   const foot = el('div', { class: 'convo-foot' })
   if (x.status !== 'running') foot.appendChild(changesCard(x, changes, actions))
-  if (isOpen(x)) foot.appendChild(replyBox(x, { prompt: (text) => actions.prompt(x, text), commands: () => actions.commands(x), cancel: () => actions.cancel(x), stop: () => actions.stop(x) }))
+  if (isOpen(x))
+    foot.appendChild(
+      replyBox(x, {
+        prompt: (text, carried) => actions.prompt(x, text, carried),
+        noImages: () => imagesRefused(s.islands[x.host], x.agent),
+        commands: () => actions.commands(x),
+        cancel: () => actions.cancel(x),
+        stop: () => actions.stop(x),
+      }),
+    )
   else foot.appendChild(el('p', { class: 'muted', style: 'margin:0;font-size:13px', text: 'This session is over. Press New to start another.' }))
 
   const hint = !isOpen(x)
@@ -799,6 +812,21 @@ function conversation(s: State, x: Session, transcript: string | undefined, fetc
     : null
   const convo = el('section', { class: 'convo', 'aria-label': `${sessionLabel(x)}, with ${name}`, 'data-session': x.id }, [head, hint, rules, body, foot])
   return convo
+}
+
+/** Under a prompt, the files it mentioned as chips and the images it carried as thumbnails, or nothing. */
+function carriedRow(x: Session, t: Turn): HTMLElement | null {
+  if (!t.mentions?.length && !t.images?.length) return null
+  return el('div', { class: 'carried' }, [
+    ...(t.mentions ?? []).map((m) =>
+      el('span', {
+        class: `mention-chip${m.embedded ? '' : ' linked'}`,
+        text: `@${m.path}`,
+        title: m.embedded ? 'The agent got this file’s contents as they were when you sent the prompt' : 'The agent got a link to this file and reads it itself',
+      }),
+    ),
+    ...(t.images ?? []).map((i) => imageThumb(x.host, x.id, i.name, i.hash)),
+  ])
 }
 
 /** An approver's name as the registry has it, for saying whose approval lapsed. */

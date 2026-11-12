@@ -141,6 +141,8 @@ func (w *world) startDaemonIn(host, socketPath, dataDir string) (stop func()) {
 				// moded offers a mode and a model setting, lists two of its
 				// modes, and withholds one of its commands.
 				"moded": {Name: "moded", Provider: "local", Command: fakeCmd, Env: append(append([]string(nil), fakeEnv...), fakeagent.EnvConfigOptions+"=1"), Modes: []string{"ask", "plan"}, Withheld: []string{"config"}},
+				// seeing takes images and files' contents in a prompt.
+				"seeing": {Name: "seeing", Provider: "local", Command: fakeCmd, Env: append(append([]string(nil), fakeEnv...), fakeagent.EnvImages+"=1", fakeagent.EnvEmbeddedContext+"=1")},
 			},
 		})
 	}()
@@ -1080,4 +1082,134 @@ func TestQuestionsReachTheBrowser(t *testing.T) {
 func approval(p projections.Permission) string {
 	sum := sha256.Sum256([]byte(p.InputPreview))
 	return fmt.Sprintf(`{"inputHash":%q}`, hex.EncodeToString(sum[:]))
+}
+
+// TestPromptsCarryMentionsAndImages starts a session from the world with a
+// file mentioned and an image attached, as a browser does: it asks the
+// host for the files to mention, uploads the image through the citadel,
+// which relays it in pieces, and fetches it back for the conversation.
+func TestPromptsCarryMentionsAndImages(t *testing.T) {
+	if testing.Short() {
+		t.Skip("whole-world test")
+	}
+	for _, kv := range [][2]string{{"GIT_AUTHOR_NAME", "t"}, {"GIT_AUTHOR_EMAIL", "t@t"}, {"GIT_COMMITTER_NAME", "t"}, {"GIT_COMMITTER_EMAIL", "t@t"}} {
+		t.Setenv(kv[0], kv[1])
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	w := startWorld(t, ctx)
+	b := w.openBrowser()
+	sock := shortSocket(t)
+	stop := w.startDaemonWithSocket("ws", sock)
+	defer stop()
+	b.wait(t, "ws reachable", 15*time.Second, func(v view) bool { return reachable(v, "ws", true) })
+	repoDir := gitRepo(t, "main.go", "util.go", "notes.md")
+	cli := socket.Dial(sock)
+	var info socket.RepoInfo
+	var err error
+	for i := 0; i < 100; i++ {
+		if info, err = cli.RegisterRepo(ctx, repoDir); err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("RegisterRepo: %v", err)
+	}
+	// The browser knows which agents take images from the island.
+	b.wait(t, "the agents checked", 60*time.Second, func(v view) bool {
+		for _, a := range v.islands["ws"].Agents {
+			if a.Name == "seeing" && a.Available && a.Images && a.EmbeddedContext {
+				return true
+			}
+		}
+		return false
+	})
+	get := func(path string) (int, string, []byte) {
+		t.Helper()
+		resp, err := http.Get(w.webURL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		data, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, resp.Header.Get("Content-Type"), data
+	}
+	send := func(path, contentType string, body []byte) (int, map[string]any) {
+		t.Helper()
+		resp, err := http.Post(w.webURL+path, contentType, bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		data, _ := io.ReadAll(resp.Body)
+		var out map[string]any
+		_ = json.Unmarshal(data, &out)
+		return resp.StatusCode, out
+	}
+
+	// What follows an @ is matched against the checkout's files.
+	code, _, data := get("/api/repos/ws/" + info.ID + "/files?q=util")
+	var files v1.FilesResult
+	if err := json.Unmarshal(data, &files); code != http.StatusOK || err != nil || len(files.Files) == 0 || files.Files[0] != "util.go" {
+		t.Fatalf("files matching util = %d %s", code, data)
+	}
+
+	// An image bigger than a NATS message goes up in pieces.
+	image := append([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, bytes.Repeat([]byte("pixels"), 400_000)...)
+	sum := sha256.Sum256(image)
+	hash := hex.EncodeToString(sum[:])
+	if code, out := send("/api/islands/ws/images", "text/plain", []byte("hello")); code != http.StatusUnsupportedMediaType {
+		t.Errorf("a text upload = %d %v", code, out)
+	}
+	if code, out := send("/api/islands/ws/images", "image/gif", image); code != http.StatusBadRequest {
+		t.Errorf("a PNG called a GIF = %d %v", code, out)
+	}
+	code, out := send("/api/islands/ws/images", "image/png", image)
+	if code != http.StatusCreated || out["hash"] != hash || out["size"] != float64(len(image)) {
+		t.Fatalf("upload = %d %v, want hash %s", code, out, hash)
+	}
+
+	// The edit is allowed, so the turn runs to its end unasked.
+	if code, out := send("/api/repos/ws/"+info.ID+"/rules", "application/json", []byte(`{"rules":[{"decision":"allow","kind":"edit"}],"revision":0}`)); code != http.StatusOK {
+		t.Fatalf("set the repository's rules: %d %v", code, out)
+	}
+	start, _ := json.Marshal(map[string]any{
+		"host": "ws", "repoId": info.ID, "agent": "seeing", "prompt": "what does @util.go do to this?",
+		"mentions": []string{"util.go"}, "images": []v1.PromptImage{{Name: "screen.png", MimeType: "image/png", Hash: hash, Size: int64(len(image))}},
+	})
+	code, out = send("/api/sessions", "application/json", start)
+	if code != http.StatusCreated || out["sessionId"] == nil {
+		t.Fatalf("start session: %d %v", code, out)
+	}
+	id := out["sessionId"].(string)
+	b.wait(t, "the turn to end", 60*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "idle" })
+
+	code, _, data = get("/api/sessions/ws/" + id + "/transcript")
+	var tr v1.TextResult
+	if err := json.Unmarshal(data, &tr); code != http.StatusOK || err != nil {
+		t.Fatalf("transcript = %d %s", code, data)
+	}
+	for _, want := range []string{
+		"\U0001F4C4 util.go (contents)\n\U0001F5BC screen.png <!-- image:" + hash + " -->",
+		"/util.go (7 bytes); image image/png (" + fmt.Sprint(len(image)) + " bytes).",
+	} {
+		if !strings.Contains(tr.Text, want) {
+			t.Errorf("the transcript lacks %q:\n%s", want, tr.Text)
+		}
+	}
+
+	// The conversation fetches the image back, in pieces, whole.
+	code, contentType, data := get("/api/sessions/ws/" + id + "/attachments/" + hash)
+	if code != http.StatusOK || contentType != "image/png" || !bytes.Equal(data, image) {
+		t.Errorf("the image fetched back = %d %s, %d bytes", code, contentType, len(data))
+	}
+	if code, _, _ := get("/api/sessions/ws/" + id + "/attachments/" + strings.Repeat("0", 64)); code != http.StatusNotFound {
+		t.Errorf("an image the session never had = %d", code)
+	}
+	// An open session's files are its worktree's.
+	code, _, data = get("/api/sessions/ws/" + id + "/files?q=notes")
+	if err := json.Unmarshal(data, &files); code != http.StatusOK || err != nil || len(files.Files) != 1 || files.Files[0] != "notes.md" {
+		t.Errorf("the session's files matching notes = %d %s", code, data)
+	}
 }

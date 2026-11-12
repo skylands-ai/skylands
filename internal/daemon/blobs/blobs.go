@@ -1,8 +1,10 @@
 // Package blobs keeps bytes on the host under their SHA-256: the exact
-// input of every request that waited on a person or a rule, and the whole
-// output of every finished tool call. Events name them by hash, so either
-// can be checked against a signed decision or a tool call's record long
-// after the agent moved on, whatever their size. Nothing is removed.
+// input of every request that waited on a person or a rule, the whole
+// output of every finished tool call, and the files and images a prompt
+// gave the agent. Events name them by hash, so each can be checked
+// against a signed decision or a session's record long after the agent
+// moved on, whatever its size. Nothing in the store is removed. Images
+// uploaded for a prompt wait apart, in Uploads, until the prompt is sent.
 package blobs
 
 import (

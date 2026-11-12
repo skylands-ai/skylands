@@ -64,6 +64,9 @@ type Check struct {
 	// Missing, on an agent check, means the agent isn't installed: its
 	// command isn't on PATH, or Node isn't there to run it.
 	Missing bool
+	// Accepts, on an agent check, is what the agent said a prompt can
+	// carry besides text and links.
+	Accepts agents.Accepts
 	// On a models check: whether a session opened to read the agent's
 	// models, what it offered, and the one the session started on, and
 	// the modes the adapter lists as the agent names them.
@@ -260,6 +263,7 @@ func Availability(checks []Check, r agents.Registry) []v1.AgentAvailability {
 		if c, ok := byName["agent "+name]; ok {
 			if c.Status == OK || c.Status == Warn {
 				a.Agent = c.Found
+				a.Images, a.EmbeddedContext = c.Accepts.Images, c.Accepts.EmbeddedContext
 			}
 			// A failure caused by a failed git, Node, or npx check is noted
 			// by that check, not again here.
@@ -414,6 +418,7 @@ func agentChecks(ctx context.Context, e Env, ad agents.Adapter, nodeUsable bool)
 		return []Check{c}
 	}
 	c.Found = strings.TrimSpace(p.Name + " " + p.Version)
+	c.Accepts = p.Accepts
 	if !p.LoadSession {
 		c.Status = Warn
 		c.Fix = "it cannot load a session, so after a daemon restart its sessions continue from the transcript, without the agent's own memory"

@@ -190,6 +190,11 @@ type AgentAvailability struct {
 	// the adapter's order, the first being where a session starts. They
 	// are read with the models. With none, the agent has no mode setting.
 	Modes []AgentMode `json:"modes,omitempty"`
+	// Images says the agent accepts images in a prompt, and
+	// EmbeddedContext that it accepts a file's contents in one, as its ACP
+	// prompt capabilities said when it started.
+	Images          bool `json:"images,omitempty"`
+	EmbeddedContext bool `json:"embeddedContext,omitempty"`
 }
 
 // AgentMode is one mode a session may be in: the value its mode is set
@@ -288,12 +293,56 @@ type SessionStarted struct {
 
 // PromptSent records what a person asked the session to do, and the
 // approver who signed it with their signature, once the world exists.
+// Mentions and Images are what the agent was given with the text, in the
+// order it got them.
 type PromptSent struct {
-	SessionID string `json:"sessionId"`
-	Text      string `json:"text"`
-	Approver  string `json:"approver,omitempty"`
-	Signature string `json:"signature,omitempty"`
+	SessionID string          `json:"sessionId"`
+	Text      string          `json:"text"`
+	Mentions  []PromptMention `json:"mentions,omitempty"`
+	Images    []PromptImage   `json:"images,omitempty"`
+	Approver  string          `json:"approver,omitempty"`
+	Signature string          `json:"signature,omitempty"`
 }
+
+// PromptMention is a file a prompt mentions, as the agent was given it.
+type PromptMention struct {
+	// Path is the file's path relative to the session's directory, as it
+	// follows the @ in the prompt's text.
+	Path string `json:"path"`
+	// Embedded means the agent got the file's contents, which Hash and
+	// Size name and the host keeps. Otherwise it got a link to the file,
+	// which it reads itself, through a tool call of its own.
+	Embedded bool   `json:"embedded,omitempty"`
+	Hash     string `json:"hash,omitempty"`
+	Size     int64  `json:"size,omitempty"`
+}
+
+// PromptImage is an image sent with a prompt. It is uploaded to the host
+// before the prompt is sent, and kept there under Hash, its SHA-256 in
+// lowercase hex. Name is the file name it was picked or pasted under, and
+// MimeType one of ImageTypes.
+type PromptImage struct {
+	Name     string `json:"name"`
+	MimeType string `json:"mimeType"`
+	Hash     string `json:"hash"`
+	Size     int64  `json:"size"`
+}
+
+// Limits on what a prompt carries besides its text.
+const (
+	// MaxEmbeddedFile is the largest mentioned file whose contents go to
+	// the agent; a larger one goes as a link.
+	MaxEmbeddedFile = 100 * 1024
+	// MaxImage is the largest image a prompt carries, and MaxImages the
+	// most images.
+	MaxImage  = 10 * 1024 * 1024
+	MaxImages = 5
+	// MaxMentions is the most files one prompt mentions.
+	MaxMentions = 20
+)
+
+// ImageTypes are the image types a prompt carries.
+var ImageTypes = []string{"image/png", "image/jpeg", "image/gif", "image/webp"}
 
 // AgentSpawned records that the agent process is up, identified itself,
 // and opened its session. It is recorded again when a daemon restart
@@ -441,6 +490,9 @@ type StartSession struct {
 	// asking before it acts. Empty is the first of them.
 	Mode   string `json:"mode,omitempty"`
 	Prompt string `json:"prompt"`
+	// Mentions and Images go with the prompt, as in SendPrompt.
+	Mentions []string      `json:"mentions,omitempty"`
+	Images   []PromptImage `json:"images,omitempty"`
 	// InCheckout runs the agent in the registered checkout itself instead
 	// of a worktree of its own. One session at a time may work there.
 	InCheckout bool `json:"inCheckout,omitempty"`
@@ -482,7 +534,64 @@ const (
 	// FetchCommands returns the slash commands a live session's agent
 	// announced, less the ones its adapter withholds, as a CommandsResult.
 	FetchCommands = "commands"
+	// FetchFiles returns the files that best match Query, as a
+	// FilesResult: in an open session's directory when the request names
+	// SessionID, and in a repository's registered checkout when it names
+	// RepoID, for a session about to start there. It lists tracked files
+	// and untracked ones git doesn't ignore.
+	FetchFiles = "files"
+	// FetchAttachment returns one piece of an image a session's prompt
+	// carried, named by Hash, from Offset, as an AttachmentPiece. An image
+	// comes back in pieces that each fit in a NATS message.
+	FetchAttachment = "attachment"
 )
+
+// MaxFiles is the most files a files fetch returns.
+const MaxFiles = 50
+
+// FilesResult is the answer to a files fetch: the best matches first, as
+// paths relative to the directory searched, and whether more matched.
+type FilesResult struct {
+	Files []string `json:"files"`
+	More  bool     `json:"more,omitempty"`
+}
+
+// AttachmentPiece is one piece of an image a prompt carried: Data from
+// Offset, of an image of Size bytes in all, of type MimeType.
+type AttachmentPiece struct {
+	Offset   int64  `json:"offset"`
+	Data     []byte `json:"data"`
+	Size     int64  `json:"size"`
+	MimeType string `json:"mimeType"`
+}
+
+// UploadPiece is one piece of an image a browser uploads to a host for a
+// prompt. The citadel relays an image in pieces that each fit in a NATS
+// message, in order, and keeps nothing of it. Upload names the upload and
+// is the same in every piece of it, as are Size, the whole image's length,
+// and MimeType. Offset is where Data begins.
+type UploadPiece struct {
+	Upload   string `json:"upload"`
+	Offset   int64  `json:"offset"`
+	Data     []byte `json:"data"`
+	Size     int64  `json:"size"`
+	MimeType string `json:"mimeType"`
+}
+
+// UploadResult answers an UploadPiece: how much of the image the host has,
+// and, once it has all of it, its SHA-256, which the prompt then names it
+// by. An image no prompt names within an hour is removed.
+type UploadResult struct {
+	Received int64  `json:"received"`
+	Hash     string `json:"hash,omitempty"`
+}
+
+// PieceSize is how much of an image fits in a NATS message of maxPayload
+// bytes: the base64 JSON carries three bytes in four, and the rest of the
+// message needs room too.
+func PieceSize(maxPayload int64) int {
+	return int(max((maxPayload-4096)/4*3, 1024))
+}
 
 // ToolCallDetail is everything the host kept about one tool call: what the
 // agent asked for, what came back, and when. It stays on the host's disk
@@ -542,12 +651,19 @@ type ChangesResult struct {
 // FetchSessionRequest asks for one session's transcript, diff, or changes,
 // with ToolCallID for one of its tool calls, with RequestID for the input
 // of one of its waiting requests, or with TerminalID for what one of its
-// terminals shows.
+// terminals shows. A files fetch names SessionID or RepoID, and Query, what
+// was typed. An attachment fetch names Hash and Offset, and Max, the most
+// bytes of the image the asker can take in one answer.
 type FetchSessionRequest struct {
-	SessionID  string `json:"sessionId"`
+	SessionID  string `json:"sessionId,omitempty"`
 	ToolCallID string `json:"toolCallId,omitempty"`
 	RequestID  string `json:"requestId,omitempty"`
 	TerminalID string `json:"terminalId,omitempty"`
+	RepoID     string `json:"repoId,omitempty"`
+	Query      string `json:"query,omitempty"`
+	Hash       string `json:"hash,omitempty"`
+	Offset     int64  `json:"offset,omitempty"`
+	Max        int    `json:"max,omitempty"`
 }
 
 // TextResult is a fetched text, cut off at the daemon's size limit when
@@ -791,6 +907,14 @@ type SendPrompt struct {
 	ID        string `json:"id"`
 	SessionID string `json:"sessionId"`
 	Text      string `json:"text"`
+	// Mentions are the files the text mentions, by their paths relative
+	// to the session's directory, each of which follows an @ in the text.
+	// The daemon gives the agent each one's contents, or a link to it, as
+	// the session's rules decide its reading the file.
+	Mentions []string `json:"mentions,omitempty"`
+	// Images are images uploaded to the host for the prompt, which the
+	// agent gets after the mentions, in this order.
+	Images []PromptImage `json:"images,omitempty"`
 	// Revision is the session's revision the prompt was sent at, which a
 	// signed prompt names.
 	Revision int `json:"revision,omitempty"`

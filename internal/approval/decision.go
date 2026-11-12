@@ -152,6 +152,9 @@ type Start struct {
 	InCheckout bool   `json:"inCheckout"`
 	// Prompt is TextHash of the prompt.
 	Prompt string `json:"prompt"`
+	// Attachments is AttachmentsHash of what goes with the prompt, and
+	// absent for a prompt that carries nothing else.
+	Attachments string `json:"attachments,omitempty"`
 }
 
 func (d Start) header() (int, string, string) { return d.V, d.Kind, KindStart }
@@ -168,6 +171,8 @@ type Prompt struct {
 	Revision int `json:"revision"`
 	// Prompt is TextHash of the prompt.
 	Prompt string `json:"prompt"`
+	// Attachments is as in Start.
+	Attachments string `json:"attachments,omitempty"`
 }
 
 func (d Prompt) header() (int, string, string) { return d.V, d.Kind, KindPrompt }
@@ -234,6 +239,31 @@ func TextHash(text string) string {
 func BytesHash(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// AttachmentsHash is the SHA-256, in lowercase hex, of the canonical JSON
+// of what a prompt carries besides its text: the paths it mentions and
+// the images it names, each in the command's order and with every
+// property. It is "" for a prompt that carries neither, which a decision
+// leaves out, so a prompt of text alone signs as it always has.
+func AttachmentsHash(mentions []string, images []v1.PromptImage) (string, error) {
+	if len(mentions) == 0 && len(images) == 0 {
+		return "", nil
+	}
+	type image struct {
+		Name     string `json:"name"`
+		MimeType string `json:"mimeType"`
+		Hash     string `json:"hash"`
+		Size     int64  `json:"size"`
+	}
+	out := struct {
+		Mentions []string `json:"mentions"`
+		Images   []image  `json:"images"`
+	}{Mentions: append([]string{}, mentions...), Images: []image{}}
+	for _, img := range images {
+		out.Images = append(out.Images, image(img))
+	}
+	return HashJSON(out)
 }
 
 // PullRequestHash is the SHA-256 of a pull request's title and body as

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,6 +26,9 @@ type startSessionRequest struct {
 	Model  string `json:"model"`
 	Mode   string `json:"mode"`
 	Prompt string `json:"prompt"`
+	// Mentions and Images go with the prompt, as in v1.StartSession.
+	Mentions []string         `json:"mentions"`
+	Images   []v1.PromptImage `json:"images"`
 	// SessionID is the id the browser picked for the session, which a
 	// signed start names. Without one the citadel picks it.
 	SessionID string                `json:"sessionId"`
@@ -83,6 +88,10 @@ func (c *citadel) api() http.Handler {
 	signedIn("GET /api/sessions/{host}/{id}/tools/{tid}", c.fetchFromHost(v1.FetchToolCall))
 	signedIn("GET /api/sessions/{host}/{id}/commands", c.fetchFromHost(v1.FetchCommands))
 	signedIn("GET /api/sessions/{host}/{id}/requests/{rid}/input", c.fetchFromHost(v1.FetchRequestInput))
+	signedIn("GET /api/sessions/{host}/{id}/files", c.fetchFiles(false))
+	signedIn("GET /api/repos/{host}/{id}/files", c.fetchFiles(true))
+	signedIn("GET /api/sessions/{host}/{id}/attachments/{hash}", c.fetchAttachment)
+	signedIn("POST /api/islands/{host}/images", c.uploadImage)
 	return sameOrigin(mux)
 }
 
@@ -230,6 +239,8 @@ func (c *citadel) sendPrompt(w http.ResponseWriter, r *http.Request) {
 	host, id := r.PathValue("host"), r.PathValue("id")
 	var body struct {
 		Text      string                `json:"text"`
+		Mentions  []string              `json:"mentions"`
+		Images    []v1.PromptImage      `json:"images"`
 		Revision  int                   `json:"revision"`
 		Signature *v1.DecisionSignature `json:"signature"`
 	}
@@ -237,7 +248,7 @@ func (c *citadel) sendPrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "a prompt is required")
 		return
 	}
-	cmd := v1.SendPrompt{ID: nuid.Next(), SessionID: id, Text: strings.TrimSpace(body.Text), Revision: body.Revision, Signature: body.Signature}
+	cmd := v1.SendPrompt{ID: nuid.Next(), SessionID: id, Text: strings.TrimSpace(body.Text), Mentions: body.Mentions, Images: body.Images, Revision: body.Revision, Signature: body.Signature}
 	c.relay(w, host, v1.SessionCommandSubject(host, id, v1.CommandSendPrompt), cmd, http.StatusOK)
 }
 
@@ -338,18 +349,148 @@ func (c *citadel) fetchFromHost(kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		host, id := r.PathValue("host"), r.PathValue("id")
 		result, err := c.sendCommand(r.Context(), v1.IslandFetchSubject(host, kind), v1.FetchSessionRequest{SessionID: id, ToolCallID: r.PathValue("tid"), RequestID: r.PathValue("rid"), TerminalID: r.PathValue("term")})
-		switch {
-		case errors.Is(err, nats.ErrNoResponders), errors.Is(err, nats.ErrTimeout):
-			writeError(w, http.StatusBadGateway, host+" did not answer; it may be unreachable")
-			return
-		case err != nil:
-			writeError(w, http.StatusNotFound, err.Error())
+		writeFetched(w, host, result, err)
+	}
+}
+
+// writeFetched writes what a host answered a fetch with, or why it
+// didn't.
+func writeFetched(w http.ResponseWriter, host string, result json.RawMessage, err error) {
+	switch {
+	case errors.Is(err, nats.ErrNoResponders), errors.Is(err, nats.ErrTimeout):
+		writeError(w, http.StatusBadGateway, host+" did not answer; it may be unreachable")
+		return
+	case err != nil:
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(result)
+}
+
+// fetchFiles relays a search for the files a prompt can mention, given
+// what was typed after the @ as q: in an open session's directory, or in
+// a repository's checkout for a session about to start on it.
+func (c *citadel) fetchFiles(byRepo bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		host, id := r.PathValue("host"), r.PathValue("id")
+		req := v1.FetchSessionRequest{Query: r.URL.Query().Get("q")}
+		if byRepo {
+			req.RepoID = id
+		} else {
+			req.SessionID = id
+		}
+		result, err := c.sendCommand(r.Context(), v1.IslandFetchSubject(host, v1.FetchFiles), req)
+		writeFetched(w, host, result, err)
+	}
+}
+
+// pieceSize is how much of an image fits in one of the citadel's NATS
+// messages.
+func (c *citadel) pieceSize() int {
+	c.mu.Lock()
+	nc := c.nc
+	c.mu.Unlock()
+	if nc == nil {
+		return v1.PieceSize(1024 * 1024)
+	}
+	return v1.PieceSize(nc.MaxPayload())
+}
+
+// fetchAttachment relays an image one of a session's prompts carried from
+// its host, piece by piece, and writes it whole with its type. The
+// citadel keeps nothing of it.
+func (c *citadel) fetchAttachment(w http.ResponseWriter, r *http.Request) {
+	host, id, hash := r.PathValue("host"), r.PathValue("id"), r.PathValue("hash")
+	var image []byte
+	var mime string
+	for {
+		result, err := c.sendCommand(r.Context(), v1.IslandFetchSubject(host, v1.FetchAttachment), v1.FetchSessionRequest{SessionID: id, Hash: hash, Offset: int64(len(image)), Max: c.pieceSize()})
+		if err != nil {
+			writeFetched(w, host, nil, err)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write(result)
+		var p v1.AttachmentPiece
+		if err := json.Unmarshal(result, &p); err != nil || p.Offset != int64(len(image)) || p.Size > v1.MaxImage || !slices.Contains(v1.ImageTypes, p.MimeType) {
+			writeError(w, http.StatusBadGateway, host+" answered with something that isn't a piece of an image")
+			return
+		}
+		if image == nil {
+			image, mime = make([]byte, 0, p.Size), p.MimeType
+		}
+		image = append(image, p.Data...)
+		if int64(len(image)) >= p.Size || len(p.Data) == 0 {
+			break
+		}
 	}
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(image)
+}
+
+// uploadResult is the answer to an image upload.
+type uploadResult struct {
+	Hash     string `json:"hash"`
+	Size     int64  `json:"size"`
+	MimeType string `json:"mimeType"`
+}
+
+// uploadImage relays an image a browser attaches to a prompt to the
+// island the prompt is for, in pieces that each fit in a NATS message.
+// The body is the image and its Content-Type its type. The answer names
+// the image by its SHA-256, which the prompt then names it by. The
+// citadel keeps nothing of it.
+func (c *citadel) uploadImage(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+	mime, _, _ := strings.Cut(r.Header.Get("Content-Type"), ";")
+	mime = strings.ToLower(strings.TrimSpace(mime))
+	if !slices.Contains(v1.ImageTypes, mime) {
+		writeError(w, http.StatusUnsupportedMediaType, "an image must be PNG, JPEG, GIF, or WebP")
+		return
+	}
+	if isl, ok := c.islands.Get(host); !ok {
+		writeError(w, http.StatusNotFound, "no island named "+host)
+		return
+	} else if !isl.Reachable {
+		writeError(w, http.StatusBadGateway, host+" is unreachable right now, so the image can't be sent to it")
+		return
+	}
+	image, err := io.ReadAll(http.MaxBytesReader(w, r.Body, v1.MaxImage))
+	if mbe := (*http.MaxBytesError)(nil); errors.As(err, &mbe) {
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("an image can be at most %d MB", v1.MaxImage/1024/1024))
+		return
+	}
+	if err != nil || len(image) == 0 {
+		writeError(w, http.StatusBadRequest, "the image didn't arrive")
+		return
+	}
+	upload, piece := nuid.Next(), c.pieceSize()
+	var res v1.UploadResult
+	for off := 0; off < len(image); off += piece {
+		end := min(off+piece, len(image))
+		result, err := c.sendCommand(r.Context(), v1.IslandUploadSubject(host), v1.UploadPiece{Upload: upload, Offset: int64(off), Data: image[off:end], Size: int64(len(image)), MimeType: mime})
+		switch {
+		case errors.Is(err, nats.ErrNoResponders), errors.Is(err, nats.ErrTimeout):
+			writeError(w, http.StatusBadGateway, host+" did not answer")
+			return
+		case err != nil:
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := json.Unmarshal(result, &res); err != nil {
+			writeError(w, http.StatusBadGateway, "bad answer from "+host)
+			return
+		}
+	}
+	if res.Hash == "" {
+		writeError(w, http.StatusBadGateway, host+" didn't take the whole image")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(uploadResult{Hash: res.Hash, Size: int64(len(image)), MimeType: mime})
 }
 
 // sessionIDPattern is a session id a browser may pick: it names the
@@ -387,7 +528,8 @@ func (c *citadel) startSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "a session id is 8 to 64 letters and digits")
 		return
 	}
-	cmd := v1.StartSession{Signature: req.Signature, ID: nuid.Next(), SessionID: sessionID, RepoID: req.RepoID, Agent: req.Agent, Model: strings.TrimSpace(req.Model), Mode: strings.TrimSpace(req.Mode), Prompt: req.Prompt, InCheckout: req.InCheckout}
+	cmd := v1.StartSession{Signature: req.Signature, ID: nuid.Next(), SessionID: sessionID, RepoID: req.RepoID, Agent: req.Agent, Model: strings.TrimSpace(req.Model), Mode: strings.TrimSpace(req.Mode), Prompt: req.Prompt,
+		Mentions: req.Mentions, Images: req.Images, InCheckout: req.InCheckout}
 	result, err := c.sendCommand(r.Context(), v1.SessionCommandSubject(req.Host, sessionID, v1.CommandStartSession), cmd)
 	switch {
 	case errors.Is(err, nats.ErrNoResponders), errors.Is(err, nats.ErrTimeout):

@@ -22,6 +22,15 @@ type vector struct {
 	Form      vectorForm       `json:"form"`
 	Answers   vectorAnswers    `json:"answers"`
 	Rules     vectorRules      `json:"rules"`
+	// Attachments is what two of the decisions' prompts carry besides
+	// their text, and its AttachmentsHash.
+	Attachments vectorAttachments `json:"attachments"`
+}
+
+type vectorAttachments struct {
+	Mentions []string         `json:"mentions"`
+	Images   []v1.PromptImage `json:"images"`
+	Hash     string           `json:"hash"`
 }
 
 type vectorDecision struct {
@@ -148,6 +157,12 @@ func TestDecisionVector(t *testing.T) {
 	if h, err := RulesHash(v.Rules.Rules); err != nil || h != v.Rules.Hash {
 		t.Errorf("RulesHash = %s, %v; want %s", h, err, v.Rules.Hash)
 	}
+	if h, err := AttachmentsHash(v.Attachments.Mentions, v.Attachments.Images); err != nil || h != v.Attachments.Hash || h == "" {
+		t.Errorf("AttachmentsHash = %s, %v; want %s", h, err, v.Attachments.Hash)
+	}
+	if h, err := AttachmentsHash(nil, nil); err != nil || h != "" {
+		t.Errorf("AttachmentsHash of nothing = %q, %v; want empty", h, err)
+	}
 }
 
 func TestVerifyDecisionRefuses(t *testing.T) {
@@ -210,10 +225,21 @@ func TestVerifyDecisionRefuses(t *testing.T) {
 			x.Rules = x.Rules[:63] + "0"
 			changed = x
 		case Start:
-			x.Mode = ""
+			// A start with attachments is refused without them, which is
+			// what keeps an image or a mention from being dropped or added
+			// on the way.
+			if x.Attachments != "" {
+				x.Attachments = ""
+			} else {
+				x.Mode = ""
+			}
 			changed = x
 		case Prompt:
-			x.Revision++
+			if x.Attachments != "" {
+				x.Attachments = x.Attachments[:63] + "0"
+			} else {
+				x.Revision++
+			}
 			changed = x
 		case Change:
 			x.Action = ChangeCommit + "s"

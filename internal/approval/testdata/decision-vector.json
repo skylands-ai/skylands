@@ -223,6 +223,46 @@
     {
       "decision": {
         "v": 1,
+        "kind": "start",
+        "world": "ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O",
+        "host": "workstation",
+        "session": "Ses5ion-éh",
+        "repo": "R3po",
+        "agent": "claude",
+        "mode": "",
+        "model": "",
+        "inCheckout": false,
+        "prompt": "392c3a4ae6660822c2c000207bfa6a5101396321fb6ba21c6b3eac34412b88ea",
+        "attachments": "9a4f81ef51920ff1754ed68bfb5a99a147ecb46334cff066f231484be35f05be"
+      },
+      "canonical": "{\"agent\":\"claude\",\"attachments\":\"9a4f81ef51920ff1754ed68bfb5a99a147ecb46334cff066f231484be35f05be\",\"host\":\"workstation\",\"inCheckout\":false,\"kind\":\"start\",\"mode\":\"\",\"model\":\"\",\"prompt\":\"392c3a4ae6660822c2c000207bfa6a5101396321fb6ba21c6b3eac34412b88ea\",\"repo\":\"R3po\",\"session\":\"Ses5ion-éh\",\"v\":1,\"world\":\"ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O\"}",
+      "digest": "7a3a44c27204800569ebb7be2eadc457fbcefed31705716c7d7569ee239c9563",
+      "signature": {
+        "approver": "UASVQ5GGLE7MCRC3RD6ZWNTBKVQT2T4MM72OTFAASHYZJBB5VZWFJQNI",
+        "sig": "vfNdHYEY8YABxm9N8AdHp_P-ZVb_q8cNqeREkebOHqByROAAK5TKrju2jA9iqJ7xqQgxPd5wRaXnbFEaeV3CBQ"
+      }
+    },
+    {
+      "decision": {
+        "v": 1,
+        "kind": "prompt",
+        "world": "ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O",
+        "host": "workstation",
+        "session": "Ses5ion-éh",
+        "revision": 7,
+        "prompt": "593726ef55c3dba40212c0402310d575f44f4fbb373fb20d8846fcd25f60e72e",
+        "attachments": "9a4f81ef51920ff1754ed68bfb5a99a147ecb46334cff066f231484be35f05be"
+      },
+      "canonical": "{\"attachments\":\"9a4f81ef51920ff1754ed68bfb5a99a147ecb46334cff066f231484be35f05be\",\"host\":\"workstation\",\"kind\":\"prompt\",\"prompt\":\"593726ef55c3dba40212c0402310d575f44f4fbb373fb20d8846fcd25f60e72e\",\"revision\":7,\"session\":\"Ses5ion-éh\",\"v\":1,\"world\":\"ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O\"}",
+      "digest": "9fe375c78d291e6c7874446216f9b421a7219652ec40bf896e1d641187bffaed",
+      "signature": {
+        "approver": "UASVQ5GGLE7MCRC3RD6ZWNTBKVQT2T4MM72OTFAASHYZJBB5VZWFJQNI",
+        "sig": "fFgcJDGN-Kzc4ow9zJQzBouvj165koL6jvM9nT_5uBbkw1EJHQhU8g4H9_t-ehBKsULPVaGnQA9k8aIOCylsDg"
+      }
+    },
+    {
+      "decision": {
+        "v": 1,
         "kind": "terminal",
         "world": "ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O",
         "host": "workstation",
@@ -310,5 +350,20 @@
       }
     ],
     "hash": "12c12d60193763bd4a8899d9d399933f1941cf8db08fe8c32738e30bf3bd3e8f"
+  },
+  "attachments": {
+    "mentions": [
+      "internal/main.go",
+      "docs/é 😀.md"
+    ],
+    "images": [
+      {
+        "name": "screen shot.png",
+        "mimeType": "image/png",
+        "hash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "size": 1234567
+      }
+    ],
+    "hash": "9a4f81ef51920ff1754ed68bfb5a99a147ecb46334cff066f231484be35f05be"
   }
 }

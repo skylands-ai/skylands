@@ -48,6 +48,8 @@ type Probe struct {
 	// LoadSession says whether the agent can load a session again, which
 	// is how a session survives a daemon restart with the agent's memory.
 	LoadSession bool
+	// Accepts is what the agent takes in a prompt besides text and links.
+	Accepts Accepts
 	// Auth is the login the agent reported, or nil when it reports logins
 	// but said nothing before the wait ran out, or does not report them.
 	Auth *AuthStatus
@@ -91,6 +93,7 @@ func ProbeAgent(ctx context.Context, ad Adapter, cwd string, opts ProbeOptions) 
 	defer func() { _ = r.Close() }()
 	p := Probe{}
 	p.Name, p.Version = identity(ad, init)
+	p.Accepts = accepted(init)
 	if caps := init.AgentCapabilities; caps != nil {
 		p.LoadSession = caps.LoadSession
 		_, p.ReportsAuth = caps.Meta["authStatus"]

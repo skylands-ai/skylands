@@ -211,7 +211,8 @@ Every kind of data has one home and, where it needs one, a named copy.
 | Citadel projections | Each citadel's memory | That citadel, from its own ordered consumers | None |
 | Daemon projections: rules and approver keys | The daemon's memory | The daemon, from its local mirrors | None |
 | Diffs, file contents, transcripts, and tool call records | The host's disk, in worktrees and agent session files | Agents and the daemon | None; a citadel holds fetched content only while someone views it |
-| Requests' exact inputs and tool calls' whole outputs | The host's disk, under `blobs/` in the data directory, each file named by its SHA-256, which the session's events name | The daemon, as it records the request or the call's end | None, and nothing is removed |
+| Requests' exact inputs, tool calls' whole outputs, and the files and images prompts gave the agent | The host's disk, under `blobs/` in the data directory, each file named by its SHA-256, which the session's events name | The daemon, as it records the request, the call's end, or the prompt | None, and nothing is removed |
+| Images uploaded for a prompt not yet sent | The host's disk, under `uploads/` in the data directory, named by their SHA-256 | The daemon, from the pieces a citadel relays | None; the citadel keeps nothing, and the daemon removes an image no prompt named within an hour |
 | Commands and queries | Nowhere; they're NATS request-reply | People, through a citadel, the CLI, or an integration | None |
 | World record: its name and owner key, signed by the owner key | The `skylands-world` bucket in the world's JetStream domain | A citadel, once, when the owner sets the world up | Each daemon pins the owner key it names |
 | Owner key | Only in the recovery file the owner downloads when setting the world up | The owner's browser, during setup | None |
@@ -495,8 +496,8 @@ skylands/
 │   │   └── web/               HTTP and WebSocket server for browsers
 │   ├── daemon/                the daemon role
 │   │   ├── agents/            agents as child processes over ACP, and their adapters
-│   │   ├── blobs/             exact inputs and outputs kept on the host under their SHA-256
-│   │   ├── fetch/             on-demand reads: transcripts, diffs, and tool calls
+│   │   ├── blobs/             exact inputs, outputs, and prompts' files and images, under their SHA-256
+│   │   ├── fetch/             on-demand reads: transcripts, diffs, tool calls, files, and images
 │   │   ├── host/              Host aggregate
 │   │   ├── session/           Session aggregate
 │   │   ├── socket/            local API for the CLI

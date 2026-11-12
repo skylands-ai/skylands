@@ -64,6 +64,8 @@ Patterns are globs where `*` matches anything:
 
 To allow only certain commands, write allow rules for those commands and nothing else. Every other command asks.
 
+The same rules decide a file you mention with `@` in a prompt, as a `read` of that file. A deny refuses the prompt. An allow, including the host's default for `read`, sends the file's contents with the prompt when the agent takes them. Anything that would ask sends a link, and the agent's own read of it asks. See [Mention Files and Attach Images](/getting-started/agent-chat/#mention-files-and-attach-images).
+
 ## Questions
 
 When an agent needs something only you can tell it, such as Claude Code asking a clarifying question, the conversation shows a card with its choices and a box for anything else. Questions show in the inbox, on the beacon, and in `skylands request list`, the same as approvals.
