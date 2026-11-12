@@ -110,7 +110,9 @@ The world has five zoom levels, and every click goes one level deeper. The 3D sc
 
 - Click goes one level deeper; double-click jumps straight to the deepest thing under the pointer.
 - Esc goes up one level, and the breadcrumb in the header jumps to any level above.
-- Drag orbits the camera, scroll or pinch zooms, and the "Whole world" button returns to the opening view.
+- Drag orbits the camera, and scroll or pinch zooms.
+- Right-drag, middle-drag, or Shift-drag pans, and so do two fingers on a touch screen. Orbit then turns around the new center. Anything that flies the camera, such as a click, Esc, or a crumb, drops the pan.
+- The World crumb returns to the opening view.
 - Next flare, or Space, flies straight to the next agent waiting on a person, at agent level.
 - Approve, Deny, and Retry appear wherever a waiting item is listed, and act immediately.
 - Pause and Resume hold an agent in place, and subagents link back to their lead.
