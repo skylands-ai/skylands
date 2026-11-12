@@ -367,7 +367,7 @@ function panelDeps(s: State, stale: boolean): unknown[] {
     case 'terrace':
       return ['terrace', repo, island, stale, s.viewed, s.approvers, s.me, s.world, pruneVersion(), ...(repo ? sessionsOn(s, repo.id) : [])]
     case 'island':
-      return ['island', island, stale, stale ? s.lastContact : 0, s.approvers, s.me, s.world, pruneVersion(), ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
+      return ['island', island, stale, stale ? s.lastContact : 0, ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
     default:
       return ['world', s.server, s.world, s.link, s.loading, s.worldTheme, s.notify, s.push, s.pushError, s.install, notifySupport() === 'ok' ? Notification.permission : '', waitingCount(s), s.approvers, s.me, s.persisted, s.invite, s.revoking, s.approverError, s.invite ? Date.now() > Date.parse(s.invite.expires) : false, ...islandList(s)]
   }
@@ -441,7 +441,7 @@ function renderPanelContent(s: State, stale: boolean): void {
     case 'island':
       if (island) {
         const sessions = Object.values(s.sessions).filter((x) => x.host === island.host)
-        renderIslandPanel(panelEl, island, reposOn(s, island.host), stale, s.lastContact, sessions, (terrace) => nav.land(island.host, terrace), pruneOptions(s, island.host, stale || !island.reachable))
+        renderIslandPanel(panelEl, island, reposOn(s, island.host), stale, s.lastContact, sessions, (terrace) => nav.land(island.host, terrace))
         return
       }
       break
