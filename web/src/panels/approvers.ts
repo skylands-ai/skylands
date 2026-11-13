@@ -5,46 +5,28 @@ import type { ApproverInfo, Rule } from '../protocol'
 import { qrCode } from '../qr'
 import { isOpen } from '../status'
 import type { State } from '../store'
-import { copyButton, factsBox, foldSection, hint, timeNode } from './parts'
-
-/** What this browser can do about keeping its key: ask to keep its storage, and install the citadel as an app. */
-export interface BrowserActions {
-  keep(): void
-  install(): void
-}
+import { copyButton, factsBox, hint, note, timeNode } from './parts'
 
 /**
- * The offer to install the citadel as an app, where the browser makes one,
- * or word that it was just installed. The app's own window shows neither.
+ * What the Approvers page of Settings holds: every browser that can approve
+ * what agents do in this world, a link that makes another browser one,
+ * revocation, and whether this browser's storage keeps its key. Every
+ * change is signed in this browser with its approver key, so only an
+ * approver can make one.
  */
-function installOffer(s: State, install: () => void): HTMLElement | null {
-  switch (s.install) {
-    case 'offered':
-      return el('div', { class: 'install-app' }, [
-        el('button', { type: 'button', class: 'btn small', text: 'Install as an app', onclick: install }),
-        hint('Skylands then opens in its own window, like the other apps on this computer, and approves with the same key as this browser.'),
-      ])
-    case 'installed':
-      return hint('Skylands is installed as an app on this computer. Open it like any other app. It approves with the same key as this browser.')
-    default:
-      return null
+export function approversContent(s: State, actions: ApproverActions, keep: () => void): (Node | null)[] {
+  if (!s.world?.ready) {
+    return [
+      el('p', { class: 'note' }, ['The world isn’t set up yet. The browser that sets it up, on the ', el('a', { href: '/setup', text: 'setup page' }), ', becomes its first approver.']),
+    ]
   }
-}
-
-/**
- * The Approvers section of the citadel's panel: every browser that can
- * approve what agents do in this world, a link that makes another browser
- * one, and revocation. Every change is signed in this browser with its
- * approver key, so only an approver can make one.
- */
-export function approversSection(s: State, actions: ApproverActions, browser: BrowserActions): HTMLElement | null {
-  if (!s.world?.ready || !s.approvers) return null
+  if (!s.approvers) return [note('Waiting for the citadel to list the approvers.')]
   const byKey = new Map(s.approvers.map((a) => [a.key, a]))
-  const nameOf = (key: string | undefined): string => (key === 'owner' ? 'the owner key' : (byKey.get(key ?? '')?.name ?? 'an unknown approver'))
+  const nameOf = approverName(s)
   const me = myApprover(s)
   const canAct = !!me?.valid
 
-  const kids: (Node | null)[] = [hint('Browsers that can approve what agents do in this world.')]
+  const kids: (Node | null)[] = []
   const valid = s.approvers.filter((a) => a.valid)
   kids.push(
     el(
@@ -63,14 +45,13 @@ export function approversSection(s: State, actions: ApproverActions, browser: Br
           'This browser’s storage',
           s.persisted
             ? 'Kept'
-            : el('span', { class: 'keyval' }, [el('span', { text: 'Best effort' }), el('button', { type: 'button', class: 'copy', text: 'Ask to keep', onclick: browser.keep })]),
+            : el('span', { class: 'keyval' }, [el('span', { text: 'Best effort' }), el('button', { type: 'button', class: 'copy', text: 'Ask to keep', onclick: keep })]),
         ],
       ]),
     )
     if (s.persisted === false) kids.push(hint('The browser may clear this key if it runs short of space. Your recovery file, or another approver, brings it back.'))
-    kids.push(installOffer(s, browser.install))
   } else {
-    kids.push(notAnApprover(me, nameOf))
+    kids.push(notAnApprover(s))
   }
 
   const gone = s.approvers.filter((a) => !a.valid)
@@ -82,7 +63,13 @@ export function approversSection(s: State, actions: ApproverActions, browser: Br
       ]),
     )
   }
-  return foldSection('approvers', 'Approvers', kids, valid.length)
+  return kids
+}
+
+/** An approver's name by its key, "the owner key" for the owner's. */
+function approverName(s: State): (key: string | undefined) => string {
+  const byKey = new Map((s.approvers ?? []).map((a) => [a.key, a]))
+  return (key) => (key === 'owner' ? 'the owner key' : (byKey.get(key ?? '')?.name ?? 'an unknown approver'))
 }
 
 function approverRow(a: ApproverInfo, s: State, actions: ApproverActions, canAct: boolean, nameOf: (key: string | undefined) => string): HTMLElement {
@@ -208,8 +195,10 @@ function addressChoice(s: State, actions: ApproverActions): HTMLElement {
   return box
 }
 
-/** What this browser can do when it doesn't approve for the world. */
-function notAnApprover(me: ApproverInfo | null, nameOf: (key: string | undefined) => string): HTMLElement {
+/** Why this browser doesn't approve for the world, and what it can do about it. */
+export function notAnApprover(s: State): HTMLElement {
+  const me = myApprover(s)
+  const nameOf = approverName(s)
   const why = !me
     ? 'This browser isn’t an approver.'
     : me.revoked

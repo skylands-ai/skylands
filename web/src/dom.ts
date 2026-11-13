@@ -30,6 +30,40 @@ export function css(name: string, fallback: string): string {
   return v || fallback
 }
 
+/**
+ * The control that has the keyboard, when it carries a data-keep key: a
+ * control drawn again under the same key, such as a reply box that keeps
+ * its draft, gets the keyboard back with its caret where it was.
+ */
+export function heldKeyboard(root: HTMLElement): (() => void) | null {
+  const a = document.activeElement
+  if (!(a instanceof HTMLElement) || !root.contains(a) || !a.dataset.keep) return null
+  const key = a.dataset.keep
+  const field = a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement ? a : null
+  // Some inputs, such as a number's, have no caret to read.
+  let caret: [number, number, 'forward' | 'backward' | 'none'] | null = null
+  try {
+    if (field && field.selectionStart !== null && field.selectionEnd !== null) caret = [field.selectionStart, field.selectionEnd, field.selectionDirection ?? 'none']
+  } catch {
+    caret = null
+  }
+  const top = a.scrollTop
+  return () => {
+    if (a.isConnected) return
+    const next = root.querySelector<HTMLElement>(`[data-keep="${CSS.escape(key)}"]`)
+    if (!next || next.matches(':disabled')) return
+    next.focus({ preventScroll: true })
+    if (caret && (next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement)) {
+      try {
+        next.setSelectionRange(...caret)
+      } catch {
+        // The new control has no caret either.
+      }
+    }
+    next.scrollTop = top
+  }
+}
+
 export function byId<T extends HTMLElement>(id: string): T {
   const n = document.getElementById(id)
   if (!n) throw new Error(`missing element #${id}`)

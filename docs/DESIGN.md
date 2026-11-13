@@ -100,11 +100,13 @@ The world has five zoom levels, and every click goes one level deeper. The 3D sc
 
 | Level | What the camera shows | What the panel shows |
 | --- | --- | --- |
-| World | Every island around the citadel | Islands connected, everything waiting on a person across the world, spend, and the NATS server the citadel is connected to |
+| World | Every island around the citadel | Islands connected, everything waiting on a person across the world, and spend |
 | Island | The island from outside the ring, with the citadel behind it | Link state, daemon facts, terraces, airships by provider, and waiting items |
 | Terrace | The repo up close, with name tags on airships, tags on busy files, and subagent leashes | Each agent's live action, waiting items for the repo, and the repo's activity feed |
 | Agent | Follows one airship as it flies | Model, role, session, current action, any pending request, context, and plan |
 | File | One building up close | The path, who is on it, any overlap warning, and recent activity on that file |
+
+Settings is a view of its own beside the world and the inbox, for what isn't a place in the world. Its World pages hold the islands as a table, with the command that adds a host; the approvers; and the NATS server. Its This browser pages hold this browser's notifications and installing the citadel as an app.
 
 ### Controls
 
@@ -149,7 +151,7 @@ The phone client is a flat approval inbox rather than the 3D world. It lists wai
 
 A person puts work into the world by starting a session on a terrace, steers it from the panel, and answers its requests from any device. This example follows one afternoon on the storefront repo, with the command each step sends and the events it produces.
 
-1. **Bring a host into the world.** The owner copies the install command from the citadel's "Add a host" section and runs it on the workstation. The command names the world's owner key with `--world`, which the daemon pins, so it joins this world and no other. The workstation island rises into the sky, tethered to the citadel.
+1. **Bring a host into the world.** The owner copies the install command from "Add a host" in the citadel's Settings and runs it on the workstation. The command names the world's owner key with `--world`, which the daemon pins, so it joins this world and no other. The workstation island rises into the sky, tethered to the citadel.
 2. **Register the repo.** From the island's panel or the local CLI (`skylands repo register ...`), the person registers `~/code/storefront`. The daemon handles `RegisterRepo` and records `RepoRegistered` and `TerrainSnapshotted`, and a roped terrace appears with a building for every tracked file.
 3. **Post a work order.** With the storefront terrace open, the person types the task into the command bar: _add multi-currency support to pricing_. The bar shows the scope it's assuming, **storefront on workstation**, and chips for Auto model, one attempt, and a $5 cap. Enter shows the dispatch preview, Claude Opus on storefront at workstation, and a second Enter launches it. The citadel handles `SubmitWorkOrder`: it records `WorkOrderSubmitted`, sends `StartSession` to the workstation's daemon, and records `WorkOrderDispatched`. The daemon creates a worktree, launches the agent over ACP, and records `SessionStarted`, `PromptSent`, and `AgentSpawned`. A spark runs down the tether, a flag in storefront's rope color plants on the terrace, and an orange airship lifts off from the flag and lands on the first file it reads.
 4. **Watch the work spread.** Opus reads the pricing crate (a user repo), so those buildings light blue, then lands on `engine.rs` and lights it amber while it edits. It spawns two subagents to survey the catalog and payments crates, and they fly out on leash lines. Its plan fills in on the agent panel, and sandbags gather under it as its context grows.
@@ -334,7 +336,7 @@ A world runs on one NATS server or one cluster. Two servers that aren't routed t
 
 ### What citadels show
 
-The citadel panel shows the NATS server as it describes itself to the citadel's connection: its name and ID, its nats-server version, its cluster and how many servers are in it, its JetStream domain, the world's account, and the URL the citadel is connected through. A citadel can't tell whether that server runs inside `skylands devworld up` or on its own, and it doesn't need to.
+The citadel's Settings show the NATS server as it describes itself to the citadel's connection: its name and ID, its nats-server version, its cluster and how many servers are in it, its JetStream domain, the world's account, and the URL the citadel is connected through. A citadel can't tell whether that server runs inside `skylands devworld up` or on its own, and it doesn't need to.
 
 ## The citadel
 

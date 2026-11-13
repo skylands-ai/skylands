@@ -5,7 +5,7 @@ description: Hear about approvals and questions on a computer or a phone, with t
 
 ## Turn Them On
 
-Open the citadel's panel, turn on Notifications, and allow them when the browser asks. On a phone, the switch is at the bottom of the list of what's waiting. Each browser has its own switch.
+Open the citadel's Settings, turn on Notifications under This browser, and allow them when the browser asks. On a phone, the switch is at the bottom of the list of what's waiting. Each browser has its own switch.
 
 ## What Notifies
 

@@ -34,6 +34,13 @@ export interface Invite {
   other?: { text: string; error: string }
 }
 
+/** What the page shows under its header: the world, the inbox, or Settings. */
+export type View = 'world' | 'inbox' | 'settings'
+
+/** The pages of Settings: the world's islands, approvers, and NATS server, and this browser's notifications and app. */
+export const SETTINGS_PAGES = ['islands', 'approvers', 'nats', 'notifications', 'app'] as const
+export type SettingsPage = (typeof SETTINGS_PAGES)[number]
+
 export interface State extends Nav {
   link: LinkState
   /**
@@ -73,8 +80,10 @@ export interface State extends Nav {
   lastContact: number | null
   /** When each session was last looked at here, in ms since the epoch. A per-viewer convenience. */
   viewed: Record<string, number>
-  /** The world, or the inbox of conversations. */
-  view: 'world' | 'inbox'
+  /** The world, the inbox of conversations, or Settings. */
+  view: View
+  /** The page Settings shows. */
+  settingsPage: SettingsPage
   /** The conversation open in the inbox, by session id. */
   inbox: string | null
   /** Which conversations the inbox lists: open ones, or all. */
@@ -99,6 +108,7 @@ export interface State extends Nav {
 
 const VIEWED_KEY = 'skylands.viewed'
 const VIEW_KEY = 'skylands.view'
+const SETTINGS_PAGE_KEY = 'skylands.settingsPage'
 const FILTER_KEY = 'skylands.inboxFilter'
 const WORLD_THEME_KEY = 'skylands.worldTheme'
 
@@ -118,11 +128,21 @@ function loadFilter(): 'open' | 'all' {
   }
 }
 
-function loadView(): 'world' | 'inbox' {
+function loadView(): View {
   try {
-    return localStorage.getItem(VIEW_KEY) === 'inbox' ? 'inbox' : 'world'
+    const v = localStorage.getItem(VIEW_KEY)
+    return v === 'inbox' || v === 'settings' ? v : 'world'
   } catch {
     return 'world'
+  }
+}
+
+function loadSettingsPage(): SettingsPage {
+  try {
+    const v = localStorage.getItem(SETTINGS_PAGE_KEY)
+    return SETTINGS_PAGES.find((p) => p === v) ?? 'islands'
+  } catch {
+    return 'islands'
   }
 }
 
@@ -149,7 +169,7 @@ type Listener = (s: State) => void
 
 /** One place for everything the page renders from. Every change notifies every listener. */
 export class Store {
-  state: State = { link: 'connecting', loading: null, server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), inbox: null, inboxFilter: loadFilter(), convoMode: {}, worldTheme: loadWorldTheme(), notify: loadNotify(), push: false, pushError: null, phone: false, route: {}, install: 'no' }
+  state: State = { link: 'connecting', loading: null, server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), settingsPage: loadSettingsPage(), inbox: null, inboxFilter: loadFilter(), convoMode: {}, worldTheme: loadWorldTheme(), notify: loadNotify(), push: false, pushError: null, phone: false, route: {}, install: 'no' }
   private listeners: Listener[] = []
 
   subscribe(fn: Listener): void {
@@ -205,8 +225,8 @@ export class Store {
     this.update({ inboxFilter })
   }
 
-  /** Switches between the world and the inbox, and remembers which. */
-  setView(view: 'world' | 'inbox'): void {
+  /** Switches between the world, the inbox, and Settings, and remembers which. */
+  setView(view: View): void {
     if (view === this.state.view) return
     try {
       localStorage.setItem(VIEW_KEY, view)
@@ -214,6 +234,17 @@ export class Store {
       // Same as above.
     }
     this.update({ view })
+  }
+
+  /** Opens a page of Settings, and remembers which. */
+  setSettingsPage(settingsPage: SettingsPage): void {
+    if (settingsPage === this.state.settingsPage) return
+    try {
+      localStorage.setItem(SETTINGS_PAGE_KEY, settingsPage)
+    } catch {
+      // Same as above.
+    }
+    this.update({ settingsPage })
   }
 
   /** Draws the world in another theme, and remembers which. */

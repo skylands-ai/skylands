@@ -1,4 +1,4 @@
-import { el } from './dom'
+import { el, heldKeyboard } from './dom'
 import type { FetchCache, Fetched } from './fetchcache'
 import type { LiveText } from './live'
 import { renderMarkdown } from './markdown'
@@ -93,40 +93,6 @@ function listDeps(s: State): unknown[] {
 export function conversationDeps(s: State, open: Session | undefined, fetched: Fetched | undefined, changes: Fetched | undefined, cache: FetchCache, terminals: Pick<Terminals, 'version'>): unknown[] {
   if (!open) return [null]
   return [open, s.repos[open.repoId], s.viewed[open.id], inputsVersion(), s.approvers, s.me, s.world, fetched?.at, fetched?.loading, fetched?.error, fetched?.text, changes?.at, changes?.loading, changes?.error, changes?.changes, changingVersion, rulesToggles, settingsKey(s, open), convoMode(s, open), terminals.version(), ...chipDeps(open, cache)]
-}
-
-/**
- * The control that has the keyboard, when it carries a data-keep key: a
- * control drawn again under the same key, such as a reply box that keeps
- * its draft, gets the keyboard back with its caret where it was.
- */
-function heldKeyboard(root: HTMLElement): (() => void) | null {
-  const a = document.activeElement
-  if (!(a instanceof HTMLElement) || !root.contains(a) || !a.dataset.keep) return null
-  const key = a.dataset.keep
-  const field = a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement ? a : null
-  // Some inputs, such as a number's, have no caret to read.
-  let caret: [number, number, 'forward' | 'backward' | 'none'] | null = null
-  try {
-    if (field && field.selectionStart !== null && field.selectionEnd !== null) caret = [field.selectionStart, field.selectionEnd, field.selectionDirection ?? 'none']
-  } catch {
-    caret = null
-  }
-  const top = a.scrollTop
-  return () => {
-    if (a.isConnected) return
-    const next = root.querySelector<HTMLElement>(`[data-keep="${CSS.escape(key)}"]`)
-    if (!next || next.matches(':disabled')) return
-    next.focus({ preventScroll: true })
-    if (caret && (next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement)) {
-      try {
-        next.setSelectionRange(...caret)
-      } catch {
-        // The new control has no caret either.
-      }
-    }
-    next.scrollTop = top
-  }
 }
 
 /**

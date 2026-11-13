@@ -13,7 +13,7 @@ skylands devworld install
 
 ## Install a Daemon
 
-On a machine that only hosts agents for a world running somewhere else, install the daemon. The citadel's panel shows the whole command under "Add a host":
+On a machine that only hosts agents for a world running somewhere else, install the daemon. The citadel shows the whole command under "Add a host", on the Islands page of its Settings:
 
 ```sh
 skylands daemon install --world O... --nats-url nats-leaf://<world-host>:7422
