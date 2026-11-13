@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nuid"
+	"github.com/skylands-ai/skylands/internal/describe"
 	"github.com/skylands-ai/skylands/internal/titles"
 	"github.com/skylands-ai/skylands/internal/watchdog"
 	"github.com/spachava753/acp-sdk/acp"
@@ -640,6 +641,15 @@ func (a *agent) SessionPrompt(ctx context.Context, req *acp.PromptRequest) (*acp
 		}
 		return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn, Usage: usage(TitleInputTokens, uint64(len(title)))}, nil
 	}
+	if asked := promptText(req); describe.IsCommitRequest(asked) || describe.IsPullRequestRequest(asked) {
+		// A request to describe changes gets the description alone, named
+		// for the files in the diff it was given.
+		text := describe.Fake(asked)
+		if err := send(acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(text))); err != nil {
+			return nil, err
+		}
+		return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn, Usage: usage(DescribeInputTokens, uint64(len(text)))}, nil
+	}
 	pause := func() bool {
 		select {
 		case <-ctx.Done():
@@ -915,6 +925,9 @@ const (
 	FileInputTokens uint64 = 1_000
 	// TitleInputTokens is what the title request costs.
 	TitleInputTokens uint64 = 50
+	// DescribeInputTokens is what a request for a commit message or a pull
+	// request's title and body costs.
+	DescribeInputTokens uint64 = 300
 )
 
 // usage is a turn's token count as ACP carries it: the given input, the

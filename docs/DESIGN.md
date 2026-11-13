@@ -444,6 +444,7 @@ The daemon decides what leaves the host. Session and host events carry metadata 
 - NATS stores events. Each citadel derives its projections from them _in memory_, so no citadel holds data of its own, and it keeps fetched content only for as long as a person is viewing it.
 - Event streams on each host are capped by size. When an offline host reaches the cap, the daemon stops starting new sessions rather than dropping events that haven't synced.
 - Push notifications carry no tool input, file contents, or commands.
+- A commit message or a pull request's title and body that a person leaves blank is written from the changes alone. The session's agent writes it in a side session that sees only the diff, and the branch's commit messages for a pull request. Without an agent, git's account of the files and commits is used. Neither the prompt nor the conversation's title reaches a repository or a pull request, since a pull request can be public.
 
 ## Agents and adapters
 

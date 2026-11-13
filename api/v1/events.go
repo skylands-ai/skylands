@@ -421,10 +421,12 @@ type UsageReported struct {
 // the sum over its sessions.
 const EventTokensUsed = "TokensUsed"
 
-// What a TokensUsed event paid for.
+// What a TokensUsed event paid for: a turn, the conversation's title, or a
+// commit message or pull request the agent wrote from the changes.
 const (
-	TokensForTurn  = "turn"
-	TokensForTitle = "title"
+	TokensForTurn        = "turn"
+	TokensForTitle       = "title"
+	TokensForDescription = "description"
 )
 
 // TokenUsage counts tokens by kind, for one request or summed over many.
@@ -453,8 +455,8 @@ func (t *TokenUsage) Add(o TokenUsage) {
 // IsZero reports whether nothing was counted.
 func (t TokenUsage) IsZero() bool { return t == TokenUsage{} }
 
-// TokensUsed records the tokens one request cost. For is TokensForTurn or
-// TokensForTitle.
+// TokensUsed records the tokens one request cost. For is TokensForTurn,
+// TokensForTitle, or TokensForDescription.
 type TokensUsed struct {
 	SessionID string     `json:"sessionId"`
 	For       string     `json:"for,omitempty"`
@@ -995,6 +997,24 @@ const (
 	CommandRemoveWorktree  = "RemoveWorktree"
 )
 
+// WritingCommandTimeout is how long a host has to answer CommitChanges or
+// OpenPullRequest, which can wait on the agent writing the commit message
+// or the pull request's title and body.
+const WritingCommandTimeout = 3 * time.Minute
+
+// CommandTimeout is how long a host has to answer a command, unless
+// CommandTimeoutFor says otherwise.
+const CommandTimeout = 30 * time.Second
+
+// CommandTimeoutFor is how long a host has to answer a command of the
+// given type.
+func CommandTimeoutFor(commandType string) time.Duration {
+	if commandType == CommandCommitChanges || commandType == CommandOpenPullRequest {
+		return WritingCommandTimeout
+	}
+	return CommandTimeout
+}
+
 // RemoveWorktree deletes an ended session's worktree, and its branch when
 // git finds it merged, as "skylands session remove" does without --force:
 // a worktree with uncommitted changes is kept, and so is a branch with
@@ -1008,7 +1028,9 @@ type RemoveWorktree struct {
 }
 
 // CommitChanges commits everything in the session's worktree. An empty
-// Message uses the conversation's title.
+// Message is written from the changes alone, never from the conversation:
+// by the session's agent from the diff, or from the files changed when no
+// agent is running.
 type CommitChanges struct {
 	ID        string `json:"id"`
 	SessionID string `json:"sessionId"`
@@ -1029,8 +1051,10 @@ type MergeChanges struct {
 }
 
 // OpenPullRequest pushes the session's branch to the repository's origin
-// and opens a pull request against its base with gh. Empty Title and Body
-// use the conversation's title and first prompt.
+// and opens a pull request against its base with gh. An empty Title or
+// Body is written from the branch's commits and diff alone, never from
+// the conversation: by the session's agent, or from the commit messages
+// when no agent is running.
 type OpenPullRequest struct {
 	ID        string `json:"id"`
 	SessionID string `json:"sessionId"`

@@ -164,8 +164,8 @@ type Observer interface {
 	// Usage is a reading of the context window: used tokens of size.
 	Usage(used, size uint64)
 	// Tokens is what one request cost, once the agent has answered it: a
-	// turn's, or the title request's. purpose is v1.TokensForTurn or
-	// v1.TokensForTitle. Agents that count nothing never call it.
+	// turn's, or a side request's, such as the title's. purpose is a
+	// v1.TokensFor value. Agents that count nothing never call it.
 	Tokens(purpose string, t v1.TokenUsage)
 	// Message receives agent text, which stays on the host.
 	Message(text string)

@@ -410,8 +410,10 @@ function changesCard(x: Session, f: Fetched | undefined, actions: InboxActions):
     const n = c.changed.length
     const shown = c.changed.slice(0, 6).join(', ') + (n > 6 ? ', \u2026' : '')
     box.appendChild(el('div', { class: 'sub' }, [`${n} ${n === 1 ? 'file' : 'files'} changed since the last commit: `, el('code', { text: shown })]))
-    const input = el('input', { type: 'text', 'aria-label': 'Commit message', placeholder: 'Commit message', 'data-keep': `commit-${x.id}` }) as HTMLInputElement
-    input.value = messages.get(x.id) ?? sessionLabel(x, 72)
+    // Left blank, the message is written from the changes on the host,
+    // never from the conversation, whose words aren't the repository's.
+    const input = el('input', { type: 'text', 'aria-label': 'Commit message', placeholder: 'Commit message, or blank to write one from the changes', 'data-keep': `commit-${x.id}` }) as HTMLInputElement
+    input.value = messages.get(x.id) ?? ''
     input.addEventListener('input', () => messages.set(x.id, input.value))
     const commit = (): Promise<string> => actions.commit(x, input.value.trim())
     // The commit moves the session's revision on by one, which the second

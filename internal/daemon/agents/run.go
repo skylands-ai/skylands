@@ -725,6 +725,23 @@ func (r *Run) drain() { r.handler.catchUp() }
 // the observer or the conversation; what it costs does, since the session
 // pays for it. It gives up after the timeout.
 func (r *Run) Title(ctx context.Context, request string, timeout time.Duration) (string, error) {
+	reply, err := r.Ask(ctx, titles.Request(request), v1.TokensForTitle, timeout)
+	if err != nil {
+		return "", err
+	}
+	title := titles.Clean(reply)
+	if title == "" {
+		return "", errors.New("the agent gave no usable title")
+	}
+	return title, nil
+}
+
+// Ask sends prompt alone to a side session of its own, which knows nothing
+// of the conversation, and returns what the agent said. Nothing it says
+// reaches the observer or the conversation; what it costs does, as
+// purpose, a v1.TokensFor value, since the session pays for it. It gives
+// up after the timeout.
+func (r *Run) Ask(ctx context.Context, prompt, purpose string, timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	sess, err := r.client.SessionNew(ctx, &acp.NewSessionRequest{Cwd: r.cwd, McpServers: []acp.McpServer{}, Meta: r.meta})
@@ -754,20 +771,16 @@ func (r *Run) Title(ctx context.Context, request string, timeout time.Duration) 
 		case <-done:
 		}
 	}()
-	resp, err := r.client.SessionPrompt(ctx, &acp.PromptRequest{SessionID: sess.SessionID, Prompt: []acp.ContentBlock{acp.TextContentBlock(titles.Request(request))}})
+	resp, err := r.client.SessionPrompt(ctx, &acp.PromptRequest{SessionID: sess.SessionID, Prompt: []acp.ContentBlock{acp.TextContentBlock(prompt)}})
 	close(done)
 	if err != nil {
-		return "", fmt.Errorf("ask for a title: %w", err)
+		return "", fmt.Errorf("ask in a side session: %w", err)
 	}
 	r.drain()
 	if t, ok := tokenUsage(resp.Usage); ok {
-		r.handler.obs.Tokens(v1.TokensForTitle, t)
+		r.handler.obs.Tokens(purpose, t)
 	}
-	title := titles.Clean(r.handler.collected(sess.SessionID))
-	if title == "" {
-		return "", errors.New("the agent gave no usable title")
-	}
-	return title, nil
+	return r.handler.collected(sess.SessionID), nil
 }
 
 // Cancel asks the agent to end the turn in progress, if any.
