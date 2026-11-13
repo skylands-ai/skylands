@@ -54,3 +54,9 @@ it prints a link to set the world up:
 
 Open it and set the world up. After that, the
 world is at <http://127.0.0.1:8080>, and that browser opens it as a valid approver.
+
+---
+
+<p align="center">
+  Created with joy by Kevin Hoffman · <a href="https://github.com/autodidaddict">GitHub</a> · <a href="https://www.linkedin.com/in/kevinshoffman/">LinkedIn</a> · <a href="https://kevinhoffman.blog">Blog</a>
+</p>
