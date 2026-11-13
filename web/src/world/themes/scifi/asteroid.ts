@@ -2,11 +2,10 @@ import * as THREE from 'three'
 import { reduceMotion } from '../../../dom'
 import { G } from '../../materials'
 import { hash3, ringNoise, rng } from '../../noise'
-import type { Placement } from '../../placement'
-import { selectionRing } from '../../shapes'
-import type { IslandMeshes } from '../../theme'
+import type { IslandMeshes, IslandShape } from '../../theme'
 import { commArray } from './comms'
 import { S, SG } from './materials'
+import { reticle } from './ring'
 
 type Noise = (t: number) => number
 
@@ -66,12 +65,11 @@ function plateGeo(R: number, noise: Noise): THREE.BufferGeometry {
  * landing surface on top, boulders, and small outposts whose masts blink.
  * Nothing is painted on the surface: a ring there would read as a
  * selection, which the island's turning ring and a terrace's lights show.
- * Everything is seeded from the placement, so it looks the same on every
+ * Everything is seeded from its shape, so it looks the same on every
  * visit.
  */
-export function buildAsteroid(host: string, h: Placement): IslandMeshes {
+export function buildAsteroid(h: IslandShape): IslandMeshes {
   const g = new THREE.Group()
-  g.userData.host = host
   const noise = ringNoise(h.seed)
   const r = rng(h.seed * 7 + 3)
   const plate = new THREE.Mesh(plateGeo(h.R, noise), [S.rockSide, S.deck, S.rockSide])
@@ -136,9 +134,9 @@ export function buildAsteroid(host: string, h: Placement): IslandMeshes {
     g.add(o)
   }
 
-  const ring = selectionRing(h.R * 1.18, 0.09)
-  ring.position.y = 0.15
-  g.add(ring)
+  const ring = reticle(h.R * 1.18, 0.09)
+  ring.group.position.y = 0.15
+  g.add(ring.group)
   const color = new THREE.Color()
   return {
     group: g,

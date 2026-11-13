@@ -1,14 +1,13 @@
 import * as THREE from 'three'
 import { G, M } from '../../materials'
 import { ringNoise } from '../../noise'
-import { crenelRing, crenelSquare, crystalAt, selectionRing, slit, underside } from '../../shapes'
+import { crenelRing, crenelSquare, crystalAt, slit, underside } from '../../shapes'
 import type { Citadel } from '../../theme'
+import { selectionRing } from './ring'
 
 /** The castle at the center of the world. It looks the same whether one citadel runs or ten. */
 export function buildCitadel(): Citadel {
   const g = new THREE.Group()
-  g.userData.host = 'cit'
-  g.position.set(0, 8, 0)
   const noise = ringNoise(77)
   const baseMesh = new THREE.Mesh(new THREE.CylinderGeometry(9, 8.7, 1.6, 24), [M.stoneWall, M.stoneTop, M.stoneWall])
   baseMesh.position.y = -0.8
@@ -112,7 +111,7 @@ export function buildCitadel(): Citadel {
 
   const core = crystalAt(g, -1.6 - 12 - 1.8, 1.7)
   const ring = selectionRing(10, 0.1)
-  ring.position.y = 0.1
-  g.add(ring)
-  return { group: g, core, beacon, halo, light: bl, ring, labelY: top + 3 }
+  ring.group.position.y = 0.1
+  g.add(ring.group)
+  return { group: g, core, ring, halo, light: bl, labelY: top + 3 }
 }

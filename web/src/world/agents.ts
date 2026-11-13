@@ -395,9 +395,10 @@ function padSpot(t: TerraceAccess): Spot {
   return { x: t.center.x, z: t.center.z, top: 0.35, idx: null }
 }
 
+/** A building's roof, on the island. Buildings stand where they are from their terrace's center. */
 function bldSpot(t: TerraceAccess, idx: number): Spot {
   const b = t.blds[idx]
-  return { x: b.position.x, z: b.position.z, top: b.userData.top as number, idx }
+  return { x: t.center.x + b.position.x, z: t.center.z + b.position.z, top: b.userData.top as number, idx }
 }
 
 /** The world position of a building's roof. */

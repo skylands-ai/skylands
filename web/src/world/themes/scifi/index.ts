@@ -1,9 +1,10 @@
 import type { WorldTheme } from '../../theme'
 import { buildAsteroid } from './asteroid'
+import { BUILDINGS } from './materials'
 import { shootingStar } from './meteor'
 import { starship } from './ships'
 import { buildStation } from './station'
-import { buildTerrace } from './terrace'
+import { buildTerrace, tower } from './terrace'
 
 /**
  * A space station in place of the castle, asteroids with flattened landing
@@ -16,6 +17,8 @@ export const scifiTheme: WorldTheme = {
   buildCitadel: buildStation,
   buildIsland: buildAsteroid,
   buildTerrace,
+  building: tower,
+  buildings: BUILDINGS,
   airship: starship,
   sky: {
     top: 0x02040b,

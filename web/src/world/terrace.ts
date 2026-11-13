@@ -1,7 +1,7 @@
 import type * as THREE from 'three'
 import type { Repo, TerrainFile } from '../protocol'
 import { rng } from './noise'
-import type { BuildingMats } from './theme'
+import type { BuildingMats, TerraceMeshes, WorldTheme } from './theme'
 
 /** Buildings drawn per terrace at most: an 8 by 8 grid. The daemon already keeps only this many files, largest first. */
 export const MAX_BUILDINGS = 64
@@ -14,6 +14,9 @@ export interface TerraceSpec {
   z: number
   sx: number
   sz: number
+  /** The grid of building lots on the plaza, which sets its size. */
+  cols: number
+  rows: number
   /** The files that get buildings, largest first when capped. */
   files: TerrainFile[]
   /** How many tracked files the repo has in all. */
@@ -64,11 +67,11 @@ export function layoutTerraces(R: number, repos: Repo[]): TerraceSpec[] {
       x = Math.cos(a) * d
       z = Math.sin(a) * d
     }
-    return { id: repo.id, name: repo.name, x, z, sx, sz, files: files.slice(0, cols * rows), total: repo.totalFiles }
+    return { id: repo.id, name: repo.name, x, z, sx, sz, cols, rows, files: files.slice(0, cols * rows), total: repo.totalFiles }
   })
 }
 
-/** Where one file's building stands on its terrace, and how tall it is. */
+/** Where one file's building stands, from its terrace's center, and how tall it is. */
 export interface Lot {
   x: number
   z: number
@@ -80,15 +83,15 @@ export interface Lot {
 /**
  * The lots of a terrace's buildings: one per file on a seeded shuffle of
  * the grid, each as tall as the square root of its file's share of the
- * largest. Every theme builds on these, so an airship lands on the same
- * roof whichever theme draws it.
+ * largest. The world stands every theme's buildings on these, so an
+ * airship lands on the same roof whichever theme draws it.
  */
 export function terraceLots(t: TerraceSpec, seed: number): Lot[] {
   const r = rng(seed)
-  const cols = Math.max(1, Math.floor((t.sx - 0.5) / CELL))
-  const rows = Math.max(1, Math.floor((t.sz - 0.5) / CELL))
+  // The grid comes from the layout, not from the plaza's size: 3 * 0.95
+  // divided by 0.95 is a hair under 3, which would lose a row of lots.
   const cells: [number, number][] = []
-  for (let cx = 0; cx < cols; cx++) for (let cz = 0; cz < rows; cz++) cells.push([cx, cz])
+  for (let cx = 0; cx < t.cols; cx++) for (let cz = 0; cz < t.rows; cz++) cells.push([cx, cz])
   for (let s = cells.length - 1; s > 0; s--) {
     const q = Math.floor(r() * (s + 1))
     const tmp = cells[s]
@@ -99,8 +102,8 @@ export function terraceLots(t: TerraceSpec, seed: number): Lot[] {
   return cells.slice(0, Math.min(t.files.length, cells.length)).map((c, idx) => {
     const file = t.files[idx]
     return {
-      x: t.x - t.sx / 2 + 0.25 + (c[0] + 0.5) * ((t.sx - 0.5) / cols),
-      z: t.z - t.sz / 2 + 0.25 + (c[1] + 0.5) * ((t.sz - 0.5) / rows),
+      x: (c[0] + 0.5 - t.cols / 2) * CELL,
+      z: (c[1] + 0.5 - t.rows / 2) * CELL,
       height: 0.4 + 2.2 * Math.sqrt(file.size / maxSize),
       file,
       idx,
@@ -113,15 +116,35 @@ export function terraceLots(t: TerraceSpec, seed: number): Lot[] {
  * resting material, with what the world reads from it. Its geometry is a
  * unit block, stretched here to the lot's footprint and height.
  */
-export function asBuilding(b: THREE.Mesh, lot: Lot, t: TerraceSpec, mats: BuildingMats): void {
+function asBuilding(b: THREE.Mesh, lot: Lot, t: TerraceSpec, mats: BuildingMats): void {
   b.material = mats.rest
   b.scale.set(0.7, lot.height, 0.7)
   b.position.set(lot.x, PLAZA_TOP + lot.height / 2, lot.z)
   b.userData = { top: PLAZA_TOP + lot.height, file: lot.file.path, size: lot.file.size, terraceId: t.id, bldIdx: lot.idx, dwell: {}, mats }
 }
 
-/** Points around a terrace, out from its plaza's edge and about a step apart, where its boundary posts stand. */
-export function boundaryPoints(t: TerraceSpec, out: number, step: number): [number, number][] {
+/**
+ * A terrace in a theme, at its place on its island: the theme's plaza and
+ * boundary, with the theme's building for each file standing on its lot.
+ * Anything a click lands on in it names the terrace, and a building names
+ * its file too.
+ */
+export function placeTerrace(theme: WorldTheme, t: TerraceSpec, seed: number): { meshes: TerraceMeshes; blds: THREE.Mesh[] } {
+  const meshes = theme.buildTerrace({ sx: t.sx, sz: t.sz, color: ropeColor(t.id) })
+  const g = meshes.group
+  g.position.set(t.x, 0, t.z)
+  g.userData.terraceId = t.id
+  const blds = terraceLots(t, seed).map((lot) => {
+    const b = theme.building(lot.height)
+    asBuilding(b, lot, t, theme.buildings)
+    g.add(b)
+    return b
+  })
+  return { meshes, blds }
+}
+
+/** Points around a terrace's plaza, from its center, out from its edge and about a step apart, where its boundary posts stand. */
+export function boundaryPoints(t: { sx: number; sz: number }, out: number, step: number): [number, number][] {
   const hx = t.sx / 2 + out
   const hz = t.sz / 2 + out
   const corners = [
@@ -135,7 +158,7 @@ export function boundaryPoints(t: TerraceSpec, out: number, step: number): [numb
     const a = corners[c]
     const b = corners[(c + 1) % 4]
     const n = Math.max(1, Math.round(Math.hypot(b[0] - a[0], b[1] - a[1]) / step))
-    for (let i = 0; i < n; i++) pts.push([t.x + a[0] + ((b[0] - a[0]) * i) / n, t.z + a[1] + ((b[1] - a[1]) * i) / n])
+    for (let i = 0; i < n; i++) pts.push([a[0] + ((b[0] - a[0]) * i) / n, a[1] + ((b[1] - a[1]) * i) / n])
   }
   return pts
 }
