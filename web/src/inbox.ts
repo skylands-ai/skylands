@@ -92,7 +92,7 @@ function listDeps(s: State): unknown[] {
  */
 export function conversationDeps(s: State, open: Session | undefined, fetched: Fetched | undefined, changes: Fetched | undefined, cache: FetchCache, terminals: Pick<Terminals, 'version'>): unknown[] {
   if (!open) return [null]
-  return [open, s.repos[open.repoId], s.viewed[open.id], inputsVersion(), s.approvers, s.me, s.world, fetched?.at, fetched?.loading, fetched?.error, fetched?.text, changes?.at, changes?.loading, changes?.error, changes?.changes, rulesToggles, settingsKey(s, open), convoMode(s, open), terminals.version(), ...chipDeps(open, cache)]
+  return [open, s.repos[open.repoId], s.viewed[open.id], inputsVersion(), s.approvers, s.me, s.world, fetched?.at, fetched?.loading, fetched?.error, fetched?.text, changes?.at, changes?.loading, changes?.error, changes?.changes, changingVersion, rulesToggles, settingsKey(s, open), convoMode(s, open), terminals.version(), ...chipDeps(open, cache)]
 }
 
 /**
@@ -339,6 +339,17 @@ export function approvalCard(s: State, x: Session, p: Permission, actions: Inbox
 const messages = new Map<string, string>()
 
 /**
+ * What a changes card is doing, by session, or why what it did last
+ * failed, and a counter so a rebuild notices. The commit before a merge or
+ * a pull request moves the session, which draws the card again while the
+ * rest is still going: the new card says so too, with its buttons off, and
+ * shows the error if the rest fails. An error shows until the card is used
+ * again or the agent takes another turn.
+ */
+const changing = new Map<string, { text: string; failed: boolean; turns: number }>()
+let changingVersion = 0
+
+/**
  * Where the session's changes stand, and what to do with them: commit
  * what is uncommitted, and for a session on its own branch, merge it into
  * its base in the checkout or open a pull request from it. A session in
@@ -370,22 +381,27 @@ function changesCard(x: Session, f: Fetched | undefined, actions: InboxActions):
     return box
   }
   const c = f.changes
-  const note = el('span', { class: 'sub' })
-  const buttons: HTMLButtonElement[] = []
-  const act = async (run: () => Promise<string>, saying: string): Promise<void> => {
-    for (const b of buttons) b.disabled = true
-    note.textContent = saying
-    note.style.color = ''
-    const err = await run()
-    if (err) {
-      note.textContent = err
-      note.style.color = 'var(--bad)'
-      for (const b of buttons) b.disabled = false
+  const now = changing.get(x.id)
+  const busy = !!now && !now.failed
+  const failed = !!now && now.failed && now.turns === x.turns
+  const note = el('span', { class: 'sub', text: busy || failed ? now?.text : null, style: failed ? 'color:var(--bad)' : null })
+  // say tells the card, as drawn now or again, what is happening.
+  const act = async (run: (say: (text: string) => void) => Promise<string>, saying: string): Promise<void> => {
+    const say = (text: string): void => {
+      changing.set(x.id, { text, failed: false, turns: x.turns })
+      changingVersion++
+      actions.refresh()
     }
+    say(saying)
+    const err = await run(say)
+    if (err) changing.set(x.id, { text: err, failed: true, turns: x.turns })
+    else changing.delete(x.id)
+    changingVersion++
+    actions.refresh()
   }
   const button = (text: string, primary: boolean, onclick: () => void): HTMLButtonElement => {
     const b = el('button', { type: 'button', class: `btn small ${primary ? 'primary' : 'ghost'}`, text, onclick }) as HTMLButtonElement
-    buttons.push(b)
+    b.disabled = busy
     return b
   }
   const dirty = c.changed.length > 0
@@ -398,16 +414,24 @@ function changesCard(x: Session, f: Fetched | undefined, actions: InboxActions):
     input.value = messages.get(x.id) ?? sessionLabel(x, 72)
     input.addEventListener('input', () => messages.set(x.id, input.value))
     const commit = (): Promise<string> => actions.commit(x, input.value.trim())
+    // The commit moves the session's revision on by one, which the second
+    // step is signed over.
+    const commitThen = (saying: string, rest: () => Promise<string>) => async (say: (text: string) => void) => {
+      const err = await commit()
+      if (err) return err
+      say(saying)
+      return rest()
+    }
     const row = el('div', { class: 'acts' }, [input, button('Commit', !canMerge, () => void act(commit, 'Committing\u2026'))])
     if (canMerge && x.base) {
-      row.appendChild(button(`Commit and merge into ${x.base}`, true, () => void act(async () => (await commit()) || actions.merge(x, 1), 'Committing and merging\u2026')))
-      if (!x.pullRequest) row.appendChild(button('Commit and open a pull request', false, () => void act(async () => (await commit()) || actions.pullRequest(x, 1), 'Committing and pushing\u2026')))
+      row.appendChild(button(`Commit and merge into ${x.base}`, true, () => void act(commitThen(`Committed. Merging into ${x.base}\u2026`, () => actions.merge(x, 1)), 'Committing\u2026')))
+      if (!x.pullRequest) row.appendChild(button('Commit and open a pull request', false, () => void act(commitThen('Committed. Pushing and opening a pull request\u2026', () => actions.pullRequest(x, 1)), 'Committing\u2026')))
     }
     box.appendChild(row)
   } else if (canMerge) {
     const row = el('div', { class: 'acts' }, [el('span', { class: 'sub', text: `${c.ahead} ${c.ahead === 1 ? 'commit' : 'commits'} ahead of ${c.base}.` })])
     row.appendChild(button(`Merge into ${c.base}`, true, () => void act(() => actions.merge(x), 'Merging\u2026')))
-    if (!x.pullRequest) row.appendChild(button('Open a pull request', false, () => void act(() => actions.pullRequest(x), 'Pushing\u2026')))
+    if (!x.pullRequest) row.appendChild(button('Open a pull request', false, () => void act(() => actions.pullRequest(x), 'Pushing and opening a pull request\u2026')))
     box.appendChild(row)
   } else {
     box.appendChild(el('span', { class: 'sub', text: x.commits ? 'Everything is committed.' : 'Nothing to commit.' }))
