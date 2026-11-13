@@ -725,8 +725,9 @@ func TestChangesAreCommittedMergedSentAndRemoved(t *testing.T) {
 		t.Errorf("merge with uncommitted changes: err = %v", err)
 	}
 
-	// A commit takes everything in the worktree, with the title as the
-	// message when none is given; the same command id commits nothing more.
+	// A commit takes everything in the worktree. With no message given,
+	// the agent writes one from the diff alone, even once the conversation
+	// has a title; the same command id commits nothing more.
 	for titled, _ := m.Get("s1"); titled.Title == ""; titled, _ = m.Get("s1") {
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -737,8 +738,8 @@ func TestChangesAreCommittedMergedSentAndRemoved(t *testing.T) {
 	if again, err := m.Commit(f.ctx, v1.CommitChanges{ID: "x4", SessionID: "s1"}); err != nil || again.Commits != 1 {
 		t.Errorf("repeated commit = %+v, %v", again, err)
 	}
-	if msg := gitOut(t, s.Worktree, "log", "-1", "--format=%s"); msg != "Add a file" {
-		t.Errorf("commit message = %q, want the title", msg)
+	if msg := gitOut(t, s.Worktree, "log", "-1", "--format=%B"); msg != "Change a.go, new.go\n\nWritten from the diff alone." {
+		t.Errorf("commit message = %q, want the agent's, from the diff", msg)
 	}
 	if changes, _ := m.Changes(f.ctx, "s1"); len(changes.Changed) != 0 || changes.Ahead != 1 {
 		t.Errorf("after the commit = %+v", changes)
@@ -767,8 +768,15 @@ func TestChangesAreCommittedMergedSentAndRemoved(t *testing.T) {
 	if err != nil || pr.PullRequest != "https://example.com/pr/7" {
 		t.Fatalf("OpenPullRequest = %+v, %v", pr, err)
 	}
-	if args, _ := os.ReadFile(ghArgs); !strings.Contains(string(args), "pr\ncreate\n--head\nskylands/s1\n--base\n"+base+"\n--title\nAdd a file\n--body\nadd a file") {
+	// The agent wrote the title and body from what the pull request holds:
+	// the second commit, since the first is merged into the base already.
+	args, _ := os.ReadFile(ghArgs)
+	if !strings.Contains(string(args), "pr\ncreate\n--head\nskylands/s1\n--base\n"+base+"\n--title\nChange b.go\n--body\nA pull request written from its commits and diff.\n") {
 		t.Errorf("gh was called with %q", args)
+	}
+	// Neither the prompt nor the title made it into git or the pull request.
+	if log := gitOut(t, s.Worktree, "log", "--format=%B"); strings.Contains(strings.ToLower(log+string(args)), "add a file") {
+		t.Errorf("the conversation leaked into the commits or the pull request:\n%s\n%s", log, args)
 	}
 	if pushed := gitOut(t, bare, "branch", "--list", "skylands/s1"); !strings.Contains(pushed, "skylands/s1") {
 		t.Errorf("the branch was not pushed: %q", pushed)
@@ -812,7 +820,7 @@ func TestChangesAreCommittedMergedSentAndRemoved(t *testing.T) {
 	if pruned := m.Prune(f.ctx); len(pruned) != 0 {
 		t.Errorf("Prune after removal = %+v", pruned)
 	}
-	if b, _ := os.ReadFile(filepath.Join(f.cfg.TranscriptsDir, "s1.md")); !strings.Contains(string(b), "*Committed "+committed.Commit[:7]+": Add a file.*") || !strings.Contains(string(b), "*Merged into "+base+" as ") || !strings.Contains(string(b), "*Opened pull request https://example.com/pr/7.*") || !strings.Contains(string(b), "*Worktree and branch removed.*") {
+	if b, _ := os.ReadFile(filepath.Join(f.cfg.TranscriptsDir, "s1.md")); !strings.Contains(string(b), "*Committed "+committed.Commit[:7]+": Change a.go, new.go.*") || !strings.Contains(string(b), "*Merged into "+base+" as ") || !strings.Contains(string(b), "*Opened pull request https://example.com/pr/7.*") || !strings.Contains(string(b), "*Worktree and branch removed.*") {
 		t.Errorf("transcript = %q", b)
 	}
 
@@ -823,6 +831,99 @@ func TestChangesAreCommittedMergedSentAndRemoved(t *testing.T) {
 	}
 	if s2, _ := m2.Get("s1"); s2.Commits != 2 || s2.MergedInto != base || s2.PullRequest == "" || !s2.WorktreeRemoved || s2.Base != base {
 		t.Errorf("reloaded session = %+v", s2)
+	}
+
+	// The agent was asked twice, for the first commit and the pull
+	// request, and the session paid for both. A commit refused, repeated,
+	// or given its message asked nothing.
+	if n := tokensFor(t, f, v1.TokensForDescription); n != 2 {
+		t.Errorf("the agent was asked to describe the changes %d times, want 2", n)
+	}
+}
+
+// tokensFor counts the TokensUsed events the session history holds for
+// one purpose.
+func tokensFor(t *testing.T, f *fixture, purpose string) int {
+	t.Helper()
+	n := 0
+	err := f.store.Replay(f.ctx, v1.IslandStreamName("ws"), []string{v1.SessionEventFilter("ws")}, func(_ uint64, ev v1.Event) error {
+		var d v1.TokensUsed
+		if ev.Type == v1.EventTokensUsed && ev.Decode(&d) == nil && d.For == purpose {
+			n++
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// TestChangesWrittenWithoutAnAgent covers a session whose agent is gone:
+// a blank commit message comes from the files changed, and a blank pull
+// request from the branch's commit messages, and neither from the
+// conversation.
+func TestChangesWrittenWithoutAnAgent(t *testing.T) {
+	f := setup(t)
+	gitIdentity(t)
+	ghArgs := fakeGH(t)
+	bare := t.TempDir()
+	gitOut(t, bare, "init", "-q", "--bare")
+	gitOut(t, f.repo.Path, "remote", "add", "origin", bare)
+
+	m, err := Load(f.ctx, f.store, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := m.Start(f.ctx, v1.StartSession{ID: "c1", SessionID: "s1", RepoID: f.repo.ID, Agent: "fake", Prompt: "secret plans for the merger"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	asked := waitPending(t, m, "s1", 1)
+	if _, err := m.Approve(f.ctx, v1.ApproveToolCall{ID: "c2", SessionID: "s1", RequestID: asked.Pending[0].RequestID}, "local"); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, m, "s1", StatusIdle)
+	for titled, _ := m.Get("s1"); titled.Title == ""; titled, _ = m.Get("s1") {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if _, err := m.Stop(f.ctx, v1.StopAgent{ID: "c3", SessionID: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.Worktree, "a.go"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.Worktree, "new.go"), []byte("package new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Commit(f.ctx, v1.CommitChanges{ID: "x1", SessionID: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	if msg := gitOut(t, s.Worktree, "log", "-1", "--format=%B"); msg != "Change 2 files\n\nUpdate a.go\nAdd new.go" {
+		t.Errorf("commit message = %q, want the files changed", msg)
+	}
+	if err := os.WriteFile(filepath.Join(s.Worktree, "new.go"), []byte("package new\n\nvar x = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Commit(f.ctx, v1.CommitChanges{ID: "x2", SessionID: "s1", Message: "Give new.go a variable"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.OpenPullRequest(f.ctx, v1.OpenPullRequest{ID: "x3", SessionID: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	args, _ := os.ReadFile(ghArgs)
+	if !strings.Contains(string(args), "\n--title\nChange 2 files\n--body\n- Change 2 files\n- Give new.go a variable\n") {
+		t.Errorf("gh was called with %q", args)
+	}
+	title, _ := m.Get("s1")
+	log := gitOut(t, s.Worktree, "log", "--format=%B")
+	for _, said := range []string{"secret", "merger", strings.ToLower(title.Title)} {
+		if strings.Contains(strings.ToLower(log+string(args)), said) {
+			t.Errorf("%q from the conversation reached the commits or the pull request:\n%s\n%s", said, log, args)
+		}
+	}
+	if n := tokensFor(t, f, v1.TokensForDescription); n != 0 {
+		t.Errorf("an agent that was gone was asked %d times", n)
 	}
 }
 

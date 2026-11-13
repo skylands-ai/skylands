@@ -466,7 +466,7 @@ func (c *commands) handleRepo(ctx context.Context, msg *nats.Msg) {
 		return
 	}
 	repoID, commandType := parts[4], parts[6]
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, v1.CommandTimeoutFor(commandType))
 	defer cancel()
 	switch commandType {
 	case v1.CommandSetRepoRules:
@@ -495,7 +495,7 @@ func (c *commands) handle(ctx context.Context, msg *nats.Msg) {
 		return
 	}
 	sessionID, commandType := parts[4], parts[6]
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, v1.CommandTimeoutFor(commandType))
 	defer cancel()
 	switch commandType {
 	case v1.CommandStartSession:

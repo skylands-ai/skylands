@@ -16,9 +16,12 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
 	"github.com/skylands-ai/skylands/internal/approval"
+	"github.com/skylands-ai/skylands/internal/daemon/agents"
+	"github.com/skylands-ai/skylands/internal/describe"
 )
 
 // Changes reports where a session's changes stand on disk.
@@ -48,8 +51,17 @@ func (m *Manager) Changes(ctx context.Context, id string) (v1.ChangesResult, err
 }
 
 // Commit handles CommitChanges: everything in the worktree becomes one
-// commit on the session's branch. The agent must not be mid-turn.
+// commit on the session's branch. The agent must not be mid-turn. A blank
+// message is written from the changes, as written describes.
 func (m *Manager) Commit(ctx context.Context, cmd v1.CommitChanges) (Session, error) {
+	message := strings.TrimSpace(cmd.Message)
+	if message == "" {
+		s, d, handled, err := m.commitDescription(ctx, cmd)
+		if err != nil || handled {
+			return s, err
+		}
+		message = describe.Message(m.written(ctx, s.ID, d))
+	}
 	m.cmdMu.Lock()
 	defer m.cmdMu.Unlock()
 	s, err := m.forChanges(cmd.ID, cmd.SessionID)
@@ -59,16 +71,6 @@ func (m *Manager) Commit(ctx context.Context, cmd v1.CommitChanges) (Session, er
 	approver, signature, err := m.signedChange(ctx, s, cmd.Revision, cmd.Signature, approval.ChangeCommit, approval.TextHash(cmd.Message))
 	if err != nil {
 		return s, err
-	}
-	message := strings.TrimSpace(cmd.Message)
-	if message == "" {
-		message = s.Title
-	}
-	if message == "" {
-		message = firstLine(s.Prompt)
-	}
-	if message == "" {
-		message = "Changes from a Skylands session"
 	}
 	if _, err := git(ctx, s.Worktree, "add", "-A"); err != nil {
 		return s, err
@@ -150,8 +152,23 @@ func (m *Manager) Merge(ctx context.Context, cmd v1.MergeChanges) (Session, erro
 
 // OpenPullRequest handles OpenPullRequest: the session's branch is pushed
 // to the repository's origin and a pull request is opened from it with gh,
-// which must be installed and signed in on the host.
+// which must be installed and signed in on the host. A blank title or body
+// is written from the branch's commits and diff, as written describes.
 func (m *Manager) OpenPullRequest(ctx context.Context, cmd v1.OpenPullRequest) (Session, error) {
+	title, body := strings.TrimSpace(cmd.Title), strings.TrimSpace(cmd.Body)
+	if title == "" || body == "" {
+		s, d, handled, err := m.pullRequestDescription(ctx, cmd)
+		if err != nil || handled {
+			return s, err
+		}
+		wroteTitle, wroteBody := m.written(ctx, s.ID, d)
+		if title == "" {
+			title = wroteTitle
+		}
+		if body == "" {
+			body = wroteBody
+		}
+	}
 	m.cmdMu.Lock()
 	defer m.cmdMu.Unlock()
 	s, err := m.forChanges(cmd.ID, cmd.SessionID)
@@ -171,17 +188,6 @@ func (m *Manager) OpenPullRequest(ctx context.Context, cmd v1.OpenPullRequest) (
 	}
 	if err := m.committedAndAhead(ctx, s); err != nil {
 		return s, err
-	}
-	title := strings.TrimSpace(cmd.Title)
-	if title == "" {
-		title = s.Title
-	}
-	if title == "" {
-		title = firstLine(s.Prompt)
-	}
-	body := strings.TrimSpace(cmd.Body)
-	if body == "" {
-		body = strings.TrimSpace(s.Prompt)
 	}
 	if _, err := git(ctx, s.Worktree, "push", "-u", "origin", s.Branch); err != nil {
 		return s, err
@@ -218,6 +224,148 @@ func (m *Manager) OpenPullRequest(ctx context.Context, cmd v1.OpenPullRequest) (
 	slog.Info("session: pull request opened", "session", s.ID, "url", url)
 	out, _ := m.Get(s.ID)
 	return out, nil
+}
+
+// A commit message, or a pull request's title or body, that a person left
+// blank is written from the changes alone and never from the conversation,
+// whose prompt and title can carry what wasn't meant for a repository or a
+// public pull request. The session's agent writes it, when it has one
+// running, in a side session given only the diff, and the branch's commit
+// messages for a pull request; git's own account of the changes stands in
+// otherwise. The agent can take a while, so the text is written before the
+// command takes cmdMu, which every session's commands share, after
+// checking what would refuse the command anyway, so a refused command
+// costs nothing. The command then checks everything again.
+
+// DescribeTimeout is how long the agent gets to write about the changes
+// before git's account of them stands in.
+const DescribeTimeout = 90 * time.Second
+
+// description is what a commit message or a pull request's title and body
+// is written from, gathered under cmdMu.
+type description struct {
+	// run is the session's agent, when it has one running.
+	run *agents.Run
+	// request asks the agent for the text.
+	request string
+	// subject and body are git's account of the changes.
+	subject, body string
+}
+
+// written is the subject and body for d: what the agent wrote, when it
+// writes something usable in time, and otherwise git's account.
+func (m *Manager) written(ctx context.Context, id string, d description) (subject, body string) {
+	if d.run == nil {
+		return d.subject, d.body
+	}
+	reply, err := d.run.Ask(ctx, d.request, v1.TokensForDescription, DescribeTimeout)
+	if err != nil {
+		slog.Info("session: the agent wrote nothing about the changes, so git's account stands in", "session", id, "err", err)
+		return d.subject, d.body
+	}
+	subject, body, ok := describe.Clean(reply)
+	if !ok {
+		slog.Info("session: what the agent wrote about the changes was unusable, so git's account stands in", "session", id)
+		return d.subject, d.body
+	}
+	return subject, body
+}
+
+// commitDescription checks a commit as Commit will and gathers what its
+// message is written from: everything in the worktree, staged as the
+// commit takes it. handled says the command is in the history already, and
+// s is the session as it stands.
+func (m *Manager) commitDescription(ctx context.Context, cmd v1.CommitChanges) (s Session, d description, handled bool, err error) {
+	m.cmdMu.Lock()
+	defer m.cmdMu.Unlock()
+	s, err = m.forChanges(cmd.ID, cmd.SessionID)
+	if err != nil || s.Commit != "" && m.wasHandled(cmd.ID) {
+		return s, d, err == nil, err
+	}
+	if _, _, err := m.signedChange(ctx, s, cmd.Revision, cmd.Signature, approval.ChangeCommit, approval.TextHash(cmd.Message)); err != nil {
+		return s, d, false, err
+	}
+	if _, err := git(ctx, s.Worktree, "add", "-A"); err != nil {
+		return s, d, false, err
+	}
+	names, stat, patch, err := diffOf(ctx, s.Worktree, "--cached")
+	switch {
+	case err != nil:
+		return s, d, false, err
+	case names == "":
+		return s, d, false, ErrNothingToCommit
+	}
+	d.run = m.liveRun(s.ID)
+	d.request = describe.CommitRequest(stat, patch)
+	d.subject, d.body = describe.CommitMessage(names)
+	return s, d, false, nil
+}
+
+// pullRequestDescription checks a pull request as OpenPullRequest will and
+// gathers what its title and body are written from: the commits the branch
+// has that its base lacks, and their diff. handled and s are as in
+// commitDescription.
+func (m *Manager) pullRequestDescription(ctx context.Context, cmd v1.OpenPullRequest) (s Session, d description, handled bool, err error) {
+	m.cmdMu.Lock()
+	defer m.cmdMu.Unlock()
+	s, err = m.forChanges(cmd.ID, cmd.SessionID)
+	if err != nil || s.PullRequest != "" && m.wasHandled(cmd.ID) {
+		return s, d, err == nil, err
+	}
+	text, err := approval.PullRequestHash(cmd.Title, cmd.Body)
+	if err != nil {
+		return s, d, false, err
+	}
+	if _, _, err := m.signedChange(ctx, s, cmd.Revision, cmd.Signature, approval.ChangePullRequest, text); err != nil {
+		return s, d, false, err
+	}
+	if s.InCheckout {
+		return s, d, false, ErrInCheckout
+	}
+	if err := m.committedAndAhead(ctx, s); err != nil {
+		return s, d, false, err
+	}
+	log, err := git(ctx, s.Worktree, "log", "-z", "--reverse", "--format=%B", s.Base+"..HEAD", "--")
+	if err != nil {
+		return s, d, false, err
+	}
+	_, stat, patch, err := diffOf(ctx, s.Worktree, s.Base+"...HEAD", "--")
+	if err != nil {
+		return s, d, false, err
+	}
+	commits := describe.ParseLog(log)
+	d.run = m.liveRun(s.ID)
+	d.request = describe.PullRequestRequest(describe.Log(commits), stat, patch)
+	d.subject, d.body = describe.PullRequest(commits)
+	return s, d, false, nil
+}
+
+// diffOf is git's account of the changes git diff args shows: each changed
+// file's status and name, the summary of them, and the patch.
+func diffOf(ctx context.Context, dir string, args ...string) (names, stat, patch string, err error) {
+	diff := func(opts ...string) (string, error) {
+		return git(ctx, dir, append(append([]string{"diff"}, opts...), args...)...)
+	}
+	if names, err = diff("--name-status"); err != nil {
+		return "", "", "", err
+	}
+	if stat, err = diff("--stat"); err != nil {
+		return "", "", "", err
+	}
+	if patch, err = diff("--no-color", "--no-ext-diff"); err != nil {
+		return "", "", "", err
+	}
+	return names, stat, patch, nil
+}
+
+// liveRun is the agent process of a session that has one running.
+func (m *Manager) liveRun(id string) *agents.Run {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if l := m.live[id]; l != nil {
+		return l.run
+	}
+	return nil
 }
 
 // Remove deletes a finished session's worktree and branch. Without force

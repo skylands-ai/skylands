@@ -17,6 +17,15 @@ When the agent isn't in the middle of a turn, the conversation shows where its c
 - merge the session's branch into the checkout, which is aborted if there's a conflict
 - push the branch and open a pull request with `gh`
 
+### Commit Messages and Pull Request Text
+
+Leave the commit message blank and it's written from the changes. Pull requests from the conversation are always written that way. The text describes only the work in the commit or pull request. Neither the prompt nor the conversation's title goes into it, since either can hold things that don't belong in a repository or a public pull request.
+
+While the session's agent is running, it writes the text in a side request that sees only the diff, plus the branch's commit messages for a pull request. The request doesn't see the conversation, and its tokens count toward the session. When no agent is running, or it doesn't answer within 90 seconds, git supplies the text instead:
+
+- a commit message names the files that changed
+- a pull request takes its title from the branch's first commit and lists every commit's subject, or uses the message of its only commit
+
 ## Open a Terminal
 
 To build, test, or look around where the agent works without asking it to, switch the conversation from Chat to Terminal. The first switch opens a shell on the session's island, in its worktree (or the checkout, for a session that works there), as your login shell on that host. Switch back and forth as you like: the terminal keeps running, and shows what it printed meanwhile when you come back.

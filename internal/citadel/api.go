@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nuid"
@@ -545,7 +544,8 @@ func (c *citadel) startSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // sendCommand relays one command by request-reply and returns the
-// daemon's result, or its error as a Go error.
+// daemon's result, or its error as a Go error. It waits as long as the
+// host has to answer: the command's type is the subject's last token.
 func (c *citadel) sendCommand(ctx context.Context, subject string, cmd any) (json.RawMessage, error) {
 	c.mu.Lock()
 	nc := c.nc
@@ -557,7 +557,7 @@ func (c *citadel) sendCommand(ctx context.Context, subject string, cmd any) (jso
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, v1.CommandTimeoutFor(subject[strings.LastIndexByte(subject, '.')+1:]))
 	defer cancel()
 	msg, err := nc.RequestWithContext(ctx, subject, data)
 	if err != nil {
