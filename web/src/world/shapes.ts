@@ -80,25 +80,6 @@ export function crystalAt(group: THREE.Object3D, y: number, size: number): Cryst
   return { mesh: m, mat, light, local: new THREE.Vector3(0, y, 0) }
 }
 
-/**
- * The selection ring: a circle of short arcs lying flat, so a slow turn is
- * visible, which a plain torus would hide.
- */
-export function selectionRing(radius: number, tube: number): THREE.Group {
-  const g = new THREE.Group()
-  const n = 16
-  const arc = ((Math.PI * 2) / n) * 0.58
-  for (let i = 0; i < n; i++) {
-    const seg = new THREE.Mesh(new THREE.TorusGeometry(radius, tube, 6, 10, arc), M.ring)
-    seg.rotation.z = (i / n) * Math.PI * 2
-    seg.raycast = () => {}
-    g.add(seg)
-  }
-  g.rotation.x = Math.PI / 2
-  g.visible = false
-  return g
-}
-
 export function crenelRing(g: THREE.Object3D, r: number, y: number, count: number, size: Size): void {
   for (let i = 0; i < count; i++) {
     const a = (i / count) * Math.PI * 2

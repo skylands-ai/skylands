@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { css, el, reduceMotion } from '../dom'
+import { el, reduceMotion } from '../dom'
 import type { Repo } from '../protocol'
 import { level, type Nav } from '../store'
 import type { WorldThemeId } from '../worldthemes'
@@ -7,18 +7,20 @@ import { Agents, bldWorld, refreshBuilding, type AgentState, type TerraceAccess 
 import { CameraRig, HOME } from './camera'
 import { attachPointerInput } from './input'
 import { Labels } from './labels'
-import { M } from './materials'
 import { placeIsland, type Placement } from './placement'
 import type { Crystal } from './shapes'
 import { Sky } from './sky'
-import { layoutTerraces, type TerraceSpec } from './terrace'
+import { layoutTerraces, placeTerrace, type TerraceSpec } from './terrace'
 import { Tethers } from './tethers'
-import { disposeTree, type BuildingMats, type Citadel, type IslandMeshes, type TerraceMeshes, type WorldTheme } from './theme'
+import { disposeTree, type BuildingMats, type Citadel, type IslandMeshes, type SelectionRing, type TerraceMeshes, type WorldTheme } from './theme'
 import { themeFor } from './themes'
 import { Visitors } from './visitors'
 
 /** Text and a CSS color for a status dot. */
 export type Status = [text: string, color: string]
+
+/** How high the citadel floats over the middle of the world. */
+const CITADEL_Y = 8
 
 /** Whether an object and all its ancestors are visible. */
 function isDrawn(o: THREE.Object3D | null): boolean {
@@ -26,9 +28,28 @@ function isDrawn(o: THREE.Object3D | null): boolean {
   return true
 }
 
+/** A theme's citadel, floating over the middle of the world, with what a click on it means. Its ring is hidden until it is selected. */
+function drawCitadel(theme: WorldTheme): Citadel {
+  const citadel = theme.buildCitadel()
+  citadel.group.position.set(0, CITADEL_Y, 0)
+  citadel.group.userData.host = 'cit'
+  citadel.ring.group.visible = false
+  return citadel
+}
+
+/** A theme's island for a host, with what a click on it means. Its ring is hidden until it is selected. The world moves it to its place each frame. */
+function drawIsland(theme: WorldTheme, host: string, def: Placement): IslandMeshes {
+  const meshes = theme.buildIsland({ R: def.R, depth: def.depth, seed: def.seed, phase: def.phase })
+  meshes.group.userData.host = host
+  meshes.ring.group.visible = false
+  return meshes
+}
+
 interface TerraceView {
   spec: TerraceSpec
   meshes: TerraceMeshes
+  /** One building per file that got one, in the order of the spec's files. */
+  blds: THREE.Mesh[]
   /** Building index by repo-relative path, for the files that got one. */
   pathIdx: Map<string, number>
 }
@@ -38,7 +59,7 @@ interface IslandView {
   def: Placement
   group: THREE.Group
   core: Crystal
-  ring: THREE.Group
+  ring: SelectionRing
   animate?: IslandMeshes['animate']
   pos: THREE.Vector3
   /** 0 while reachable, easing to 1 while the citadel can't reach the host. */
@@ -117,7 +138,7 @@ export class World {
     this.visitors = new Visitors(this.scene)
     this.visitors.set(this.theme.visitor?.() ?? null)
     this.tethers = new Tethers(this.scene)
-    this.citadel = this.theme.buildCitadel()
+    this.citadel = drawCitadel(this.theme)
     this.scene.add(this.citadel.group)
     this.pickRoots.push(this.citadel.group)
     this.labels = new Labels(labelsEl, stage, this.rig.camera)
@@ -151,7 +172,7 @@ export class World {
     let isl = this.islands.get(id)
     if (!isl) {
       const def = placeIsland(id, [...this.islands.values()].map((i) => i.def))
-      const m = this.theme.buildIsland(id, def)
+      const m = drawIsland(this.theme, id, def)
       this.scene.add(m.group)
       this.pickRoots.push(m.group)
       this.tethers.add(id)
@@ -189,11 +210,11 @@ export class World {
     isl.terraces.clear()
     const specs = layoutTerraces(isl.def.R, repos)
     specs.forEach((spec, k) => {
-      const meshes = this.theme.buildTerrace(spec, isl.def.seed * 31 + k)
+      const { meshes, blds } = placeTerrace(this.theme, spec, isl.def.seed * 31 + k)
       isl.group.add(meshes.group)
       const pathIdx = new Map<string, number>()
-      meshes.blds.forEach((_, i) => pathIdx.set(spec.files[i].path, i))
-      isl.terraces.set(spec.id, { spec, meshes, pathIdx })
+      blds.forEach((_, i) => pathIdx.set(spec.files[i].path, i))
+      isl.terraces.set(spec.id, { spec, meshes, blds, pathIdx })
       this.agents.terraceRebuilt(host, spec.id)
     })
     // Scenery was placed before the terraces existed, so clear what they
@@ -225,13 +246,13 @@ export class World {
     this.agents.detachShips()
     const old = this.citadel.group
     disposeTree(old)
-    this.citadel = theme.buildCitadel()
+    this.citadel = drawCitadel(theme)
     this.scene.add(this.citadel.group)
     this.pickRoots[this.pickRoots.indexOf(old)] = this.citadel.group
     for (const isl of this.islands.values()) {
       const was = isl.group
       disposeTree(was)
-      const m = theme.buildIsland(isl.id, isl.def)
+      const m = drawIsland(theme, isl.id, isl.def)
       isl.group = m.group
       isl.core = m.core
       isl.ring = m.ring
@@ -257,7 +278,7 @@ export class World {
     const isl = this.islands.get(host)
     const t = isl?.terraces.get(terrace)
     if (!isl || !t) return undefined
-    return { island: isl.group, blds: t.meshes.blds, pathIdx: t.pathIdx, center: { x: t.spec.x, z: t.spec.z } }
+    return { island: isl.group, blds: t.blds, pathIdx: t.pathIdx, center: { x: t.spec.x, z: t.spec.z } }
   }
 
   /** Fills the floating label of the citadel or an island. */
@@ -327,7 +348,7 @@ export class World {
   /** Flies up close to one building. */
   selectFile(host: string, terrace: string, idx: number): void {
     const t = this.islands.get(host)?.terraces.get(terrace)
-    const b = t?.meshes.blds[idx]
+    const b = t?.blds[idx]
     if (!t || !b) return
     this.setNav({ selected: host, terrace, file: idx, agent: null })
     this.rig.flyTo(bldWorld(b), 8, null, 0.95)
@@ -420,8 +441,8 @@ export class World {
   }
 
   private showRings(): void {
-    this.citadel.ring.visible = this.nav.selected === 'cit'
-    for (const isl of this.islands.values()) isl.ring.visible = this.nav.selected === isl.id && this.nav.terrace === null
+    this.citadel.ring.group.visible = this.nav.selected === 'cit'
+    for (const isl of this.islands.values()) isl.ring.group.visible = this.nav.selected === isl.id && this.nav.terrace === null
   }
 
   private resize(): void {
@@ -464,19 +485,14 @@ export class World {
     return null
   }
 
-  /** A visible selection turns its ring slowly through drifting hues, and a selected terrace's rope pulses. */
+  /** A shown selection ring moves as its theme draws it, the selected building breathes, and the selected terrace's boundary shows it. */
   private animateSelection(dt: number): void {
-    const spin = reduceMotion ? 0 : dt * 0.35
-    // The rings share one material. A pastel hue sweeps round every fifteen
-    // seconds or so, which keeps the ring lively without shouting.
-    if (reduceMotion) M.ring.color.set(css('--accent', '#2D5BC7'))
-    else M.ring.color.setHSL((this.time * 0.065) % 1, 0.7, 0.72)
-    if (this.citadel.ring.visible) this.citadel.ring.rotation.z += spin
+    if (this.citadel.ring.group.visible) this.citadel.ring.animate(this.time, dt)
     const n = this.nav
     // The selected building breathes. Any other state it had, such as an
     // agent reading it, comes back the moment it is deselected.
     const focused = n.file !== null && n.terrace ? this.islands.get(n.selected) : undefined
-    const b = (focused && n.terrace ? focused.terraces.get(n.terrace)?.meshes.blds[n.file as number] : undefined) ?? null
+    const b = (focused && n.terrace ? focused.terraces.get(n.terrace)?.blds[n.file as number] : undefined) ?? null
     if (this.selectedBld && this.selectedBld !== b) {
       this.selectedBld.material = (this.selectedBld.userData.mats as BuildingMats).rest
       refreshBuilding(this.selectedBld)
@@ -488,7 +504,7 @@ export class World {
       selected.emissiveIntensity = reduceMotion ? 0.55 : 0.4 + 0.35 * Math.sin(this.time * 2.6)
     }
     for (const isl of this.islands.values()) {
-      if (isl.ring.visible) isl.ring.rotation.z += spin
+      if (isl.ring.group.visible) isl.ring.animate(this.time, dt)
       for (const t of isl.terraces.values()) t.meshes.animate(this.time, isl.id === n.selected && t.spec.id === n.terrace)
     }
   }
@@ -534,7 +550,7 @@ export class World {
     const isl = this.islands.get(n.selected)
     if (!isl) return
     const t = n.terrace ? isl.terraces.get(n.terrace) : undefined
-    const b = t && n.file !== null ? t.meshes.blds[n.file] : undefined
+    const b = t && n.file !== null ? t.blds[n.file] : undefined
     if (n.agent && this.agents.position(n.agent, this.rig.want.target)) return
     if (b) this.rig.want.target.copy(bldWorld(b))
     else if (t) this.rig.want.target.copy(this.terraceWorld(isl, t))

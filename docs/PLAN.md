@@ -206,18 +206,26 @@ specifies. No events, streams, or aggregates are needed for it.
   island has said. Run live: Claude Max offered 13 models and Codex on
   ChatGPT Free its 3, a session ran on one picked from each list, and the
   fake agent's chip was disabled.
-- World themes are done. A theme (`web/src/world/theme.ts`) builds the
-  citadel, an island, a terrace, and an airship, and gives the sky's
-  look; everything else in the world is shared, so a theme changes only
-  how the world is drawn. Shared code lays out terraces and their
-  building lots and heights (`terraceLots`), so an airship lands on the
-  same roof in either theme, and each building carries its theme's state
-  materials, which the world tells states apart by. The old look moved
-  unchanged into `themes/default`. `themes/scifi` draws a space station
-  with a spinning habitat ring and blinking navigation lights for the
-  citadel; asteroids sliced flat on top for islands, with outposts and
-  blinking masts but nothing painted on the surface, where a ring would
-  read as a selection; hexagonal towers with lit bands
+- World themes are done. A theme (`web/src/world/theme.ts`) draws the
+  citadel and an island, each with its selection ring, a terrace's plaza
+  and boundary, a building, and an airship, each around its own origin
+  from a few numbers, and gives the sky's look; everything else in the
+  world is shared, so a theme changes only how the world is drawn. The
+  world places what a theme draws, tags it with what a click on it
+  means, and shows a ring only while what it rings is selected, so a
+  theme is given nothing that names a host, a repo, or a file.
+  Shared code lays out terraces and their grid of building lots and
+  heights (`terraceLots`), and the world stands each theme's buildings on
+  them, so an airship lands on the same roof in either theme, and dresses
+  them in the theme's state materials, which it tells states apart by.
+  The old look moved unchanged into `themes/default`, where the ring is a
+  circle of short arcs turning through pastel hues. `themes/scifi` draws
+  a space station with a spinning habitat ring and blinking navigation
+  lights for the citadel; asteroids sliced flat on top for islands, with
+  outposts and blinking masts but nothing painted on the surface, where a
+  ring would read as a selection; a cyan targeting reticle for the ring,
+  a thin circle with four turning brackets whose markers point in at
+  what is selected; hexagonal towers with lit bands
   on a glowing deck for terraces, ringed by landing-strip lights on poles
   in the repo's color that blink slowly in a wave, faster while
   selected; a shuttle, hauler, saucer, or drone per provider for

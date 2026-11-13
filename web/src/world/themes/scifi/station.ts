@@ -1,10 +1,10 @@
 import * as THREE from 'three'
 import { reduceMotion } from '../../../dom'
 import { G } from '../../materials'
-import { selectionRing } from '../../shapes'
 import type { Citadel } from '../../theme'
 import { commArray } from './comms'
 import { S } from './materials'
+import { reticle } from './ring'
 
 /** A lit band around a drum: a short open cylinder just outside it. */
 function band(g: THREE.Object3D, radius: number, y: number, height: number, segments: number): void {
@@ -28,8 +28,6 @@ function drum(g: THREE.Object3D, top: number, bottom: number, height: number, y:
  */
 export function buildStation(): Citadel {
   const g = new THREE.Group()
-  g.userData.host = 'cit'
-  g.position.set(0, 8, 0)
 
   // the hub, with a band of lit windows, and the hull narrowing under it
   drum(g, 2.6, 2.8, 4.2, 2.1, S.hull)
@@ -138,17 +136,16 @@ export function buildStation(): Citadel {
 
   // The world's NATS server: a comms array under the keel, where every tether ends.
   const core = commArray(g, -1.6 - 12 - 1.8, 1.7, 2.8)
-  const ring = selectionRing(10, 0.1)
-  ring.position.y = 0.1
-  g.add(ring)
+  const ring = reticle(10, 0.1)
+  ring.group.position.y = 0.1
+  g.add(ring.group)
   const lit = new THREE.Color()
   return {
     group: g,
     core,
-    beacon,
+    ring,
     halo,
     light: bl,
-    ring,
     labelY: top + 3,
     animate(time, dt) {
       if (!reduceMotion) hab.rotation.y += dt * 0.12

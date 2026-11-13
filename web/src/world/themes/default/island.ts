@@ -1,18 +1,17 @@
 import * as THREE from 'three'
 import { G, M } from '../../materials'
 import { ringNoise, rng } from '../../noise'
-import type { Placement } from '../../placement'
-import { crystalAt, selectionRing, SLAB, slabGeo, underside } from '../../shapes'
-import type { IslandMeshes } from '../../theme'
+import { crystalAt, SLAB, slabGeo, underside } from '../../shapes'
+import type { IslandMeshes, IslandShape } from '../../theme'
+import { selectionRing } from './ring'
 
 /**
  * One host's island: a grassy slab on a rock, with hills and trees.
- * Everything is seeded from the placement, so it looks the same on
- * every visit.
+ * Everything is seeded from its shape, so it looks the same on every
+ * visit.
  */
-export function buildIsland(id: string, h: Placement): IslandMeshes {
+export function buildIsland(h: IslandShape): IslandMeshes {
   const g = new THREE.Group()
-  g.userData.host = id
   const noise = ringNoise(h.seed)
   const r = rng(h.seed * 7 + 3)
   const slab = new THREE.Mesh(slabGeo(h.R, noise), [M.soil, M.grass, M.soil])
@@ -52,7 +51,7 @@ export function buildIsland(id: string, h: Placement): IslandMeshes {
     trees--
   }
   const ring = selectionRing(h.R * 1.18, 0.09)
-  ring.position.y = 0.15
-  g.add(ring)
+  ring.group.position.y = 0.15
+  g.add(ring.group)
   return { group: g, core, ring }
 }

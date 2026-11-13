@@ -1,14 +1,12 @@
 import * as THREE from 'three'
 import type { WorldThemeId } from '../worldthemes'
 import type { Airship, Provider } from './airship'
-import type { Placement } from './placement'
 import type { Crystal } from './shapes'
-import type { TerraceSpec } from './terrace'
 
 /**
- * The materials a building wears for each state. The world swaps a
- * building's material between them, and tells the states apart by which one
- * it wears, so each theme keeps one shared set for all its buildings.
+ * The materials a building wears for each state. The world dresses a
+ * building in them, swaps between them, and tells the states apart by which
+ * one it wears, so each theme keeps one shared set for all its buildings.
  */
 export interface BuildingMats {
   rest: THREE.MeshStandardMaterial
@@ -22,36 +20,80 @@ export interface BuildingMats {
   selected: THREE.MeshStandardMaterial
 }
 
+/**
+ * The ring around the citadel or an island that shows it is selected. The
+ * world shows it only while it is, and moves it only then.
+ */
+export interface SelectionRing {
+  group: THREE.Group
+  /** Moves the ring, once a frame while it is shown. */
+  animate(time: number, dt: number): void
+}
+
+/** The citadel, drawn around its own origin, which the world floats over the middle of the world. */
 export interface Citadel {
   group: THREE.Group
   /** The world's NATS server. Every tether ends here. */
   core: Crystal
-  /** Lit and pulsing while anything in the world waits on a person. */
-  beacon: THREE.Mesh
+  /** Its selection ring, in its group. */
+  ring: SelectionRing
+  /** Shown, swelling and fading, while anything in the world waits on a person. */
   halo: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
+  /** The beacon's light, brighter while anything in the world waits on a person. */
   light: THREE.PointLight
-  /** The selection ring around the citadel. It turns slowly while visible. */
-  ring: THREE.Group
   /** Height above the group where its label floats. */
   labelY: number
   /** Moves what the citadel animates on its own, once a frame. */
   animate?(time: number, dt: number): void
 }
 
+/**
+ * What a theme draws an island from: its size and the seed and phase that
+ * keep its look and rhythm its own. Nothing in it names the host.
+ */
+export interface IslandShape {
+  /** The radius of its walkable top. */
+  R: number
+  /** How far its rock reaches below the top. */
+  depth: number
+  seed: number
+  /** Where in a cycle its own rhythms start, in radians. */
+  phase: number
+}
+
+/**
+ * One host's island, drawn around its own origin with its walkable top at
+ * y = 0. The world moves it to its place. A child of the group with a
+ * userData.scenery pad is scenery, which the world hides where a terrace
+ * covers it, with that much room around the terrace.
+ */
 export interface IslandMeshes {
   group: THREE.Group
   /** The daemon as the citadel last saw it: lit while reachable, grey while it can't tell. */
   core: Crystal
-  /** The selection ring around the island. It turns slowly while visible. */
-  ring: THREE.Group
+  /** Its selection ring, in its group. */
+  ring: SelectionRing
   /** Moves what the island animates on its own, once a frame. */
   animate?(time: number, dt: number): void
 }
 
+/**
+ * What a theme draws a terrace from: the size of its plaza and its repo's
+ * color. Nothing in it names the repo or its files.
+ */
+export interface TerracePlot {
+  sx: number
+  sz: number
+  /** The repo's color, the same everywhere the repo appears. */
+  color: number
+}
+
+/**
+ * A terrace's plaza and its boundary, drawn around the plaza's center. The
+ * world moves it to its place on the island and stands the buildings on it.
+ */
 export interface TerraceMeshes {
   group: THREE.Group
-  /** One building per file, in the order of the spec's files. */
-  blds: THREE.Mesh[]
   /** Moves the terrace's boundary, which shows whether the terrace is selected. */
   animate(time: number, selected: boolean): void
 }
@@ -91,16 +133,24 @@ export interface Visitor {
 }
 
 /**
- * One look for the world. Every object it builds sits where the shared
- * layout puts it and carries the same pick data, so changing themes changes
- * only how the world is drawn.
+ * One look for the world. A theme draws each thing around its own origin
+ * from a few numbers, and the world places it, tags it with what a click on
+ * it means, and shows its selection ring while it is selected, so changing
+ * themes changes only how the world is drawn. Nothing a theme is given
+ * names a host, a repo, or a file.
  */
 export interface WorldTheme {
   id: WorldThemeId
   buildCitadel(): Citadel
-  /** One host's island. Its walkable top is at y = 0. */
-  buildIsland(host: string, p: Placement): IslandMeshes
-  buildTerrace(spec: TerraceSpec, seed: number): TerraceMeshes
+  buildIsland(shape: IslandShape): IslandMeshes
+  buildTerrace(plot: TerracePlot): TerraceMeshes
+  /**
+   * One file's building, height tall. Its geometry is a unit block, which
+   * the world stretches to the building's lot and stands there, dressed in
+   * buildings.rest. Anything on it is a child, scaled back by that stretch.
+   */
+  building(height: number): THREE.Mesh
+  buildings: BuildingMats
   /** An airship for an agent from provider. Its underside, where the beam starts, is at y = -0.6. */
   airship(prov: Provider): Airship
   /** Null: the sky follows the page's light or dark colors. */
