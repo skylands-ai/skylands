@@ -23,6 +23,9 @@ import (
 //     is watching: text as it is appended to the transcript.
 //   - "term" carries Output, with Host, ID, and Terminal, for the terminal
 //     the browser is watching: what its shell wrote.
+//   - "themes" carries Themes, the world's theme packs, whenever one is
+//     added, replaced, or removed. It replaces the whole list, which a
+//     snapshot carries too.
 type Message struct {
 	Type     string             `json:"type"`
 	Host     string             `json:"host,omitempty"`
@@ -42,6 +45,18 @@ type Message struct {
 	Sessions  []projections.Session `json:"sessions,omitempty"`
 	Session   *projections.Session  `json:"session,omitempty"`
 	Loading   *Loading              `json:"loading,omitempty"`
+	Themes    []ThemeInfo           `json:"themes,omitempty"`
+}
+
+// ThemeInfo is a theme pack in the world, which a browser may draw the
+// world in. Its files are served under its hash, at
+// /themes/<id>/<hash>/theme.json and models.glb.
+type ThemeInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	Description string `json:"description,omitempty"`
+	Hash        string `json:"hash"`
 }
 
 // Loading is what a citadel still has to read before what it sends is the

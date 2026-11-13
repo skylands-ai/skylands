@@ -20,4 +20,6 @@ export interface Airship {
   mats: THREE.Material[]
   /** One per quarter of context used, hung under the hull. */
   bags: THREE.Mesh[]
+  /** Moves what the airship animates on its own, such as a theme pack's clips, once a frame. */
+  animate?(dt: number): void
 }

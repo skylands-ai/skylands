@@ -223,6 +223,7 @@ Every kind of data has one home and, where it needs one, a named copy.
 | Approver keys | Private keys stay in each approver browser's IndexedDB, for the citadel's origin, and public keys travel in approver entries | People's browsers | The `skylands-approvers` stream in the world's JetStream domain |
 | The world's push key (VAPID) and approvers' push subscriptions | The `skylands-push` bucket in the world's JetStream domain, each subscription under the approver that signed it | A citadel: the key once, create-only, and a subscription when its browser signs one | None |
 | Pages in sight, for holding pushes | The `skylands-presence` bucket in the world's JetStream domain, each entry gone a minute after it was last refreshed | The citadel holding the page's WebSocket | None |
+| Theme packs: a manifest, glTF models, and their license | The `skylands-themes` object bucket in the world's JetStream domain, zipped under each pack's id | `skylands theme add`, checked first | None; each citadel checks a pack again as it reads it, and holds it in memory to serve |
 | What a terminal printed | The daemon's memory, the newest 256 KB, while the terminal is open | The terminal's shell | None; a browser showing it holds what it drew, and a citadel keeps nothing of what it relays |
 
 
@@ -473,6 +474,8 @@ The 3D client is a browser application built on three.js and served by the citad
 - Agent name tags and file tags appear only for the terrace being viewed, so the world view stays readable.
 - Panels, scene, sky, and lighting share one set of CSS color tokens, with a day sky in the light theme and dusk in the dark theme.
 - Reduced-motion settings turn off flight, bobbing, and camera glides, and a browser without WebGL gets a clear message instead of a blank stage.
+- A theme changes only how the world is drawn. Default and Sci-fi are drawn in code; theme packs, which a world's owner adds with `skylands theme add`, are data: a manifest and glTF models, with no code, which the citadel checks and serves from its own address. The world places, tags, and moves whatever a theme draws, so no theme sees a host, repo, or file name or decides what a click means. The format is in the [themes repository](https://github.com/skylands-ai/themes/blob/main/FORMAT.md).
+- Every page the citadel serves has a Content-Security-Policy that lets it load from and connect to only the citadel, since pages hold the approver key.
 
 ## Prototypes and open items
 
@@ -518,6 +521,7 @@ skylands/
 │   ├── preflight/             checks of what a host needs to run agents
 │   ├── rules/                 rule language and evaluation
 │   ├── service/               systemd and launchd services that follow their binary
+│   ├── themepack/             theme packs: checking, pinning, and the world's bucket of them
 │   ├── titles/                conversation titles from a side session
 │   └── watchdog/              ends a daemon's agents if the daemon dies
 ├── web/                       citadel front end, built to web/dist and embedded

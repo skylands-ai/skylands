@@ -1,22 +1,38 @@
 import { el } from '../dom'
 import { citadelStatus, islandCounts, isStale, shortId } from '../status'
 import { waitingCount, type State } from '../store'
+import type { ThemeInfo } from '../protocol'
 import { WORLD_THEMES, type WorldThemeId } from '../worldthemes'
 import { copyButton, factsBox, header, hint, section } from './parts'
 
 /**
- * The switch between the world's themes. A theme changes how the 3D world
- * is drawn in this browser, and nothing else on the page.
+ * The list of the world's themes: the built-in ones, then the theme packs
+ * the world has. A theme changes how the 3D world is drawn in this
+ * browser, and nothing else on the page.
  */
-function themeSwitch(current: WorldThemeId, choose: (id: WorldThemeId) => void): HTMLElement {
+function themePicker(s: State, choose: (id: WorldThemeId) => void): HTMLElement {
+  const packs: ThemeInfo[] = s.themes
+  const offered = (id: string): boolean => WORLD_THEMES.some((t) => t.id === id) || packs.some((p) => p.id === id)
+  // A pack this browser chose that the world no longer has is drawn as Default.
+  const current = offered(s.worldTheme) ? s.worldTheme : 'default'
+  const option = (id: string, name: string): HTMLElement => el('option', { value: id, text: name, selected: id === current ? 'true' : null })
+  const select = el(
+    'select',
+    { class: 'theme-select', 'aria-label': 'World theme', onchange: (e: Event) => choose((e.target as HTMLSelectElement).value) },
+    [
+      el('optgroup', { label: 'Built in' }, WORLD_THEMES.map((t) => option(t.id, t.name))),
+      packs.length ? el('optgroup', { label: 'Theme packs' }, packs.map((p) => option(p.id, p.name))) : null,
+    ],
+  ) as HTMLSelectElement
+  select.value = current
+  const chosen = packs.find((p) => p.id === current)
+  const problem = s.themeProblem && s.themeProblem.id === current ? s.themeProblem.message : null
   return section('World theme', [
-    el(
-      'div',
-      { class: 'modes', role: 'group', 'aria-label': 'World theme' },
-      WORLD_THEMES.map((t) =>
-        el('button', { type: 'button', class: 'btn small', 'aria-pressed': t.id === current ? 'true' : 'false', text: t.name, onclick: () => choose(t.id) }),
-      ),
-    ),
+    select,
+    problem ? hint(`${chosen?.name ?? current} couldn’t be drawn, so the world shows Default: ${problem}.`) : null,
+    !problem && chosen?.description ? hint(chosen.description) : null,
+    !offered(s.worldTheme) && s.link === 'connected' ? hint('The theme this browser chose isn’t in this world anymore, so it shows Default.') : null,
+    hint('Find theme packs to add with skylands theme search.'),
   ])
 }
 
@@ -53,7 +69,7 @@ export function renderWorldPanel(panel: HTMLElement, s: State, setTheme: (id: Wo
       ...(s.world?.version ? [['Version', s.world.version] as [string, string]] : []),
     ]),
   )
-  panel.appendChild(themeSwitch(s.worldTheme, setTheme))
+  panel.appendChild(themePicker(s, setTheme))
   panel.appendChild(
     section('Settings', [
       hint('Islands, approvers, notifications, the app, and the NATS server are in Settings.'),

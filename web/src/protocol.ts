@@ -34,6 +34,18 @@ export interface WorldInfo {
 }
 
 /** One approver key, as the world's registry decides it. */
+/**
+ * A theme pack the world has, which this browser may draw the world in.
+ * The citadel serves its files under its hash.
+ */
+export interface ThemeInfo {
+  id: string
+  name: string
+  version: string
+  description?: string
+  hash: string
+}
+
 export interface ApproverInfo {
   key: string
   name: string
@@ -445,6 +457,8 @@ export interface Message {
   session?: Session
   /** With "snapshot" and "loading": what the citadel is still reading, absent once it has caught up. */
   loading?: Loading
+  /** With "snapshot" and "themes": every theme pack the world has, absent when it has none. */
+  themes?: ThemeInfo[]
 }
 
 /**

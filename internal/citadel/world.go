@@ -143,6 +143,7 @@ func (c *citadel) checkWorld(nc *nats.Conn) {
 		w.checked, w.problems, w.worldKV, w.js = true, problems, worldKV, js
 	})
 	c.followApprovers(js)
+	c.watchThemes(js)
 	if c.push != nil {
 		go c.push.start(c.ctx, js)
 	}

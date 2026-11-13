@@ -55,6 +55,9 @@ type Config struct {
 	// page is in sight, and the function it returns is called when the page
 	// is hidden or the WebSocket closes.
 	InSight func(who string) (gone func())
+	// Themes, if set, serves the files of the world's theme packs, every
+	// GET under /themes/.
+	Themes http.Handler
 }
 
 // Terminals relays terminals between browsers and the islands they run on.
@@ -74,9 +77,10 @@ const StatusSignIn websocket.StatusCode = 4401
 
 // Server serves the web client and the WebSocket browsers subscribe to.
 type Server struct {
-	cfg Config
-	hub *hub
-	mux *http.ServeMux
+	cfg     Config
+	hub     *hub
+	mux     *http.ServeMux
+	handler http.Handler
 }
 
 // New builds a server from cfg. Call Run or Serve to start it.
@@ -96,14 +100,36 @@ func New(cfg Config) *Server {
 	if cfg.API != nil {
 		mux.Handle("/api/", cfg.API)
 	}
+	if cfg.Themes != nil {
+		mux.Handle("GET /themes/", cfg.Themes)
+	}
 	mux.Handle("/", s.pages(s.staticHandler()))
 	s.mux = mux
+	s.handler = withPolicy(mux)
 	return s
 }
 
 // Handler is the server's routes, for tests and for embedding under another
 // mux.
-func (s *Server) Handler() http.Handler { return s.mux }
+func (s *Server) Handler() http.Handler { return s.handler }
+
+// withPolicy sends every response with a Content-Security-Policy that
+// lets a page load and connect only to this citadel. Pages hold the
+// approver key, so nothing they load may come from, or send anything to,
+// anywhere else. Styles may be inline, since the client sets them on
+// elements as it draws. A response may set a stricter policy of its own.
+func withPolicy(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connect := "'self'"
+		// 'self' covers the WebSocket in current browsers; naming it too
+		// keeps older ones from refusing it.
+		if host := r.Host; host != "" && strings.Trim(host, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:[]") == "" {
+			connect += " ws://" + host + " wss://" + host
+		}
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src "+connect+"; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+		next.ServeHTTP(w, r)
+	})
+}
 
 // Broadcast sends m to every connected browser.
 func (s *Server) Broadcast(m Message) { s.hub.broadcast(m) }
@@ -124,7 +150,7 @@ func (s *Server) Run(ctx context.Context) error {
 // Serve serves on ln until ctx is cancelled, then shuts down cleanly. A
 // cancelled context is a normal stop, not an error.
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
-	srv := &http.Server{Handler: s.mux, ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Handler: s.handler, ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
 	slog.Info("web: listening", "url", "http://"+ln.Addr().String())

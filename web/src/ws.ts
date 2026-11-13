@@ -42,7 +42,7 @@ function normalizeSession(s: Session): Session {
  */
 export function snapshotPatch(m: Message, shown: boolean): Partial<State> {
   const loading = m.loading ?? null
-  const patch: Partial<State> = { server: m.server ?? null, world: m.world ?? null, approvers: m.approvers ?? [], loading }
+  const patch: Partial<State> = { server: m.server ?? null, world: m.world ?? null, approvers: m.approvers ?? [], themes: m.themes ?? [], loading }
   if (loading && shown) return patch
   const islands: Record<string, Island> = {}
   for (const i of m.islands ?? []) islands[i.host] = i
@@ -130,6 +130,9 @@ export function connectToCitadel(store: Store, onLive: (host: string, id: string
           break
         case 'approvers':
           store.update({ approvers: m.approvers ?? [] })
+          break
+        case 'themes':
+          store.update({ themes: m.themes ?? [] })
           break
         case 'world':
           if (m.world) store.update({ world: m.world })
