@@ -1,5 +1,5 @@
 import type { StoredApprover } from './approver'
-import type { ApproverInfo, Island, Loading, Repo, ServerInfo, Session, TokenUsage, WorldInfo } from './protocol'
+import type { ApproverInfo, Island, Loading, Repo, ServerInfo, Session, ThemeInfo, TokenUsage, WorldInfo } from './protocol'
 import type { InstallState } from './install'
 import type { InboxRoute } from './route'
 import { isWorldTheme, type WorldThemeId } from './worldthemes'
@@ -92,6 +92,10 @@ export interface State extends Nav {
   convoMode: Record<string, 'chat' | 'terminal'>
   /** How the 3D world is drawn, as chosen in this browser. */
   worldTheme: WorldThemeId
+  /** The theme packs the world has, which the world can be drawn in besides the built-in themes. */
+  themes: ThemeInfo[]
+  /** Why the pack chosen last couldn't be drawn, so the world shows Default, or null. */
+  themeProblem: { id: string; message: string } | null
   /** Whether this browser notifies when an agent asks for approval or has a question. */
   notify: boolean
   /** Whether those notifications come as pushes from the citadel, which reach this browser with the page closed. */
@@ -169,7 +173,7 @@ type Listener = (s: State) => void
 
 /** One place for everything the page renders from. Every change notifies every listener. */
 export class Store {
-  state: State = { link: 'connecting', loading: null, server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), settingsPage: loadSettingsPage(), inbox: null, inboxFilter: loadFilter(), convoMode: {}, worldTheme: loadWorldTheme(), notify: loadNotify(), push: false, pushError: null, phone: false, route: {}, install: 'no' }
+  state: State = { link: 'connecting', loading: null, server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), settingsPage: loadSettingsPage(), inbox: null, inboxFilter: loadFilter(), convoMode: {}, worldTheme: loadWorldTheme(), themes: [], themeProblem: null, notify: loadNotify(), push: false, pushError: null, phone: false, route: {}, install: 'no' }
   private listeners: Listener[] = []
 
   subscribe(fn: Listener): void {

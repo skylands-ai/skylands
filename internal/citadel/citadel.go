@@ -77,6 +77,8 @@ type citadel struct {
 	store    *es.Store
 	// push sends push notifications, or is nil when this citadel doesn't.
 	push *pusher
+	// themes is the world's theme packs, which this citadel serves.
+	themes themes
 	// catch is what the citadel still has to read before browsers are sent
 	// what it has of a host, and listed lists the hosts it waits for once.
 	catch  *catchUp
@@ -127,7 +129,7 @@ func Run(ctx context.Context, cfg Config) error {
 		slog.Warn("web: this binary has no web client, so the browser gets a placeholder page; " +
 			"use a release binary from " + web.ReleasesURL + ", or build with make web && make build")
 	}
-	c.web = web.New(web.Config{Addr: cfg.HTTPAddr, Snapshot: c.snapshot, Dist: dist, API: c.api(), Live: c.live, Terminal: terminals{c}, NeedsSetup: c.needsSetup, Canonical: c.publicURL(), SignedIn: c.signedInAs, InSight: c.inSight})
+	c.web = web.New(web.Config{Addr: cfg.HTTPAddr, Snapshot: c.snapshot, Dist: dist, API: c.api(), Live: c.live, Terminal: terminals{c}, NeedsSetup: c.needsSetup, Canonical: c.publicURL(), SignedIn: c.signedInAs, InSight: c.inSight, Themes: http.HandlerFunc(c.serveTheme)})
 
 	opts := []nats.Option{
 		nats.Name("skylands-citadel"),
@@ -207,7 +209,7 @@ func plainToken(s string) bool {
 // none of it rather than some point in its history.
 func (c *citadel) snapshot() web.Message {
 	info := c.serverInfo()
-	m := web.Message{Type: "snapshot", Server: &info, World: c.worldInfo(), Approvers: c.approverInfo(), Loading: c.catch.state()}
+	m := web.Message{Type: "snapshot", Server: &info, World: c.worldInfo(), Approvers: c.approverInfo(), Loading: c.catch.state(), Themes: c.themes.list()}
 	m.Islands = slices.DeleteFunc(c.islands.List(), func(i projections.Island) bool { return holding(m.Loading, i.Host) })
 	m.Repos = slices.DeleteFunc(c.terrain.List(), func(r projections.Repo) bool { return holding(m.Loading, r.Host) })
 	m.Sessions = slices.DeleteFunc(c.sessions.List(), func(s projections.Session) bool { return holding(m.Loading, s.Host) })

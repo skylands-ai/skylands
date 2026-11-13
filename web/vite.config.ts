@@ -46,6 +46,7 @@ export default defineConfig({
       '/ws': { target: 'ws://127.0.0.1:8080', ws: true, changeOrigin: false },
       '/healthz': { target: 'http://127.0.0.1:8080', changeOrigin: false },
       '/api': { target: 'http://127.0.0.1:8080', changeOrigin: false },
+      '/themes': { target: 'http://127.0.0.1:8080', changeOrigin: false },
     },
   },
 })

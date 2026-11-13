@@ -235,10 +235,53 @@ specifies. No events, streams, or aggregates are needed for it.
   link is up, its feeds glowing with the link's state. Its sky is always a starfield, whatever the page's light or
   dark colors. Switching rebuilds the citadel, islands, terraces, and
   airships in place, keeping navigation and what agents are doing. The
-  choice is a switch in the citadel's panel, kept in the browser
+  choice is a list in the citadel's panel, kept in the browser
   (`skylands.worldTheme`). Checked in headless Chrome at every level in
   both themes, in light and dark, switching both ways with agents
   waiting on approval, and opening a page with the theme saved.
+- Installable themes are done (#90). A theme pack is data, not
+  code: a `theme.json` naming which model in one glTF binary,
+  `models.glb`, draws each thing, the sky and the buildings' state
+  colors, and a `LICENSE`. `internal/themepack` checks a pack: the
+  manifest's fields and ranges, refusing any it doesn't know, and a
+  `models.glb` with no URI, data URI, or extension anywhere, no cameras,
+  skins, morph targets, or sparse accessors, only triangles, PNG and JPEG
+  images of at most 1,024 pixels a side, and caps on bytes, triangles,
+  nodes, and clips, with every model and part the manifest needs. A pack
+  is pinned by the SHA-256 of what `sha256sum` prints for its files.
+  `skylands theme check|add|list|remove` checks a pack offline, or adds
+  one from a directory, zip, or https URL to the `skylands-themes` object
+  bucket in the world's domain, refusing to replace a pack under the same
+  id without `--replace`, and refusing one whose hash isn't `--sha256`.
+  `skylands theme search [words]` lists the packs in the official themes
+  repository from its `index.json`, which its CI keeps in step with each
+  pack's files, and `skylands theme add <id>` downloads a listed pack's
+  files from beside the index and refuses them unless they have the
+  sha256 it lists. `--catalog` reads another index, such as a mirror's,
+  over https, or http to this machine.
+  Each citadel watches the bucket, checks each pack again as it reads it,
+  lists the world's packs in every snapshot and in a `themes` message
+  when they change, and serves their files at
+  `/themes/<id>/<hash>/<file>`, immutable, with a sandboxing CSP. Every
+  page the citadel serves now has a Content-Security-Policy that lets it
+  load from and connect to only the citadel. The browser loads a pack
+  only when it is picked, with GLTFLoader in a chunk of its own, keeps
+  only node names from the file, so nothing in it reaches what the world
+  reads off objects, and makes a theme of it (`web/src/world/pack.ts`):
+  the world stretches island and plaza models, repeats ring pieces and
+  posts, scatters scenery, stands a building's cap on its stretched body,
+  tints `provider`, `repo`, and `repo-glow` materials, and plays a
+  model's clips on each copy, except under reduced motion. A pack that
+  can't be drawn shows Default, and the panel says why. The panel's
+  switch is now a list of the built-in themes and the world's packs. The
+  format and the first pack, Paper Lanterns, are in
+  `skylands-ai/themes`, whose CI runs `skylands theme check` on every
+  pack. Checked in headless Chrome on a devworld: adding Paper Lanterns,
+  picking it from the list, every level, all five airships and the
+  visitor, replacing the pack while a page showed it, a pack whose files
+  the citadel doesn't have, and Default and Sci-fi after, with no CSP
+  violations through setup and the world. Sandboxed theme code, for packs
+  that need more than this format offers, is not started.
 - goose is in progress, the third real agent. It comes as a binary per
   platform rather than from npm, so the daemon runs `goose acp` from its
   PATH, and an adapter's new Install hint says how to get it when it is

@@ -1,5 +1,4 @@
 import * as THREE from 'three'
-import type { WorldThemeId } from '../worldthemes'
 import type { Airship, Provider } from './airship'
 import type { Crystal } from './shapes'
 
@@ -140,7 +139,8 @@ export interface Visitor {
  * names a host, a repo, or a file.
  */
 export interface WorldTheme {
-  id: WorldThemeId
+  /** A built-in theme's id, or a theme pack's. */
+  id: string
   buildCitadel(): Citadel
   buildIsland(shape: IslandShape): IslandMeshes
   buildTerrace(plot: TerracePlot): TerraceMeshes

@@ -47,6 +47,11 @@ func TestEveryRunnableCommandIsListed(t *testing.T) {
 		"skylands rule add":           true,
 		"skylands rule remove":        true,
 		"skylands preflight":          true,
+		"skylands theme check":        true,
+		"skylands theme search":       true,
+		"skylands theme add":          true,
+		"skylands theme list":         true,
+		"skylands theme remove":       true,
 	}
 	var walk func(*cobra.Command)
 	walk = func(c *cobra.Command) {

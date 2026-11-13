@@ -114,7 +114,7 @@ async function ensureWorld(): Promise<void> {
   try {
     const { World } = await import('./world/world')
     try {
-      made = new World(stage, canvas, labelsEl, store.state.worldTheme)
+      made = new World(stage, canvas, labelsEl, store.state.worldTheme, store.state.themes)
     } catch (err) {
       console.error('world: WebGL unavailable', err)
       stage.appendChild(el('div', { class: 'nogl', text: 'This view needs WebGL, and it isn’t available in this browser right now.' }))
@@ -127,6 +127,7 @@ async function ensureWorld(): Promise<void> {
   }
   world = made
   world.onNav = (n) => store.update(n)
+  world.onPackSettled = (id, problem) => store.update({ themeProblem: problem ? { id, message: problem } : null })
   world.start()
   store.touch()
 }
@@ -375,7 +376,7 @@ function panelDeps(s: State, stale: boolean): unknown[] {
       return ['island', island, stale, stale ? s.lastContact : 0, ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
     default: {
       const { reachable, total } = islandCounts(s)
-      return ['world', s.server, s.world, s.link, s.loading, s.worldTheme, waitingCount(s), reachable, total]
+      return ['world', s.server, s.world, s.link, s.loading, s.worldTheme, s.themes, s.themeProblem, waitingCount(s), reachable, total]
     }
   }
 }
@@ -709,7 +710,7 @@ store.subscribe((s0) => {
     world.setBeacon(pendingCount(s) > 0)
     world.setStale(stale)
     world.setCitadelCrystal(!!s.server?.connected)
-    world.setTheme(s.worldTheme)
+    world.setTheme(s.worldTheme, s.themes)
   }
   renderPanel(s, stale)
   afterRender(s)

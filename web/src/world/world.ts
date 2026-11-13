@@ -1,19 +1,19 @@
 import * as THREE from 'three'
 import { el, reduceMotion } from '../dom'
-import type { Repo } from '../protocol'
+import type { Repo, ThemeInfo } from '../protocol'
 import { level, type Nav } from '../store'
-import type { WorldThemeId } from '../worldthemes'
 import { Agents, bldWorld, refreshBuilding, type AgentState, type TerraceAccess } from './agents'
 import { CameraRig, HOME } from './camera'
 import { attachPointerInput } from './input'
 import { Labels } from './labels'
+import { packEntry } from './pack'
 import { placeIsland, type Placement } from './placement'
 import type { Crystal } from './shapes'
 import { Sky } from './sky'
 import { layoutTerraces, placeTerrace, type TerraceSpec } from './terrace'
 import { Tethers } from './tethers'
 import { disposeTree, type BuildingMats, type Citadel, type IslandMeshes, type SelectionRing, type TerraceMeshes, type WorldTheme } from './theme'
-import { themeFor } from './themes'
+import { builtInTheme, defaultTheme } from './themes'
 import { Visitors } from './visitors'
 
 /** Text and a CSS color for a status dot. */
@@ -97,6 +97,8 @@ export class World {
   nav: Nav = { selected: 'cit', terrace: null, file: null, agent: null }
   /** Called whenever navigation changes, from a click in the world or a label. */
   onNav: (n: Nav) => void = () => {}
+  /** Told when a theme pack the world was asked to draw in has loaded, with null, or why it can't be drawn. */
+  onPackSettled: (id: string, problem: string | null) => void = () => {}
 
   private readonly renderer: THREE.WebGLRenderer
   private readonly scene = new THREE.Scene()
@@ -128,11 +130,12 @@ export class World {
     private readonly stage: HTMLElement,
     private readonly canvas: HTMLCanvasElement,
     labelsEl: HTMLElement,
-    theme: WorldThemeId = 'default',
+    theme = 'default',
+    packs: ThemeInfo[] = [],
   ) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
-    this.theme = themeFor(theme)
+    this.theme = this.themeFor(theme, packs)
     this.sky = new Sky(this.scene)
     this.sky.setLook(this.theme.sky)
     this.visitors = new Visitors(this.scene)
@@ -232,12 +235,30 @@ export class World {
   }
 
   /**
-   * Draws the world in another theme. The citadel, the islands, their
-   * terraces, and the airships are built again where they were; what is
-   * selected, where the camera is, and what each agent is doing stay.
+   * The theme to draw in for id: a built-in theme, or a pack among packs
+   * once it has loaded. Until then the world stays as it is drawn, and a
+   * pack the world doesn't have, or one that can't be drawn, is Default.
    */
-  setTheme(id: WorldThemeId): void {
-    const theme = themeFor(id)
+  private themeFor(id: string, packs: ThemeInfo[]): WorldTheme {
+    const built = builtInTheme(id)
+    if (built) return built
+    const info = packs.find((p) => p.id === id)
+    if (!info) return defaultTheme
+    const e = packEntry(info, (problem) => this.onPackSettled(id, problem))
+    if (e.state === 'ready') return e.theme
+    if (e.state === 'failed') return defaultTheme
+    // Still loading: whatever is drawn now stays.
+    return (this.theme as WorldTheme | undefined) ?? defaultTheme
+  }
+
+  /**
+   * Draws the world in another theme, a built-in one or one of the world's
+   * packs. The citadel, the islands, their terraces, and the airships are
+   * built again where they were; what is selected, where the camera is,
+   * and what each agent is doing stay.
+   */
+  setTheme(id: string, packs: ThemeInfo[]): void {
+    const theme = this.themeFor(id, packs)
     if (theme === this.theme) return
     this.theme = theme
     this.sky.setLook(theme.sky)

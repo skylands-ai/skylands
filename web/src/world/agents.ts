@@ -54,6 +54,8 @@ interface AgentView {
   mesh: THREE.Group
   mats: THREE.Material[]
   bags: THREE.Mesh[]
+  /** Moves what the airship's theme animates on it. */
+  animate?: (dt: number) => void
   tag: HTMLButtonElement
   name: string
   action: string
@@ -184,6 +186,7 @@ export class Agents {
       v.mesh = ship.group
       v.mats = ship.mats
       v.bags = ship.bags
+      v.animate = ship.animate
       v.beam = beam
       v.dwellIdx = null
       if (v.to.idx !== null) v.to = t.blds[v.to.idx] ? bldSpot(t, v.to.idx) : padSpot(t)
@@ -197,7 +200,7 @@ export class Agents {
     this.labelsEl.appendChild(tag)
     const pad = padSpot(t)
     const v: AgentView = {
-      id: s.id, host, terrace: s.terrace, prov: s.prov, mesh: ship.group, mats: ship.mats, bags: ship.bags, tag,
+      id: s.id, host, terrace: s.terrace, prov: s.prov, mesh: ship.group, mats: ship.mats, bags: ship.bags, animate: ship.animate, tag,
       name: s.name, action: s.action, status: s.status, waiting: s.waiting, approval: s.approval, beam, file: s.file, kind: s.kind, atFile: s.atFile, ctx: s.ctx,
       from: pad, to: pad, phase: 'dwell', t: 0, bob: Math.random() * 6.283, dwellIdx: null,
     }
@@ -263,6 +266,7 @@ export class Agents {
   /** Moves every airship one frame. */
   update(dt: number, time: number): void {
     for (const v of [...this.views.values()]) {
+      v.animate?.(dt)
       const nb = Math.min(4, Math.ceil(v.ctx / 25))
       v.bags.forEach((b, i) => (b.visible = i < nb))
       const bob = reduceMotion ? 0 : Math.sin(time * 1.8 + v.bob) * 0.1
