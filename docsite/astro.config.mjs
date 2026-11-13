@@ -54,6 +54,9 @@ export default defineConfig({
 			logo: { src: './src/assets/mark.svg', alt: '' },
 			favicon: '/favicon.svg',
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/skylands-ai/skylands' }],
+			components: {
+				Footer: './src/components/Footer.astro',
+			},
 			//editLink: { baseUrl: 'https://github.com/skylands-ai/skylands/edit/main/docsite/' },
 			customCss: [
 				'@fontsource/barlow/400.css',

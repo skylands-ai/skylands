@@ -1,0 +1,42 @@
+---
+// Starlight's footer, with the previous and next page links, and under it
+// a line saying who built Skylands and where to find him.
+import Default from '@astrojs/starlight/components/Footer.astro';
+
+const links = [
+	{ label: 'GitHub', href: 'https://github.com/autodidaddict' },
+	{ label: 'LinkedIn', href: 'https://www.linkedin.com/in/kevinshoffman/' },
+	{ label: 'Blog', href: 'https://kevinhoffman.blog' },
+];
+---
+
+<Default><slot /></Default>
+
+<p class="built-by">
+	Created with joy by Kevin Hoffman
+	{links.map(({ label, href }) => (
+		<>
+			<span aria-hidden="true">·</span>
+			<a href={href}>{label}</a>
+		</>
+	))}
+</p>
+
+<style>
+	.built-by {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 0.25rem 0.5rem;
+		margin: 2.5rem auto 0;
+		font-size: var(--sl-text-xs);
+		color: var(--sl-color-gray-3);
+	}
+	.built-by a {
+		color: var(--sl-color-text-accent);
+		text-decoration: none;
+	}
+	.built-by a:hover {
+		text-decoration: underline;
+	}
+</style>
