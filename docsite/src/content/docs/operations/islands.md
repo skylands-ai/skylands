@@ -7,7 +7,7 @@ Each island is a daemon. The devworld runs one for you, and you can add more on 
 
 ## The World's Owner Key
 
-Every daemon outside the devworld needs the world's owner key, given with `--world`. "Add a host" in the citadel's panel shows the key, along with the whole command to start a daemon.
+Every daemon outside the devworld needs the world's owner key, given with `--world`. "Add a host", on the Islands page of the citadel's Settings, shows the key, along with the whole command to start a daemon.
 
 The daemon pins the key the first time it starts. After that, it won't start without a key, and it won't join a world whose owner key is different.
 

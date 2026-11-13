@@ -29,7 +29,7 @@ skylands devworld up --url https://<machine>.<tailnet>.ts.net
 
 ## Make the Phone an Approver
 
-A browser keeps its approver key per address. If you set the world up at `127.0.0.1`, add that browser again at the new address: press "Add an approver" and open the link in the same browser.
+A browser keeps its approver key per address. If you set the world up at `127.0.0.1`, add that browser again at the new address: press "Add an approver", on the Approvers page of the citadel's Settings, and open the link in the same browser.
 
 To add the phone, press "Add an approver" and scan the QR code with the phone. The link opens at the citadel's `--url`, which "Opens at" shows.
 

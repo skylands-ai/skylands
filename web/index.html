@@ -22,6 +22,7 @@
     <div class="modes" role="group" aria-label="View">
       <button type="button" class="btn small" id="modeWorld" aria-pressed="true">World</button>
       <button type="button" class="btn small" id="modeInbox" aria-pressed="false"><span>Inbox</span><span class="badge" id="inboxCount" hidden>0</span></button>
+      <button type="button" class="btn small" id="modeSettings" aria-pressed="false">Settings</button>
     </div>
     <nav class="crumbs" aria-label="Breadcrumb" id="crumbs"></nav>
     <span class="muted" id="connected"></span>
@@ -30,6 +31,7 @@
   </header>
   <main class="main">
     <section class="inbox" id="inbox" aria-label="Conversations" hidden></section>
+    <section class="settings" id="settings" aria-label="Settings" hidden></section>
     <section class="phone-inbox" id="phone" aria-label="What’s waiting on you" hidden></section>
     <section class="stage" id="stage" aria-label="3D world of every island">
       <canvas id="world" tabindex="0" role="img" aria-label="A 3D sky. The citadel floats at the center of the world. Islands for each host rise around it as their daemons connect."></canvas>

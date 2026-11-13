@@ -18,7 +18,8 @@ import { renderIslandPanel } from './panels/island'
 import { type PruneOptions, pruneVersion } from './panels/prune'
 import { renderTerracePanel } from './panels/terrace'
 import { renderWorldPanel } from './panels/world'
-import { agentLabel, citadelLabelStatus, clockText, durationText, islandStatus, isStale, secondsSince } from './status'
+import { renderSettings, type SettingsActions } from './settings'
+import { agentLabel, citadelLabelStatus, clockText, durationText, islandCounts, islandStatus, isStale, secondsSince } from './status'
 import { islandList, isWaiting, level, pendingCount, pendingItems, reposOn, sessionsOn, Store, waitingCount, type State } from './store'
 import { growLive, lapsedText, renderInbox, type InboxActions } from './inbox'
 import { LiveText } from './live'
@@ -53,6 +54,8 @@ const veilMsgEl = byId<HTMLElement>('veilmsg')
 const inboxEl = byId<HTMLElement>('inbox')
 const modeWorld = byId<HTMLButtonElement>('modeWorld')
 const modeInbox = byId<HTMLButtonElement>('modeInbox')
+const modeSettings = byId<HTMLButtonElement>('modeSettings')
+const settingsEl = byId<HTMLElement>('settings')
 const inboxCount = byId<HTMLElement>('inboxCount')
 const appEl = byId<HTMLElement>('app')
 const phoneEl = byId<HTMLElement>('phone')
@@ -280,20 +283,22 @@ async function repoCommand(host: string, id: string, action: string, body: unkno
   }
 }
 
-/** Shows the world or the inbox, and updates the switch in the header. */
+/** Shows the world, the inbox, or Settings, and updates the switch in the header. */
 function renderMode(s: State): void {
-  const inbox = s.view === 'inbox'
-  inboxEl.hidden = !inbox
-  stage.hidden = inbox
-  panelEl.hidden = inbox
-  crumbsEl.hidden = inbox
-  modeWorld.setAttribute('aria-pressed', inbox ? 'false' : 'true')
-  modeInbox.setAttribute('aria-pressed', inbox ? 'true' : 'false')
+  const inWorld = s.view === 'world'
+  inboxEl.hidden = s.view !== 'inbox'
+  settingsEl.hidden = s.view !== 'settings'
+  stage.hidden = !inWorld
+  panelEl.hidden = !inWorld
+  crumbsEl.hidden = !inWorld
+  modeWorld.setAttribute('aria-pressed', String(inWorld))
+  modeInbox.setAttribute('aria-pressed', String(s.view === 'inbox'))
+  modeSettings.setAttribute('aria-pressed', String(s.view === 'settings'))
   const waiting = waitingCount(s)
   inboxCount.hidden = waiting === 0
   inboxCount.textContent = String(waiting)
   document.title = waiting ? `(${waiting}) Skylands` : 'Skylands'
-  world?.setPaused(inbox)
+  world?.setPaused(!inWorld)
 }
 
 /**
@@ -368,8 +373,10 @@ function panelDeps(s: State, stale: boolean): unknown[] {
       return ['terrace', repo, island, stale, s.viewed, s.approvers, s.me, s.world, pruneVersion(), ...(repo ? sessionsOn(s, repo.id) : [])]
     case 'island':
       return ['island', island, stale, stale ? s.lastContact : 0, ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
-    default:
-      return ['world', s.server, s.world, s.link, s.loading, s.worldTheme, s.notify, s.push, s.pushError, s.install, notifySupport() === 'ok' ? Notification.permission : '', waitingCount(s), s.approvers, s.me, s.persisted, s.invite, s.revoking, s.approverError, s.invite ? Date.now() > Date.parse(s.invite.expires) : false, ...islandList(s)]
+    default: {
+      const { reachable, total } = islandCounts(s)
+      return ['world', s.server, s.world, s.link, s.loading, s.worldTheme, waitingCount(s), reachable, total]
+    }
   }
 }
 
@@ -446,7 +453,7 @@ function renderPanelContent(s: State, stale: boolean): void {
       }
       break
   }
-  renderWorldPanel(panelEl, s, nav.select, (id) => store.setWorldTheme(id), (on) => void turnNotifications(on), approverActs, browserActs)
+  renderWorldPanel(panelEl, s, (id) => store.setWorldTheme(id), () => store.setView('settings'))
 }
 
 /** Opens a conversation in the inbox, as clicking its notification does. */
@@ -530,6 +537,18 @@ const browserActs = {
     }),
 }
 
+const settingsActions: SettingsActions = {
+  page: (page) => store.setSettingsPage(page),
+  // The world is shown before the camera moves, so it flies there in sight.
+  openIsland: (host) => {
+    store.setView('world')
+    nav.select(host)
+  },
+  setNotify: (on) => void turnNotifications(on),
+  approvers: approverActs,
+  browser: browserActs,
+}
+
 /** Opens what an inbox link names, as clicking a notification does. */
 function openRoute(route: InboxRoute): void {
   if (store.state.phone) go(route)
@@ -554,6 +573,7 @@ function renderPhoneLayout(s: State): void {
   phoneEl.hidden = !s.phone
   if (!s.phone) return
   inboxEl.hidden = true
+  settingsEl.hidden = true
   stage.hidden = true
   panelEl.hidden = true
   world?.setPaused(true)
@@ -654,6 +674,7 @@ store.subscribe((s0) => {
   renderHeader(crumbsEl, connectedEl, linkEl, s, nav, versionEl)
   bar.update(s)
   if (s.view === 'inbox') renderInbox(inboxEl, s, cache, live, inboxActions, terminals)
+  if (s.view === 'settings') renderSettings(settingsEl, s, settingsActions)
   const reading = s.view === 'inbox' && s.inbox ? s.sessions[s.inbox] : undefined
   link.watch(reading?.host ?? null, reading?.id ?? null)
   terminals.show(terminalInSight(s, terminals))
@@ -705,6 +726,7 @@ store.subscribe((s0) => {
 
 modeWorld.addEventListener('click', () => store.setView('world'))
 modeInbox.addEventListener('click', () => store.setView('inbox'))
+modeSettings.addEventListener('click', () => store.setView('settings'))
 
 window.addEventListener('keydown', (e) => {
   const t = e.target as HTMLElement | null
@@ -720,6 +742,7 @@ setInterval(() => {
   const s = store.state
   refreshTimes(panelEl)
   refreshTimes(inboxEl)
+  refreshTimes(settingsEl)
   refreshTimes(phoneEl)
   if (s.link === 'lost') renderVeil(s)
   const ag = s.view === 'world' && level(s) === 'agent' && s.agent ? s.sessions[s.agent] : undefined

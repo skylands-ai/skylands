@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Mockup: the Settings view · Skylands</title>
+<!-- The app's own fonts and stylesheet, so this page looks as the app does.
+     Fonts need `npm ci` in web/; without them the page falls back to Helvetica. -->
+<link rel="stylesheet" href="../../web/node_modules/@fontsource/barlow/400.css">
+<link rel="stylesheet" href="../../web/node_modules/@fontsource/barlow/500.css">
+<link rel="stylesheet" href="../../web/node_modules/@fontsource/barlow/600.css">
+<link rel="stylesheet" href="../../web/node_modules/@fontsource/barlow/700.css">
+<link rel="stylesheet" href="../../web/node_modules/@fontsource/jetbrains-mono/400.css">
+<link rel="stylesheet" href="../../web/node_modules/@fontsource/jetbrains-mono/500.css">
+<link rel="stylesheet" href="../../web/node_modules/@fontsource/sora/700.css">
+<link rel="stylesheet" href="../../web/src/style.css">
+<style>
+/* ===== Proposed additions to web/src/style.css ===== */
+
+/* A view switch with three buttons keeps single borders between them. */
+.modes .btn + .btn{ margin-left:-1px; }
+
+/* The Settings view: its own page beside the world and the inbox, with a
+   list of pages on the left, as the inbox lists conversations, and the
+   page open on the right, in cards as the setup page draws them. */
+.settings{ flex:1 1 auto; min-width:0; display:flex; background:var(--bg); }
+.settings-nav{ flex:0 0 260px; overflow-y:auto; background:var(--surface); border-right:1px solid var(--line); padding:0 0 16px; }
+/* Each group, World and This browser, is a section of its own: a rule
+   between them, a heading larger than its pages with the group's glyph,
+   and its pages indented under the heading's text. */
+.settings-group{ padding:4px 0 10px; }
+.settings-group + .settings-group{ border-top:1px solid var(--line); }
+.settings-group h3{ display:flex; align-items:center; gap:8px; margin:0; padding:16px 14px 8px; font-family:Sora,"Helvetica Neue",Arial,sans-serif; font-size:15px; font-weight:700; letter-spacing:-0.01em; color:var(--text); }
+.settings-group h3 svg{ flex:none; }
+.settings-nav .conv-row{ min-height:40px; padding-left:38px; border-bottom:none; font-weight:500; }
+.settings-nav .conv-row[aria-current="true"]{ font-weight:600; }
+.settings-nav .conv-row .when{ display:inline-flex; align-items:center; gap:6px; font-weight:500; }
+.settings-page{ flex:1 1 auto; min-width:0; overflow-y:auto; padding:24px 32px 48px; }
+.settings-body{ max-width:760px; display:flex; flex-direction:column; gap:16px; }
+.settings-card{ display:flex; flex-direction:column; gap:10px; padding:16px 18px; border-radius:12px; background:var(--surface); border:1px solid var(--line); }
+.settings-card h3{ margin:0; font-size:15px; font-weight:600; }
+.settings .islands-table th:nth-child(3){ width:120px; }
+.settings .islands-table th:nth-child(4){ width:120px; }
+.settings .facts{ max-width:560px; }
+@media (max-width: 860px){
+  .settings-nav{ flex-basis:200px; }
+  .settings-page{ padding:18px; }
+}
+
+/* ===== Mockup only: the review bar, the plan, and the stand-ins ===== */
+body{ display:flex; flex-direction:column; }
+.app{ flex:1 1 auto; min-height:0; height:auto; }
+.mockbar{ flex:none; display:flex; flex-wrap:wrap; align-items:center; gap:6px 16px; padding:6px 12px; background:#1E1E24; color:#E8E8EE; font:12px/1.3 ui-monospace,"JetBrains Mono",monospace; }
+.mockbar b{ color:#FFD54A; }
+.mockbar label{ display:inline-flex; align-items:center; gap:6px; }
+.mockbar select, .mockbar button{ font:inherit; color:#E8E8EE; background:#2E2E38; border:1px solid #4A4A58; border-radius:5px; padding:2px 6px; }
+.mockbar button[aria-pressed="true"]{ background:#FFD54A; color:#1A1708; border-color:#FFD54A; }
+.mockbar .grow{ flex:1; }
+.plan-drawer{ position:fixed; top:36px; right:0; bottom:0; z-index:50; width:min(460px, 100%); overflow-y:auto; padding:18px 20px 32px; background:var(--surface); border-left:2px dashed var(--accent); box-shadow:-8px 0 30px rgba(0,0,0,.18); font-size:13px; line-height:1.5; }
+.plan-drawer h2{ margin:0 0 4px; font-size:16px; }
+.plan-drawer h3{ margin:16px 0 6px; font-size:13px; color:var(--muted); }
+.plan-drawer ol, .plan-drawer ul{ margin:0; padding-left:20px; display:flex; flex-direction:column; gap:6px; }
+.plan-drawer code{ font-size:11.5px; padding:0 4px; border-radius:4px; background:var(--surface-2); }
+.standin{ flex:1 1 auto; display:flex; align-items:center; justify-content:center; padding:24px; }
+.sky{ background:linear-gradient(var(--sky-top), var(--sky-horizon) 75%); }
+.toast{ position:absolute; left:50%; top:16px; transform:translateX(-50%); }
+</style>
+</head>
+<body>
+
+<div class="mockbar" role="region" aria-label="Mockup controls">
+  <span><b>MOCKUP</b> Settings view</span>
+  <label>Theme <select id="mTheme"><option value="">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+  <label>This browser <select id="mApprover"><option value="yes">approves</option><option value="no">isn’t an approver</option></select></label>
+  <label>Install <select id="mInstall"><option value="offered">offered</option><option value="installed">just installed</option><option value="app">in the app</option><option value="no">not offered</option></select></label>
+  <label>Notifications <select id="mNotify"><option value="on">on</option><option value="off">off</option><option value="denied">blocked by the browser</option></select></label>
+  <span class="grow"></span>
+  <button type="button" id="mPlan" aria-pressed="false">Show the plan</button>
+</div>
+
+<div class="app" id="app">
+  <header class="bar">
+    <div class="brand">
+      <svg width="34" height="34" viewBox="10 4 200 200" aria-hidden="true"><polygon points="36,95 60,105 66,142 54,128 44,112" fill="#9A7656"/><polygon points="60,105 100,110 102,176 92,166 80,156 66,142" fill="#7C5D44"/><polygon points="100,110 136,107 124,152 112,164 102,176" fill="#614836"/><polygon points="136,107 164,93 158,108 148,124 136,138 124,152" fill="#4B382B"/><path d="M36,86 C34,96 64,101 100,101 C136,101 166,94 164,84 L164,93 C164,103 136,110 100,110 C64,110 36,104 36,95 Z" fill="#8A6542"/><path d="M36,86 C40,74 70,68 100,69 C130,68 160,73 164,84 C166,94 136,101 100,101 C64,101 34,96 36,86 Z" fill="#6CB35A"/><path d="M50,82 C60,75 84,72 100,72 C120,72 144,75 152,82 C130,78 70,78 50,82 Z" fill="#86C76F"/><polygon points="54,80 61,92 47,92" fill="#2F6B3A"/><polygon points="66,74 72,86 60,86" fill="#3C7D43"/><rect x="110" y="74" width="9" height="12" fill="#EFE9D8"/><rect x="121" y="68" width="8" height="18" fill="#E2DBC7"/><rect x="131" y="77" width="8" height="9" fill="#EFE9D8"/><circle cx="102" cy="187" r="12" fill="#7FE0F0" opacity="0.35"/><polygon points="102,179 108,187 102,197 96,187" fill="#5FD3E6"/><polygon points="102,179 108,187 102,187" fill="#BDF3FA"/><path d="M150 14 Q153 31 170 34 Q153 37 150 54 Q147 37 130 34 Q147 31 150 14 Z" fill="#F5B014"/><path d="M175 51 Q176.4 58.6 184 60 Q176.4 61.4 175 69 Q173.6 61.4 166 60 Q173.6 58.6 175 51 Z" fill="#F5B014"/><path d="M124 11 Q124.8 15.2 129 16 Q124.8 16.8 124 21 Q123.2 16.8 119 16 Q123.2 15.2 124 11 Z" fill="#F5B014"/></svg>
+      <span>Skylands</span>
+      <span class="version" title="This citadel runs skylands v0.1.0">v0.1.0</span>
+    </div>
+    <div class="modes" role="group" aria-label="View">
+      <button type="button" class="btn small" id="modeWorld" data-view="world">World</button>
+      <button type="button" class="btn small" id="modeInbox" data-view="inbox"><span>Inbox</span><span class="badge">2</span></button>
+      <button type="button" class="btn small" id="modeSettings" data-view="settings">Settings</button>
+    </div>
+    <nav class="crumbs" aria-label="Breadcrumb" id="crumbs"><button type="button" class="btn small" aria-current="page"><span aria-hidden="true" style="display:inline-flex"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="6.3"/><path d="M1.7 8h12.6M8 1.7c-2.2 2-2.2 10.6 0 12.6M8 1.7c2.2 2 2.2 10.6 0 12.6M3 4.4c3 1.4 7 1.4 10 0M3 11.6c3-1.4 7-1.4 10 0"/></svg></span>World</button></nav>
+    <span class="muted">2 of 3 islands connected</span>
+    <div class="spacer"></div>
+    <span class="pill"><span class="dot" style="background:var(--ok)"></span>Citadel connected</span>
+  </header>
+
+  <main class="main">
+    <!-- World: unchanged, except for what the citadel's panel holds. -->
+    <section class="stage sky" id="stage" aria-label="3D world of every island" hidden>
+      <div class="standin" style="height:100%"><p class="chipnote">The 3D world, unchanged</p></div>
+      <div class="legend" aria-label="Legend">
+        <span><svg width="26" height="8" viewBox="0 0 26 8" aria-hidden="true"><line x1="1" y1="4" x2="25" y2="4" stroke="var(--tether)" stroke-width="2.5"/><circle cx="8" cy="4" r="2" fill="var(--spark)"/><circle cx="18" cy="4" r="2" fill="var(--spark)"/></svg>Connected</span>
+        <span><svg width="26" height="12" viewBox="0 0 26 12" aria-hidden="true"><path d="M1 2 Q13 18 25 2" fill="none" stroke="var(--idle)" stroke-width="2" stroke-dasharray="3 3"/></svg>Unreachable</span>
+        <span><svg width="10" height="14" viewBox="0 0 10 14" aria-hidden="true"><line x1="5" y1="5" x2="5" y2="13" stroke="#E0B000" stroke-width="2.5" stroke-linecap="round"/><circle cx="5" cy="4" r="3" fill="#FFD54A"/></svg>Waiting on you</span>
+      </div>
+      <p class="chipnote toast" id="toast" hidden></p>
+    </section>
+    <aside class="panel" id="panel" aria-label="Selected island" hidden></aside>
+
+    <!-- Inbox: unchanged. -->
+    <section class="inbox" id="inbox" aria-label="Conversations" hidden>
+      <div class="inbox-list standin"><p class="inbox-empty">The inbox, unchanged</p></div>
+    </section>
+
+    <!-- Settings: new. -->
+    <section class="settings" id="settings" aria-label="Settings" hidden>
+      <nav class="settings-nav" id="settingsNav" aria-label="Settings pages"></nav>
+      <div class="settings-page" id="settingsPage" data-scroll="settings"></div>
+    </section>
+  </main>
+</div>
+
+<aside class="plan-drawer" id="plan" aria-label="Implementation plan" hidden>
+  <h2>Implementation plan</h2>
+  <p class="muted" style="margin:0">Moves the citadel panel’s Islands, Approvers, app install, Notifications, and NATS sections into a Settings view of their own, beside World and Inbox.</p>
+
+  <h3>What goes where</h3>
+  <ul>
+    <li><b>Citadel panel keeps</b> its header, its facts (world, owner key, islands connected, waiting on you, version), and World theme, which changes the view right beside it. A last line points to Settings.</li>
+    <li><b>Settings › World</b>: Islands (the table, with a Last seen column now that there’s room, and Add a host), Approvers (the list, Add an approver, Revoke, this browser’s storage, and the ones that no longer approve), and NATS.</li>
+    <li><b>Settings › This browser</b>: Notifications, and App, which takes the install offer out of the Approvers section.</li>
+  </ul>
+
+  <h3>Changes</h3>
+  <ol>
+    <li><code>store.ts</code>: <code>view</code> becomes <code>'world' | 'inbox' | 'settings'</code>, kept in <code>skylands.view</code> as now. A new <code>settingsPage</code> (<code>islands</code>, <code>approvers</code>, <code>nats</code>, <code>notifications</code>, <code>app</code>) is kept in <code>skylands.settingsPage</code>, and starts at Islands.</li>
+    <li><code>index.html</code>: <code>#modeSettings</code> as the third button of the view switch, and <code>&lt;section class="settings" id="settings" hidden&gt;</code> in <code>.main</code>.</li>
+    <li><code>main.ts</code>: <code>renderMode</code> hides the stage, the panel, the crumbs, and the inbox for Settings, and pauses the world as the inbox does. The veil covers Settings as it covers the other views. Settings redraws from a deps list, as <code>renderPanel</code> does, and keeps its scroll positions.</li>
+    <li>New <code>web/src/settings.ts</code>: the page list and the five pages. It takes <code>islandTable</code>, <code>addHost</code>, <code>leafAddress</code>, <code>natsFacts</code>, and <code>notifySwitch</code> out of <code>panels/world.ts</code>. <code>approversSection</code> splits so the install offer goes to App. The list’s counts and states come from the same state the pages use.</li>
+    <li><code>panels/world.ts</code>: <code>renderWorldPanel</code> drops the four sections and the arguments only they used. The world entry of <code>panelDeps</code> drops <code>notify</code>, <code>push</code>, <code>pushError</code>, <code>install</code>, and the approver and invite fields, and takes the island counts in place of the island list, so the citadel panel redraws less. It keeps <code>server</code>, which the Healthy pill reads.</li>
+    <li>A row of the islands table opens its island: <code>nav.select(host)</code>, then <code>setView('world')</code>.</li>
+    <li>Pages don’t fold, since each holds one topic. <code>foldSection</code> stays for other panels; the <code>islands</code>, <code>approvers</code>, and <code>nats</code> ids in <code>skylands.folded</code> go unused.</li>
+    <li>App shows what this browser can do whatever the install state is: the offer, “installed”, “this is the app”, or that the browser hasn’t offered it. As today, only an approver gets the offer.</li>
+    <li>CSS: the <code>.settings*</code> rules at the top of this file’s <code>&lt;style&gt;</code>, and <code>.modes .btn + .btn</code>, so a three-button switch keeps single borders. The group headings use the world glyph from <code>parts.ts</code>, and a new <code>browser</code> glyph (a window with its tab bar) joins it there.</li>
+    <li>Phone: unchanged. It has no view switch, and keeps its own Notifications switch under the list.</li>
+    <li>Docs: “the citadel’s panel” becomes Settings in docsite <code>operations/islands.md</code>, <code>service.md</code>, and <code>notifications.md</code>, in <code>docs/NATS.md</code>, and in <code>DESIGN.md</code> (the World row of the levels table, Add a host, and the NATS server facts).</li>
+  </ol>
+</aside>
+
+<script>
+// Mockup state. Every value here stands in for one in store.ts's State.
+const S = {
+  view: 'settings',
+  page: 'islands',
+  approver: true,
+  install: 'offered',
+  notify: 'on',
+  invite: false,
+  revoking: null,
+  persisted: false,
+  theme: 'default',
+}
+
+const OWNER = 'ODQ7HZ4WJ3N5RXK2B6VMLPTY8C9AEGFSUQWERTYZXCVBNMASDLK3VXA'
+const LEAF = 'nats-leaf://192.168.1.20:7422'
+const ISLANDS = [
+  { host: 'workstation', platform: 'linux/amd64', version: 'v0.1.0', reachable: true, seen: 'just now' },
+  { host: 'laptop', platform: 'darwin/arm64', version: 'v0.1.0', reachable: true, seen: 'just now' },
+  { host: 'buildbox', platform: 'linux/arm64', version: 'v0.0.9', reachable: false, seen: '3 hours ago' },
+]
+const APPROVERS = [
+  { key: 'a', name: 'Desk Chrome', mine: true, added: '12 days ago', by: 'with the owner key' },
+  { key: 'b', name: 'Pixel phone', added: '11 days ago', by: 'by Desk Chrome' },
+  { key: 'c', name: 'Laptop Edge', added: '3 days ago', by: 'by Desk Chrome' },
+]
+const REVOKE_TEXT = {
+  a: 'Revoke Desk Chrome? It stops approving for good. Also removes 2 approvers added through it, directly or in turn: Pixel phone and Laptop Edge. This browser stops approving too, until it’s added again. No approver will be left: only your recovery file can add one after this.',
+  b: 'Revoke Pixel phone? It stops approving for good.',
+  c: 'Revoke Laptop Edge? It stops approving for good. What it approved in advance will ask again until another approver approves it: 1 trusted session.',
+}
+const short = (id) => (id.length > 12 ? `${id.slice(0, 5)}…${id.slice(-5)}` : id)
+const $ = (id) => document.getElementById(id)
+
+function header(title, kind, status) {
+  const pill = status ? `<span class="pill status" title="${status[0]}"><span class="dot" style="background:${status[1]}"></span><span class="what">${status[0]}</span></span>` : ''
+  return `<div class="ph"><div style="flex:1;min-width:0"><div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px"><h2>${title}</h2>${pill}</div>${kind ? `<p class="muted" style="margin:4px 0 0;font-size:13px">${kind}</p>` : ''}</div></div>`
+}
+const facts = (rows) => `<div class="facts">${rows.map(([k, v]) => `<div class="fact"><span class="muted">${k}</span><b>${v}</b></div>`).join('')}</div>`
+const hint = (t) => `<p class="muted" style="margin:0;font-size:13px">${t}</p>`
+const copy = (text, label, cls = 'copy') => `<button type="button" class="${cls}" aria-label="${label}" data-copy>Copy</button>`
+const ownerKey = `<span class="keyval"><code class="key" title="${OWNER}">${short(OWNER)}</code>${copy(OWNER, 'Copy the owner key')}</span>`
+
+// ---- The citadel's panel, as it would be ----
+function renderPanel() {
+  $('panel').innerHTML = [
+    header('Citadel', 'Web app and observer for this world', ['Healthy', 'var(--ok)']),
+    facts([
+      ['World', 'home'],
+      ['Owner key', ownerKey],
+      ['Islands connected', '2 of 3'],
+      ['Waiting on you', '2'],
+      ['Version', 'v0.1.0'],
+    ]),
+    `<section class="sec" aria-label="World theme"><h3>World theme</h3><div class="modes" role="group" aria-label="World theme">
+      ${['Default', 'Sci-fi'].map((n) => `<button type="button" class="btn small" data-theme-pick="${n}" aria-pressed="${S.theme === n.toLowerCase().replace('-', '') ? 'true' : 'false'}">${n}</button>`).join('')}
+    </div></section>`,
+    `<section class="sec" aria-label="Settings"><h3>Settings</h3>
+      ${hint('Islands, approvers, notifications, the app, and the NATS server are in Settings.')}
+      <div><button type="button" class="btn small" data-go-settings>Open Settings</button></div>
+    </section>`,
+  ].join('')
+}
+
+// ---- Settings: the list of pages ----
+const notifyWord = { on: 'On', off: 'Off', denied: 'Blocked' }
+const installWord = { offered: 'Available', installed: 'Installed', app: 'In the app', no: '' }
+function renderNav() {
+  const item = (id, name, right) => `<button type="button" class="conv-row" data-page="${id}" aria-current="${S.page === id ? 'true' : 'false'}"><span class="name">${name}</span><span class="when">${right}</span></button>`
+  const count = (n) => `<span class="fold-count">${n}</span>`
+  const group = (id, icon, title, items) => `<section class="settings-group" aria-labelledby="sg-${id}"><h3 id="sg-${id}">${icon}${title}</h3>${items.join('')}</section>`
+  $('settingsNav').innerHTML = [
+    group('world', GLOBE, 'World', [
+      item('islands', 'Islands', count(ISLANDS.length)),
+      item('approvers', 'Approvers', count(APPROVERS.length)),
+      item('nats', 'NATS', '<span class="dot" style="background:var(--ok)"></span>Connected'),
+    ]),
+    group('browser', BROWSER, 'This browser', [
+      item('notifications', 'Notifications', notifyWord[S.notify]),
+      item('app', 'App', S.approver ? installWord[S.install] : ''),
+    ]),
+  ].join('')
+}
+// The world's glyph, as parts.ts draws it, and a new one for this browser: a window with its tab bar.
+const GLOBE = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="6.3"/><path d="M1.7 8h12.6M8 1.7c-2.2 2-2.2 10.6 0 12.6M8 1.7c2.2 2 2.2 10.6 0 12.6M3 4.4c3 1.4 7 1.4 10 0M3 11.6c3-1.4 7-1.4 10 0"/></svg>'
+const BROWSER = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5"/><path d="M1.75 6h12.5"/><circle cx="4" cy="4.4" r=".5" fill="currentColor"/><circle cx="5.8" cy="4.4" r=".5" fill="currentColor"/></svg>'
+
+// ---- Settings: the pages ----
+const card = (kids, label) => `<section class="settings-card"${label ? ` aria-label="${label}"` : ''}>${kids.join('')}</section>`
+
+const notAnApprover = `<p class="muted" style="margin:0;font-size:13px">This browser isn’t an approver. To make it one, open an “Add an approver” link from an approver, or use your recovery file on the <a href="#" style="color:var(--accent)">setup page</a>.</p>`
+
+const PAGES = {
+  islands() {
+    const rows = ISLANDS.map((i) => {
+      const link = i.reachable ? 'Connected' : 'Unreachable'
+      return `<tr tabindex="0" data-island="${i.host}" aria-label="${i.host}, ${link}, ${i.platform}, ${i.version}">
+        <td><span class="dot" title="${link}" style="width:10px;height:10px;background:${i.reachable ? 'var(--ok)' : 'var(--idle)'}"></span></td>
+        <td class="name" title="${i.host}">${i.host}</td><td>${i.platform}</td><td class="version">${i.version}</td><td class="muted">${i.seen}</td></tr>`
+    }).join('')
+    const cmd = `skylands daemon install --world ${OWNER} --nats-url ${LEAF} --host &lt;name&gt;`
+    return [
+      header('Islands', 'The hosts in this world. A row flies to its island in the world.'),
+      card([
+        `<table class="islands-table"><thead><tr><th scope="col"><span class="sr-only">Link</span></th><th scope="col">Name</th><th scope="col">Arch</th><th scope="col">Version</th><th scope="col">Last seen</th></tr></thead><tbody>${rows}</tbody></table>`,
+      ], 'Islands'),
+      card([
+        '<h3>Add a host</h3>',
+        `<div class="addhost"><p class="muted" style="margin:0;font-size:13px">On the machine to add, with skylands installed, run this.</p><pre><code>${cmd}</code></pre></div>`,
+        `<div>${copy(cmd, 'Copy the install command', 'btn small')}</div>`,
+      ], 'Add a host'),
+    ]
+  },
+
+  approvers() {
+    const out = [header('Approvers', 'Browsers that can approve what agents do in this world.')]
+    const rows = APPROVERS.map((a) => {
+      const row = `<div class="row approver"><div class="grow"><span style="font-weight:600">${a.name}</span>${a.mine ? '<span class="me-tag">this browser</span>' : ''}<span class="sub">Added ${a.added} ${a.by}</span></div>
+        ${S.approver && S.revoking !== a.key ? `<button type="button" class="copy" aria-label="Revoke ${a.name}" data-revoke="${a.key}">Revoke</button>` : ''}</div>`
+      if (!S.approver || S.revoking !== a.key) return row
+      return `<div class="approver confirming">${row}<p class="sub">${REVOKE_TEXT[a.key]}</p><div class="actions"><button type="button" class="btn small danger" data-revoke-cancel>Revoke ${a.name}</button><button type="button" class="btn small ghost" data-revoke-cancel>Cancel</button></div></div>`
+    }).join('')
+    const kids = [`<div class="approvers">${rows}</div>`]
+    if (S.approver) {
+      kids.push(S.invite ? inviteBox() : '<div><button type="button" class="btn small" data-invite>Add an approver</button></div>')
+      kids.push(facts([['This browser’s storage', S.persisted ? 'Kept' : '<span class="keyval"><span>Best effort</span><button type="button" class="copy" data-keep>Ask to keep</button></span>']]))
+      if (!S.persisted) kids.push(hint('The browser may clear this key if it runs short of space. Your recovery file, or another approver, brings it back.'))
+    } else {
+      kids.push(notAnApprover)
+    }
+    kids.push('<details class="gone"><summary>1 no longer approves</summary><div class="sub">Old tablet: revoked by Desk Chrome</div></details>')
+    out.push(card(kids, 'Approvers'))
+    return out
+  },
+
+  nats() {
+    return [
+      header('NATS', 'The NATS server this citadel is connected to, as the server describes itself. Every tether ends at it.', ['Connected', 'var(--ok)']),
+      card([facts([
+        ['Server name', 'nats-1'],
+        ['Server ID', short('NCXF2QJ7ZL4WBR6TYKMH3PVDSNA8UGE5XCQ2HJ9RWK7QKXL')],
+        ['NATS Server version', '2.12.1'],
+        ['Cluster', 'None, single server'],
+        ['JetStream domain', 'world'],
+        ['Connected through', 'nats://127.0.0.1:4222'],
+      ])], 'NATS server'),
+    ]
+  },
+
+  notifications() {
+    const shown = S.notify === 'on'
+    const text = S.notify === 'denied'
+      ? 'This browser blocks notifications from this page. Allow them in its settings for this site, then turn them on here.'
+      : 'Notifies on this device when an agent asks for approval or has a question, even with this page closed.'
+    return [
+      header('Notifications', 'Each browser has its own switch. This one is for this browser.'),
+      card([
+        `<div class="modes" role="group" aria-label="Notifications"><button type="button" class="btn small" data-notify="on" aria-pressed="${shown}">On</button><button type="button" class="btn small" data-notify="off" aria-pressed="${!shown}">Off</button></div>`,
+        `<p class="note">${text}</p>`,
+      ], 'Notifications'),
+    ]
+  },
+
+  app() {
+    let body
+    if (!S.approver) body = [notAnApprover]
+    else if (S.install === 'offered') {
+      body = ['<div class="install-app"><button type="button" class="btn small" data-install>Install as an app</button>',
+        hint('Skylands then opens in its own window, like the other apps on this computer, and approves with the same key as this browser.'), '</div>']
+    } else if (S.install === 'installed') {
+      body = [hint('Skylands is installed as an app on this computer. Open it like any other app. It approves with the same key as this browser.')]
+    } else if (S.install === 'app') {
+      body = [hint('This is the Skylands app. It approves with the same key as the browser it was installed from.')]
+    } else {
+      body = ['<p class="note">This browser hasn’t offered to install Skylands as an app. Chrome, Edge, and other Chromium browsers offer it for a page opened over HTTPS or at localhost, while it isn’t installed already.</p>']
+    }
+    return [header('App', 'Skylands as an app of its own, in browsers that make one.'), card(body, 'Install as an app')]
+  },
+}
+
+// A stand-in for qr.ts's code: a pattern with the three corner squares.
+function fakeQr() {
+  const n = 25, cells = []
+  let seed = 7
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280)
+  const finder = (x, y) => [[x, y, 7, 7, 'fg'], [x + 1, y + 1, 5, 5, 'bg'], [x + 2, y + 2, 3, 3, 'fg']]
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const inFinder = (x < 8 && y < 8) || (x > n - 9 && y < 8) || (x < 8 && y > n - 9)
+    if (!inFinder && rnd() > 0.55) cells.push(`<rect x="${x}" y="${y}" width="1" height="1"/>`)
+  }
+  const f = [...finder(0, 0), ...finder(n - 7, 0), ...finder(0, n - 7)]
+    .map(([x, y, w, h, c]) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${c === 'fg' ? '#000' : '#fff'}"/>`).join('')
+  return `<svg class="qr" viewBox="-2 -2 29 29" role="img" aria-label="QR code of the link that adds an approver" style="background:#fff"><g fill="#000">${cells.join('')}</g>${f}</svg>`
+}
+
+function inviteBox() {
+  const link = 'https://box.example.ts.net/setup#invite=Z3KQ8M2VXR7T'
+  return `<div class="invite">
+    <p class="sub">Open this on the phone or browser to add: scan the code, or copy the link to it. It works once, until 4:52 PM.</p>
+    <div class="invite-address"><label class="chip">Opens at <select aria-label="Address the link opens at"><option>https://box.example.ts.net (the citadel’s address)</option><option>${location.protocol === 'file:' ? 'http://localhost:8080' : location.origin} (this page)</option><option>Another address…</option></select></label></div>
+    ${fakeQr()}
+    <div class="addhost"><pre><code>${link}</code></pre></div>
+    <p class="sub">Anyone who opens it first becomes an approver, so share it only with yourself.</p>
+    <div class="actions">${copy(link, 'Copy the link that adds an approver', 'btn small')}<button type="button" class="btn small ghost" data-invite-close>Cancel</button></div>
+  </div>`
+}
+
+function renderSettings() {
+  renderNav()
+  $('settingsPage').innerHTML = `<div class="settings-body">${PAGES[S.page]().join('')}</div>`
+}
+
+function render() {
+  for (const b of document.querySelectorAll('[data-view]')) b.setAttribute('aria-pressed', String(b.dataset.view === S.view))
+  $('stage').hidden = $('panel').hidden = S.view !== 'world'
+  $('crumbs').hidden = S.view !== 'world'
+  $('inbox').hidden = S.view !== 'inbox'
+  $('settings').hidden = S.view !== 'settings'
+  renderPanel()
+  renderSettings()
+}
+
+// ---- Interactions ----
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('button, tr[data-island]')
+  if (!t) return
+  const d = t.dataset
+  if (d.view) S.view = d.view
+  else if (d.page) S.page = d.page
+  else if (d.goSettings !== undefined) S.view = 'settings'
+  else if (d.island) {
+    S.view = 'world'
+    const toast = $('toast')
+    toast.textContent = `Flies to ${d.island}, and the panel shows the island`
+    toast.hidden = false
+    setTimeout(() => (toast.hidden = true), 2500)
+  } else if (d.revoke) S.revoking = d.revoke
+  else if (d.revokeCancel !== undefined) S.revoking = null
+  else if (d.invite !== undefined) S.invite = true
+  else if (d.inviteClose !== undefined) S.invite = false
+  else if (d.keep !== undefined) S.persisted = true
+  else if (d.notify) S.notify = d.notify
+  else if (d.install !== undefined) S.install = 'installed'
+  else if (d.themePick) S.theme = d.themePick.toLowerCase().replace('-', '')
+  else if (d.copy !== undefined) {
+    t.textContent = 'Copied'
+    setTimeout(() => (t.textContent = 'Copy'), 1500)
+    return
+  } else return
+  syncControls()
+  render()
+})
+document.addEventListener('keydown', (e) => {
+  const row = e.target.closest?.('tr[data-island]')
+  if (row && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault()
+    row.click()
+  }
+})
+
+// ---- The mockup's own controls ----
+function syncControls() {
+  $('mApprover').value = S.approver ? 'yes' : 'no'
+  $('mInstall').value = S.install
+  $('mNotify').value = S.notify
+}
+$('mTheme').addEventListener('change', (e) => {
+  if (e.target.value) document.documentElement.dataset.theme = e.target.value
+  else delete document.documentElement.dataset.theme
+})
+$('mApprover').addEventListener('change', (e) => { S.approver = e.target.value === 'yes'; S.revoking = null; S.invite = false; render() })
+$('mInstall').addEventListener('change', (e) => { S.install = e.target.value; render() })
+$('mNotify').addEventListener('change', (e) => { S.notify = e.target.value; render() })
+$('mPlan').addEventListener('click', () => {
+  const open = $('plan').hidden
+  $('plan').style.top = `${document.querySelector('.mockbar').offsetHeight}px`
+  $('plan').hidden = !open
+  $('mPlan').setAttribute('aria-pressed', String(open))
+  $('mPlan').textContent = open ? 'Hide the plan' : 'Show the plan'
+})
+
+// A state can be linked to: #page=approvers&theme=dark&view=world&plan&invite
+for (const part of location.hash.slice(1).split('&').filter(Boolean)) {
+  const [k, v] = part.split('=')
+  if (k === 'page' && PAGES[v]) S.page = v
+  if (k === 'view') S.view = v
+  if (k === 'theme') { document.documentElement.dataset.theme = v; $('mTheme').value = v }
+  if (k === 'approver') S.approver = v !== 'no'
+  if (k === 'install') S.install = v
+  if (k === 'notify') S.notify = v
+  if (k === 'invite') S.invite = true
+  if (k === 'revoke') S.revoking = v
+  if (k === 'plan') $('mPlan').click()
+}
+syncControls()
+render()
+</script>
+</body>
+</html>

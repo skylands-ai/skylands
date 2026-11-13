@@ -19,8 +19,8 @@ name.
 
 **A leaf node listener the daemons can reach.** Each daemon dials it with
 `--nats-url nats-leaf://HOST:PORT`. Tell the citadel the same address
-with `--leaf-url`, and the citadel's "Add a host" section shows it in the
-install command. On a network you don't trust, give the listener TLS.
+with `--leaf-url`, and "Add a host", in the citadel's Settings, shows it in
+the install command. On a network you don't trust, give the listener TLS.
 
 **A client listener for the citadel.** The citadel connects with
 `--nats-url nats://HOST:PORT`. It is the only client; browsers talk to
