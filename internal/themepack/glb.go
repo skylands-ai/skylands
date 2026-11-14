@@ -396,17 +396,33 @@ func checkMeshes(doc *gltfDoc, p *problems) int {
 			if prim.Material != nil && (*prim.Material < 0 || *prim.Material >= len(doc.Materials)) {
 				p.add("%s names a material that isn't there", what)
 			}
-			switch {
-			case prim.Indices != nil && !doc.accessor(*prim.Indices):
+			if prim.Indices != nil && !doc.accessor(*prim.Indices) {
 				p.add("%s's indices name an accessor that isn't there", what)
-			case prim.Indices != nil:
-				tris += doc.Accessors[*prim.Indices].Count / 3
-			case doc.accessor(pos):
-				tris += doc.Accessors[pos].Count / 3
+				continue
+			}
+			if doc.accessor(pos) {
+				tris += doc.triangles(prim)
 			}
 		}
 	}
 	return tris
+}
+
+// triangles is how many triangles a checked primitive draws.
+func (doc *gltfDoc) triangles(prim gltfPrimitive) int {
+	if prim.Indices != nil {
+		return doc.Accessors[*prim.Indices].Count / 3
+	}
+	return doc.Accessors[prim.Attributes["POSITION"]].Count / 3
+}
+
+// materialName is the name of a checked material.
+func (doc *gltfDoc) materialName(i int) string {
+	var m struct {
+		Name string `json:"name"`
+	}
+	_ = json.Unmarshal(doc.Materials[i], &m)
+	return m.Name
 }
 
 func checkAnimations(doc *gltfDoc, p *problems) {
@@ -531,6 +547,56 @@ func checkModels(m *Manifest, ms *models, p *problems) {
 			}
 		}
 	}
+	if r := m.Terrace.Rope; r != nil {
+		if r.Material != "" && !ms.sceneMaterials()[stem(r.Material)] {
+			p.add("terrace.rope.material is %q, but no model in models.glb's scene uses a material by that name", r.Material)
+		}
+		// A terrace strings hundreds of beads, so each must be small.
+		if b := r.Bead; b != nil && len(byName[b.Model]) == 1 {
+			if n := ms.trianglesUnder(byName[b.Model][0]); n > MaxBeadTriangles {
+				p.add("terrace.rope.bead.model %q has %d triangles; a bead may have at most %d", b.Model, n, MaxBeadTriangles)
+			}
+		}
+	}
+}
+
+// trianglesUnder is how many triangles the model at root draws.
+func (ms *models) trianglesUnder(root int) int {
+	n := ms.doc.Nodes[root]
+	tris := 0
+	if n.Mesh != nil {
+		for _, prim := range ms.doc.Meshes[*n.Mesh].Primitives {
+			tris += ms.doc.triangles(prim)
+		}
+	}
+	for _, c := range n.Children {
+		tris += ms.trianglesUnder(c)
+	}
+	return tris
+}
+
+// sceneMaterials is the stems of the names of the materials that the
+// models in the default scene use.
+func (ms *models) sceneMaterials() map[string]bool {
+	used := map[string]bool{}
+	var visit func(int)
+	visit = func(i int) {
+		n := ms.doc.Nodes[i]
+		if n.Mesh != nil {
+			for _, prim := range ms.doc.Meshes[*n.Mesh].Primitives {
+				if prim.Material != nil {
+					used[stem(ms.doc.materialName(*prim.Material))] = true
+				}
+			}
+		}
+		for _, c := range n.Children {
+			visit(c)
+		}
+	}
+	for _, r := range ms.roots {
+		visit(r)
+	}
+	return used
 }
 
 // hasPart says whether a node below root has part as its name's stem.

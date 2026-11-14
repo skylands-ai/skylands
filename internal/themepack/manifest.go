@@ -132,15 +132,39 @@ type Ring struct {
 }
 
 // Terrace is a terrace's plaza and the post repeated around it, about
-// PostSpacing apart and PostOut outside the plaza's edge. Glow is how
-// brightly its repo-glow material glows at rest.
+// PostSpacing apart and PostOut outside the plaza's edge, with a Rope from
+// each post to the next if there is one. Glow is how brightly its
+// repo-glow material glows at rest.
 type Terrace struct {
 	Plaza       string  `json:"plaza"`
 	Post        string  `json:"post"`
 	PostSpacing float64 `json:"postSpacing"`
 	PostOut     float64 `json:"postOut"`
 	Glow        float64 `json:"glow"`
+	Rope        *Rope   `json:"rope,omitempty"`
 }
+
+// Rope is what the world hangs from each of a terrace's posts to the next:
+// a tube Radius thick from the point At in each post's own space, its
+// middle Sag below a straight line, drawn in the material of models.glb
+// named Material, with a Bead strung along it if there is one.
+type Rope struct {
+	At       []float64 `json:"at"`
+	Sag      float64   `json:"sag"`
+	Radius   float64   `json:"radius"`
+	Material string    `json:"material"`
+	Bead     *Bead     `json:"bead,omitempty"`
+}
+
+// Bead is a model the world strings along a rope, about Spacing apart.
+type Bead struct {
+	Model   string  `json:"model"`
+	Spacing float64 `json:"spacing"`
+}
+
+// MaxBeadTriangles is how many triangles a bead may have. A terrace
+// strings hundreds of them.
+const MaxBeadTriangles = 64
 
 // Building is the model of one file's building.
 type Building struct {
@@ -314,6 +338,22 @@ func (m *Manifest) check(p *problems) {
 	p.number("terrace.postSpacing", m.Terrace.PostSpacing, 0.3, 10)
 	p.number("terrace.postOut", m.Terrace.PostOut, 0, 2)
 	p.number("terrace.glow", m.Terrace.Glow, 0, 2)
+	if r := m.Terrace.Rope; r != nil {
+		if len(r.At) != 3 {
+			p.add("terrace.rope.at has %d numbers; it is [x, y, z]", len(r.At))
+		} else {
+			p.number("terrace.rope.at[0]", r.At[0], -2, 2)
+			p.number("terrace.rope.at[1]", r.At[1], 0, 4)
+			p.number("terrace.rope.at[2]", r.At[2], -2, 2)
+		}
+		p.number("terrace.rope.sag", r.Sag, 0, 2)
+		p.number("terrace.rope.radius", r.Radius, 0.002, 0.2)
+		p.model("terrace.rope.material", r.Material)
+		if b := r.Bead; b != nil {
+			p.model("terrace.rope.bead.model", b.Model)
+			p.number("terrace.rope.bead.spacing", b.Spacing, 0.1, 10)
+		}
+	}
 	p.model("building.model", m.Building.Model)
 	p.model("airship.model", m.Airship.Model)
 	for prov, name := range m.Airship.Providers {
@@ -355,6 +395,9 @@ func (m *Manifest) models() []modelUse {
 	}
 	if m.Visitor != nil {
 		uses = append(uses, modelUse{"visitor.model", m.Visitor.Model, nil, false})
+	}
+	if r := m.Terrace.Rope; r != nil && r.Bead != nil {
+		uses = append(uses, modelUse{"terrace.rope.bead.model", r.Bead.Model, nil, false})
 	}
 	return uses
 }

@@ -5,6 +5,7 @@ vi.stubGlobal('window', { matchMedia: () => ({ matches: false }) })
 const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader')
 const { packTheme } = await import('./pack')
 const { PROVIDER_COLOR } = await import('./airship')
+const { boundaryPoints } = await import('./terrace')
 type PackManifest = import('./pack').PackManifest
 
 /**
@@ -82,9 +83,14 @@ const manifest: PackManifest = {
   airship: { model: 'crane' },
 }
 
-async function theme() {
+async function theme(m: PackManifest = manifest) {
   const gltf = await new Promise<import('three/examples/jsm/loaders/GLTFLoader').GLTF>((resolve, reject) => new GLTFLoader().parse(glb(), '', resolve, reject))
-  return packTheme(manifest, gltf)
+  return packTheme(m, gltf)
+}
+
+/** The test manifest with a rope round each terrace. */
+function roped(rope: NonNullable<PackManifest['terrace']['rope']>): PackManifest {
+  return { ...manifest, terrace: { ...manifest.terrace, rope } }
 }
 
 /** Every userData key anywhere under an object. */
@@ -141,5 +147,46 @@ describe('packTheme', () => {
     expect(glow.emissiveIntensity).toBeCloseTo(0.5)
     t.animate(1.6, true)
     expect(glow.emissiveIntensity).toBeGreaterThan(0.5)
+  })
+
+  it('hangs a rope from each post to the next, round the corners, sagging between', async () => {
+    const plot = { sx: 3, sz: 2, color: 0x3fa37c }
+    const t = (await theme(roped({ at: [0.1, 0.8, 0], sag: 0.3, radius: 0.02, material: 'repo-glow' }))).buildTerrace(plot)
+    const rope = t.group.getObjectByName('rope') as THREE.Mesh
+    rope.geometry.computeBoundingBox()
+    const box = rope.geometry.boundingBox as THREE.Box3
+    // Each post stands 0.2 out from the plaza, and its rope 0.1 further out.
+    expect(box.max.x).toBeCloseTo(3 / 2 + 0.3 + 0.02, 2)
+    expect(box.min.z).toBeCloseTo(-2 / 2 - 0.3 - 0.02, 2)
+    // Its ends are at the posts' rope points and its middles sag below them,
+    // give or take the tube's five-sided thickness.
+    expect(Math.abs(box.max.y - 0.8)).toBeLessThan(0.02)
+    expect(Math.abs(box.min.y - (0.8 - 0.3))).toBeLessThan(0.025)
+    // It glows in the repo's color, brighter while selected, as the posts do.
+    const mat = rope.material as THREE.MeshStandardMaterial
+    expect(mat.color.getHex()).toBe(0x3fa37c)
+    t.animate(1, false)
+    expect(mat.emissiveIntensity).toBeCloseTo(0.5)
+    t.animate(1.6, true)
+    expect(mat.emissiveIntensity).toBeGreaterThan(0.5)
+  })
+
+  it('strings beads along a rope, one draw for each part of the bead', async () => {
+    const plot = { sx: 3, sz: 2, color: 0x3fa37c }
+    const t = (await theme(roped({ at: [0, 0.8, 0], sag: 0.3, radius: 0.02, material: 'paper', bead: { model: 'ring', spacing: 10 } }))).buildTerrace(plot)
+    const beads: THREE.InstancedMesh[] = []
+    t.group.traverse((o) => {
+      if (o.name === 'bead') beads.push(o as THREE.InstancedMesh)
+    })
+    expect(beads).toHaveLength(1)
+    // Far apart, each span gets one, at its middle, where it hangs lowest.
+    expect(beads[0].count).toBe(boundaryPoints(plot, 0.2, 1).length)
+    const at = new THREE.Matrix4()
+    beads[0].getMatrixAt(0, at)
+    expect(new THREE.Vector3().setFromMatrixPosition(at).y).toBeCloseTo(0.8 - 0.3, 5)
+  })
+
+  it('hangs no rope where the manifest names none', async () => {
+    expect((await theme()).buildTerrace({ sx: 3, sz: 2, color: 0x3fa37c }).group.getObjectByName('rope')).toBeUndefined()
   })
 })
