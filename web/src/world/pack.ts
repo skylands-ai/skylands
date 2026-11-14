@@ -23,7 +23,7 @@ export interface PackManifest {
   citadel: { model: string; labelY: number; ringRadius: number; beacon: string }
   island: { models: string[]; scenery?: { model: string; perRadius: number; pad: number; scale: [number, number] }[] }
   ring: { model: string; spacing: number; spin: number }
-  terrace: { plaza: string; post: string; postSpacing: number; postOut: number; glow: number }
+  terrace: { plaza: string; post: string; postSpacing: number; postOut: number; glow: number; rope?: PackRope }
   building: { model: string }
   airship: { model: string; providers?: Partial<Record<Provider, string>> }
   visitor?: { model: string; path: 'glide'; duration: number }
@@ -43,6 +43,20 @@ interface PackSky {
   hemiIntensity: number
   sun: string
   sunIntensity: number
+}
+
+/**
+ * What the world hangs from each of a terrace's posts to the next: a tube
+ * radius thick from the point at in each post's own space, its middle sag
+ * below a straight line, in the material of models.glb named material,
+ * with a bead strung along it about spacing apart if there is one.
+ */
+interface PackRope {
+  at: [number, number, number]
+  sag: number
+  radius: number
+  material: string
+  bead?: { model: string; spacing: number }
 }
 
 interface PackMaterial {
@@ -104,6 +118,7 @@ async function loadPack(info: ThemeInfo): Promise<WorldTheme> {
 }
 
 const TAU = Math.PI * 2
+const UP = new THREE.Vector3(0, 1, 0)
 
 /** A name up to its first dot, so core.001, as Blender names a second core, is a core too. */
 const stem = (name: string): string => name.split('.')[0]
@@ -117,6 +132,35 @@ const hex = (c: string): number => parseInt(c.slice(1), 16)
 const materialsOf = (o: THREE.Object3D): THREE.Material[] => {
   const m = (o as THREE.Mesh).material
   return Array.isArray(m) ? m : m ? [m] : []
+}
+
+/** Tubes made alike, each with positions, normals, and uvs, as one geometry, freeing the tubes. */
+function joined(geos: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const out = new THREE.BufferGeometry()
+  for (const [name, size] of [
+    ['position', 3],
+    ['normal', 3],
+    ['uv', 2],
+  ] as const) {
+    const parts = geos.map((g) => g.getAttribute(name).array as Float32Array)
+    const all = new Float32Array(parts.reduce((n, a) => n + a.length, 0))
+    let at = 0
+    for (const a of parts) {
+      all.set(a, at)
+      at += a.length
+    }
+    out.setAttribute(name, new THREE.BufferAttribute(all, size))
+  }
+  const index: number[] = []
+  let base = 0
+  for (const g of geos) {
+    const idx = (g.index as THREE.BufferAttribute).array
+    for (let i = 0; i < idx.length; i++) index.push(idx[i] + base)
+    base += g.getAttribute('position').count
+    g.dispose()
+  }
+  out.setIndex(index)
+  return out
 }
 
 /** The world's materials for a link marker, which it colors by the link's state. */
@@ -303,8 +347,19 @@ export function packTheme(m: PackManifest, gltf: GLTF): WorldTheme {
 
   // Each model is checked once, now, so a pack missing one is refused
   // before it draws anything.
-  for (const name of [m.citadel.model, ...m.island.models, ...(m.island.scenery ?? []).map((s) => s.model), m.ring.model, m.terrace.plaza, m.terrace.post, m.airship.model, ...Object.values(m.airship.providers ?? {}), ...(m.visitor ? [m.visitor.model] : [])]) {
+  for (const name of [m.citadel.model, ...m.island.models, ...(m.island.scenery ?? []).map((s) => s.model), m.ring.model, m.terrace.plaza, m.terrace.post, m.airship.model, ...Object.values(m.airship.providers ?? {}), ...(m.visitor ? [m.visitor.model] : []), ...(m.terrace.rope?.bead ? [m.terrace.rope.bead.model] : [])]) {
     if (name) root(name)
+  }
+
+  // A rope is drawn in the material of that name that a model uses.
+  const rope = m.terrace.rope
+  let ropeMat: THREE.Material | null = null
+  if (rope) {
+    const want = stem(rope.material)
+    gltf.scene.traverse((o) => {
+      for (const mat of materialsOf(o)) if (!ropeMat && stem(mat.name) === want) ropeMat = mat
+    })
+    if (!ropeMat) throw new Error(`no model in models.glb uses a material named ${rope.material}`)
   }
 
   const sky: SkyLook | null = m.sky
@@ -434,6 +489,7 @@ export function packTheme(m: PackManifest, gltf: GLTF): WorldTheme {
       const steps = [plaza.step]
       const out = m.terrace.postOut
       const hx = t.sx / 2 + out
+      const ends: THREE.Vector3[] = []
       boundaryPoints(t, out, m.terrace.postSpacing).forEach(([x, z], i) => {
         const post = copy(m.terrace.post, i * 0.61)
         tint(post.object)
@@ -445,7 +501,57 @@ export function packTheme(m: PackManifest, gltf: GLTF): WorldTheme {
         at.add(post.object)
         g.add(at)
         steps.push(post.step)
+        // Where this post's rope ends, in the terrace.
+        if (rope) ends.push(new THREE.Vector3(...rope.at).applyAxisAngle(UP, at.rotation.y).add(at.position))
       })
+      if (rope && ropeMat) {
+        // From each post to the next, round the terrace. A quadratic
+        // curve's middle is halfway to its control point, so the control
+        // point is twice the sag below the middle of the span.
+        const spans = ends.map((a, i) => {
+          const b = ends[(i + 1) % ends.length]
+          const mid = a.clone().lerp(b, 0.5)
+          mid.y -= 2 * rope.sag
+          return new THREE.QuadraticBezierCurve3(a, mid, b)
+        })
+        const line = new THREE.Mesh(joined(spans.map((c) => new THREE.TubeGeometry(c, 12, rope.radius, 5, false))), ropeMat)
+        line.name = 'rope'
+        tint(line)
+        g.add(line)
+        if (rope.bead) {
+          // Beads at even steps along each span, none on a post, upright
+          // with +z along the rope.
+          const placed: THREE.Matrix4[] = []
+          const turn = new THREE.Quaternion()
+          const one = new THREE.Vector3(1, 1, 1)
+          for (const c of spans) {
+            const n = Math.max(1, Math.round(c.getLength() / rope.bead.spacing))
+            for (let k = 0; k < n; k++) {
+              const u = (k + 0.5) / n
+              const along = c.getTangentAt(u)
+              turn.setFromAxisAngle(UP, Math.atan2(along.x, along.z))
+              placed.push(new THREE.Matrix4().compose(c.getPointAt(u), turn, one))
+            }
+          }
+          // Each part of the bead is one instanced mesh, so a terrace's
+          // beads are a few draws. Beads don't move.
+          const src = root(rope.bead.model)
+          src.updateMatrixWorld(true)
+          const each = new THREE.Matrix4()
+          src.traverse((x) => {
+            const part = x as THREE.Mesh
+            if (!part.isMesh) return
+            const beads = new THREE.InstancedMesh(part.geometry, part.material, placed.length)
+            placed.forEach((p, i) => beads.setMatrixAt(i, each.multiplyMatrices(p, part.matrixWorld)))
+            beads.instanceMatrix.needsUpdate = true
+            // Its bounds are one bead's at the terrace's middle, wherever its beads are.
+            beads.frustumCulled = false
+            beads.name = 'bead'
+            tint(beads)
+            g.add(beads)
+          })
+        }
+      }
       let last = -1
       return {
         group: g,

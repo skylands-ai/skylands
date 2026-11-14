@@ -229,6 +229,78 @@ func TestCheckManifest(t *testing.T) {
 	}
 }
 
+// withRope gives the test manifest's terrace a rope.
+func withRope(rope string) string {
+	return strings.Replace(testManifest, `"glow": 0.5 }`, `"glow": 0.5, "rope": `+rope+` }`, 1)
+}
+
+// withBigModel adds a root named name of 65 triangles to a document.
+func withBigModel(d gltf, name string) gltf {
+	idx := make([]byte, 65*3*2)
+	for i := range 65 * 3 {
+		idx[i*2] = byte(i % 3)
+	}
+	bin := append(d["_bin"].([]byte), idx...)
+	d["_bin"] = bin
+	d["buffers"] = []any{map[string]any{"byteLength": len(bin)}}
+	d["bufferViews"] = append(d["bufferViews"].([]any), map[string]any{"buffer": 0, "byteOffset": 36, "byteLength": len(idx)})
+	d["accessors"] = append(d["accessors"].([]any), map[string]any{"bufferView": 1, "componentType": 5123, "count": 65 * 3, "type": "SCALAR"})
+	d["meshes"] = append(d["meshes"].([]any), map[string]any{"primitives": []any{map[string]any{"attributes": map[string]any{"POSITION": 0}, "indices": 1, "material": 0}}})
+	d["nodes"] = append(d["nodes"].([]any), map[string]any{"name": name, "mesh": 1})
+	scene := d["scenes"].([]any)[0].(map[string]any)
+	scene["nodes"] = append(scene["nodes"].([]any), len(d["nodes"].([]any))-1)
+	return d
+}
+
+func TestCheckRope(t *testing.T) {
+	const rope = `{ "at": [0, 0.8, 0.1], "sag": 0.3, "radius": 0.02, "material": "paper", "bead": { "model": "ring", "spacing": 0.2 } }`
+	t.Run("a rope with beads", func(t *testing.T) {
+		p := mustCheck(t, testFiles(t, testDoc(), withRope(rope)))
+		r := p.Manifest.Terrace.Rope
+		if r == nil || r.Material != "paper" || r.Bead == nil || r.Bead.Model != "ring" {
+			t.Errorf("rope = %+v", r)
+		}
+	})
+	t.Run("a material named as Blender names a second one", func(t *testing.T) {
+		mustCheck(t, testFiles(t, testDoc(), withRope(strings.Replace(rope, `"paper"`, `"paper.001"`, 1))))
+	})
+	t.Run("a rope without beads", func(t *testing.T) {
+		mustCheck(t, testFiles(t, testDoc(), withRope(`{ "at": [0, 0.8, 0], "sag": 0, "radius": 0.02, "material": "paper" }`)))
+	})
+	t.Run("a material no model uses", func(t *testing.T) {
+		d := testDoc()
+		d["materials"] = append(d["materials"].([]any), map[string]any{"name": "string"})
+		refused(t, testFiles(t, d, withRope(strings.Replace(rope, `"paper"`, `"string"`, 1))), `terrace.rope.material is "string", but no model`)
+	})
+	t.Run("a bead that isn't there", func(t *testing.T) {
+		refused(t, testFiles(t, testDoc(), withRope(strings.Replace(rope, `"ring"`, `"bulb"`, 1))), `terrace.rope.bead.model is "bulb", but models.glb's scene has no root node`)
+	})
+	t.Run("a bead of too many triangles", func(t *testing.T) {
+		d := withBigModel(testDoc(), "bulb")
+		refused(t, testFiles(t, d, withRope(strings.Replace(rope, `"ring"`, `"bulb"`, 1))), `"bulb" has 65 triangles; a bead may have at most 64`)
+	})
+	cases := []struct {
+		name, from, to, want string
+	}{
+		{"a point of two numbers", `[0, 0.8, 0.1]`, `[0, 0.8]`, "terrace.rope.at has 2 numbers"},
+		{"a point under the island", `[0, 0.8, 0.1]`, `[0, -1, 0.1]`, "terrace.rope.at[1]"},
+		{"too much sag", `"sag": 0.3`, `"sag": 3`, "terrace.rope.sag"},
+		{"no thickness", `"radius": 0.02`, `"radius": 0`, "terrace.rope.radius"},
+		{"no material", `"material": "paper", `, ``, "terrace.rope.material is missing"},
+		{"beads too close", `"spacing": 0.2`, `"spacing": 0.01`, "terrace.rope.bead.spacing"},
+		{"a field it doesn't know", `"sag": 0.3`, `"sag": 0.3, "sway": 1`, "unknown field"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := strings.Replace(rope, c.from, c.to, 1)
+			if r == rope {
+				t.Fatalf("%q isn't in the test rope", c.from)
+			}
+			refused(t, testFiles(t, testDoc(), withRope(r)), c.want)
+		})
+	}
+}
+
 func TestCheckWantsEveryFileAndNoOthers(t *testing.T) {
 	files := testFiles(t, testDoc(), testManifest)
 	delete(files, LicenseFile)
