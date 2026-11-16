@@ -95,6 +95,9 @@ func OpenOwnerApprover(s v1.Signed, owner string) (v1.ApproverEntry, error) {
 	if err := checkName(a.Name, "the approver"); err != nil {
 		return a, err
 	}
+	if err := checkDevice(a.Device); err != nil {
+		return a, err
+	}
 	return a, nil
 }
 
@@ -122,6 +125,9 @@ func OpenVouchedApprover(s v1.Signed, owner string) (v1.ApproverEntry, error) {
 		return a, errors.New("the approver's key is not a user public nkey of its own")
 	}
 	if err := checkName(a.Name, "the approver"); err != nil {
+		return a, err
+	}
+	if err := checkDevice(a.Device); err != nil {
 		return a, err
 	}
 	return a, nil
@@ -236,6 +242,16 @@ func checkName(name, what string) error {
 		return fmt.Errorf("%s's name is longer than %d bytes", what, MaxNameLength)
 	}
 	return nil
+}
+
+// checkDevice accepts what an approver entry can be: a browser, which
+// names no device, or a host's CLI.
+func checkDevice(device string) error {
+	switch device {
+	case "", v1.ApproverDeviceCLI:
+		return nil
+	}
+	return fmt.Errorf("the approver's device %q is neither a browser nor a CLI", device)
 }
 
 // Now is a timestamp in the form records carry.

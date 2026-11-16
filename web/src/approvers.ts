@@ -198,8 +198,9 @@ export function signRepoRules(s: State, r: Repo, rules: Rule[]): { rules: Rule[]
 }
 
 /**
- * A command's signature once the world exists, or nothing before it does,
- * when a daemon takes unsigned commands, or why this browser can't sign.
+ * A command's signature, or why this browser can't sign. Before the world
+ * exists there's no approver and nothing is signed, and the citadel takes
+ * no command then, so it says why.
  */
 function signOnceWorld(s: State, build: (world: string) => Decision): { signature?: DecisionSignature; error?: string } {
   if (!s.world?.owner) return {}

@@ -661,7 +661,7 @@ func (c *citadel) approverInfo() []web.ApproverInfo {
 	}
 	var out []web.ApproverInfo
 	for _, a := range reg.Approvers() {
-		info := web.ApproverInfo{Key: a.Key, Name: a.Name, Enrolled: a.Enrolled.UTC().Format(time.RFC3339), By: who(a.By), Voucher: a.Voucher, Valid: reg.Valid(a.Key)}
+		info := web.ApproverInfo{Key: a.Key, Name: a.Name, Device: a.Device, Enrolled: a.Enrolled.UTC().Format(time.RFC3339), By: who(a.By), Voucher: a.Voucher, Valid: reg.Valid(a.Key)}
 		if !a.Revoked.IsZero() {
 			info.Revoked, info.RevokedBy = a.Revoked.UTC().Format(time.RFC3339), who(a.RevokedBy)
 		}

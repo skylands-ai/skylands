@@ -87,7 +87,9 @@ skylands request approve <id>
 skylands request deny <id>
 ```
 
-These talk to the daemon over its local socket, so they work while the citadel is unreachable.
+These talk to the daemon over its local socket, so they work while the citadel is down. They're signed like decisions in the world, so make the host's CLI an [approver](/concepts/approvers/#the-cli-on-a-host) first, and type its passphrase when a command asks. `request approve` shows the exact input the agent proposed before it asks.
+
+The daemon checks each signature against the world's approvers, which it reads from the world's NATS server, so a revocation counts as soon as it's stored. While the host can't reach that server, it takes no decisions, from the host or anywhere else.
 
 ## Revoked Approvers
 
@@ -96,4 +98,4 @@ Revoking an approver doesn't undo decisions it already made. It does end what it
 - A session it trusted asks again.
 - A rule list it set keeps its deny and ask rules, and its allow rules ask instead, until another approver approves the list again from the rules sheet. The same goes for a session's copy of a repository's rules.
 
-Rules added with `skylands rule` on the host aren't affected.
+That includes rules set with `skylands rule` on the host, which the host's CLI signed as an approver.

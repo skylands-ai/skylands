@@ -49,6 +49,8 @@ export interface ThemeInfo {
 export interface ApproverInfo {
   key: string
   name: string
+  /** "cli" for a host's CLI, which signs what's decided on its host; absent for a browser. */
+  device?: string
   enrolled: string
   /** "owner" for an approver the owner key enrolled, or the key of the approver whose link it used. */
   by: string

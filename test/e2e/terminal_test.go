@@ -81,7 +81,7 @@ func TestTerminalThroughTheCitadel(t *testing.T) {
 		t.Helper()
 		req, _ := http.NewRequestWithContext(ctx, method, w.webURL+path, bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := w.http.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -115,7 +115,7 @@ func TestTerminalThroughTheCitadel(t *testing.T) {
 	b.send(t, watch)
 	time.Sleep(200 * time.Millisecond) // the citadel subscribes before the shell answers
 	input := at
-	input.Type, input.Input = "term-input", &v1.TerminalInput{Attach: "Attach01", Seq: 1, Data: []byte("ls; echo through-\"\"the-citadel; stty size\n")}
+	input.Type, input.Input = "term-input", w.signedInput("ws", "Sess0001", "Term0001", v1.TerminalInput{Attach: "Attach01", Seq: 1, Data: []byte("ls; echo through-\"\"the-citadel; stty size\n")})
 	b.send(t, input)
 	b.waitTerm(t, "through-the-citadel")
 	b.waitTerm(t, "main.go")
@@ -124,7 +124,7 @@ func TestTerminalThroughTheCitadel(t *testing.T) {
 	size.Type, size.Size = "term-size", &v1.TerminalSize{Cols: 120, Rows: 33}
 	b.send(t, size)
 	time.Sleep(200 * time.Millisecond)
-	input.Input = &v1.TerminalInput{Attach: "Attach01", Seq: 2, Data: []byte("stty size\n")}
+	input.Input = w.signedInput("ws", "Sess0001", "Term0001", v1.TerminalInput{Attach: "Attach01", Seq: 2, Data: []byte("stty size\n")})
 	b.send(t, input)
 	b.waitTerm(t, "33 120")
 	if code, out := call("GET", "/api/sessions/ws/Sess0001/terminals/Term0001", ""); code != http.StatusOK {

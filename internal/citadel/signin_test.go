@@ -41,8 +41,9 @@ func getStatus(t *testing.T, client *http.Client, url string) int {
 	return resp.StatusCode
 }
 
-// TestSignIn covers signing in to the citadel with an approver key: open
-// before the world exists, required after, and ended by revocation.
+// TestSignIn covers signing in to the citadel with an approver key: only
+// setup and the world's view are open before the world exists, sign-in is
+// required after, and revocation ends it.
 func TestSignIn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -50,13 +51,17 @@ func TestSignIn(t *testing.T) {
 	host := strings.TrimPrefix(base, "http://")
 	plain := http.DefaultClient
 
-	// Before the world exists there's no approver to sign in as, and
-	// nothing asks for one.
+	// Before the world exists there's no approver to sign in as, so
+	// nothing that acts or reads what agents did goes through: it couldn't
+	// be signed. The world's socket still shows the world.
 	if code := getStatus(t, plain, base+"/api/signin"); code != http.StatusConflict {
 		t.Errorf("GET /api/signin before setup = %d, want 409", code)
 	}
-	if code, out := postJSON(t, base+"/api/sessions", map[string]any{}); code != http.StatusBadRequest {
-		t.Errorf("starting a session before setup = %d %s, want 400 from the handler itself", code, out)
+	if code, out := postJSON(t, base+"/api/sessions", map[string]any{}); code != http.StatusConflict || !strings.Contains(out, "isn't set up yet") {
+		t.Errorf("starting a session before setup = %d %s, want 409", code, out)
+	}
+	if code := getStatus(t, plain, base+"/api/sessions/h/x/transcript"); code != http.StatusConflict {
+		t.Errorf("reading a transcript before setup = %d, want 409", code)
 	}
 	early, _, err := websocket.Dial(ctx, "ws://"+host+"/ws", nil)
 	if err != nil {

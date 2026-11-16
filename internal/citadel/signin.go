@@ -114,10 +114,11 @@ func (c *citadel) signInWorld(w http.ResponseWriter) (worldView, bool) {
 }
 
 // signedInAs is the approver key r signed in with. Until the world exists
-// there's no approver to sign in as, so every request goes through, as
-// decisions do, and the key is "". Once it exists, a request goes through
-// only with a current sign-in from an approver. Otherwise status and why
-// say what to answer.
+// there's no approver to sign in as, and the key is "": the world's socket
+// shows the world to nobody in particular, and requireSignIn lets nothing
+// else through. Once it exists, a request goes through only with a
+// current sign-in from an approver. Otherwise status and why say what to
+// answer.
 func (c *citadel) signedInAs(r *http.Request) (key string, status int, why string) {
 	c.mu.Lock()
 	view := c.world
@@ -192,10 +193,17 @@ func signInCookie(host string) string {
 	return "skylands-signin"
 }
 
-// requireSignIn lets a request through to h only when signedInAs does.
+// requireSignIn lets a request through to h only when an approver signed
+// in to make it. Before the world exists nobody can, so nothing that sets
+// an agent working, decides for one, or reads what one did goes through
+// until there's an approver to sign it.
 func (c *citadel) requireSignIn(h http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, status, why := c.signedInAs(r); status != 0 {
+		key, status, why := c.signedInAs(r)
+		if status == 0 && key == "" {
+			status, why = http.StatusConflict, "this world isn't set up yet; set it up from the link the citadel printed when it started"
+		}
+		if status != 0 {
 			writeError(w, status, why)
 			return
 		}

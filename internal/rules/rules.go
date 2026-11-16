@@ -215,6 +215,21 @@ func Validate(rules []v1.Rule) ([]v1.Rule, error) {
 	return out, nil
 }
 
+// ForRepository checks a repository's rules and returns them as its host
+// keeps them: normalized as Validate does, and with no sources, since a
+// repository's rules are the source. A change to them is signed over the
+// hash of this list.
+func ForRepository(list []v1.Rule) ([]v1.Rule, error) {
+	out, err := Validate(list)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Source = ""
+	}
+	return out, nil
+}
+
 func knownKind(kind string) bool {
 	for _, k := range Kinds {
 		if k == kind {

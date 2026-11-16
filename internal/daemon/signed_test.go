@@ -536,3 +536,84 @@ func TestAnswersTrustAndRulesMustBeSigned(t *testing.T) {
 		t.Errorf("repo rules approved again = %+v", r)
 	}
 }
+
+// TestHostDecisionsMustBeSigned refuses decisions and rule changes from
+// the host's CLI that no approver signed, as it refuses those through the
+// citadel: the socket is open to every process the daemon's user runs,
+// agents included. It records the CLI's key on what it takes, and lapses
+// rules the CLI set once the CLI is revoked.
+func TestHostDecisionsMustBeSigned(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	w, repo := startSignedWorld(t, ctx)
+	cliKey, cliPub := w.approver("CLI on ws")
+	stranger, _ := nkeys.CreateUser()
+
+	req := w.waiting("sess-h", repo.ID)
+	in, err := w.cli.RequestInput(ctx, req.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := approval.BytesHash([]byte(in.Input))
+	allowAs := func(input string) approval.Decision {
+		return approval.ToolCall{V: approval.DecisionVersion, Kind: approval.KindToolCall, World: w.ownerPub, Host: "ws", Session: "sess-h", Request: req.ID, Decision: "allow", Option: "allow", Input: input}
+	}
+	for name, d := range map[string]socket.DecideRequest{
+		"unsigned":                  {OptionID: "allow", InputHash: input},
+		"signed by a stranger":      {OptionID: "allow", InputHash: input, Signature: w.sign(stranger, allowAs(input))},
+		"signed over another input": {OptionID: "allow", InputHash: input, Signature: w.sign(cliKey, allowAs(strings.Repeat("0", 64)))},
+	} {
+		if _, err := w.cli.Approve(ctx, req.ID, d); err == nil {
+			t.Errorf("%s: the host's approval was taken", name)
+		}
+	}
+	if _, err := w.cli.Deny(ctx, req.ID, socket.DecideRequest{}); err == nil || !strings.Contains(err.Error(), "must be signed") {
+		t.Errorf("an unsigned denial from the host = %v, want a refusal", err)
+	}
+	if _, err := w.cli.Approve(ctx, req.ID, socket.DecideRequest{OptionID: "allow", InputHash: input, Signature: w.sign(cliKey, allowAs(input))}); err != nil {
+		t.Fatalf("a signed approval from the host: %v", err)
+	}
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		h, _ := w.cli.History(ctx, "sess-h")
+		if len(h) == 1 {
+			if h[0].By != "local" || h[0].Approver != cliPub || h[0].ApproverName != "CLI on ws" || h[0].Signature != "verified" {
+				t.Errorf("the host's approval in the history = %+v", h[0])
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("history = %+v", h)
+		}
+	}
+
+	// A rule change from the host names the revision it replaces and is
+	// signed over the list as the host keeps it.
+	r := w.repoRules(repo.ID)
+	list := []v1.Rule{{Decision: "Allow", Kind: "execute", Pattern: " go test * "}}
+	kept, err := rules.ForRepository(list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := approval.RulesHash(kept)
+	rulesAs := func(revision int) approval.Decision {
+		return approval.RepoRules{V: approval.DecisionVersion, Kind: approval.KindRepoRules, World: w.ownerPub, Host: "ws", Repo: repo.ID, Rules: hash, Revision: revision}
+	}
+	if _, err := w.cli.SetRepoRules(ctx, repo.ID, socket.SetRulesRequest{Rules: list, Revision: r.Revision}); err == nil || !strings.Contains(err.Error(), "must be signed") {
+		t.Errorf("unsigned rules from the host = %v, want a refusal", err)
+	}
+	if _, err := w.cli.SetRepoRules(ctx, repo.ID, socket.SetRulesRequest{Rules: list, Revision: r.Revision + 1, Signature: w.sign(cliKey, rulesAs(r.Revision+1))}); err == nil || !strings.Contains(err.Error(), "changed since") {
+		t.Errorf("rules from the host at another revision = %v, want a refusal", err)
+	}
+	set, err := w.cli.SetRepoRules(ctx, repo.ID, socket.SetRulesRequest{Rules: list, Revision: r.Revision, Signature: w.sign(cliKey, rulesAs(r.Revision))})
+	if err != nil || set.By != "local" || set.Approver != cliPub || set.Revision != r.Revision+1 || len(set.Rules) != 1 || set.Rules[0].Pattern != "go test *" {
+		t.Fatalf("signed rules from the host = %+v, %v", set, err)
+	}
+
+	// Revoking the CLI lapses the rules it set, as for any approver.
+	w.revoke(cliPub)
+	for deadline := time.Now().Add(10 * time.Second); !w.repoRules(repo.ID).Lapsed; time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the rules the revoked CLI set never lapsed: %+v", w.repoRules(repo.ID))
+		}
+	}
+}

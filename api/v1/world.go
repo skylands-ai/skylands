@@ -27,11 +27,11 @@ type WorldRecord struct {
 	Created string `json:"created"`
 }
 
-// ApproverEntry is the payload that makes a browser an approver: its
-// public key and a name for it. The owner key signs it when a browser
-// sets the world up or uses the recovery file. A browser that uses an
-// approver's voucher signs it with the voucher's claim key instead, and
-// names that key in Voucher.
+// ApproverEntry is the payload that makes a browser, or a host's CLI, an
+// approver: its public key and a name for it. The owner key signs it when
+// a browser sets the world up or uses the recovery file. A browser or CLI
+// that uses an approver's voucher signs it with the voucher's claim key
+// instead, and names that key in Voucher.
 type ApproverEntry struct {
 	// Type is "approver".
 	Type string `json:"type"`
@@ -44,7 +44,14 @@ type ApproverEntry struct {
 	// Voucher is the claim key of the voucher this entry used, for an entry
 	// the claim key signs. An entry the owner key signs has none.
 	Voucher string `json:"voucher,omitempty"`
+	// Device is ApproverDeviceCLI for a host's CLI, and empty for a
+	// browser.
+	Device string `json:"device,omitempty"`
 }
+
+// ApproverDeviceCLI is the Device of an approver that is a host's CLI,
+// which signs what it decides at the host with a key it keeps encrypted.
+const ApproverDeviceCLI = "cli"
 
 // Voucher is the payload of a one-time grant an approver signs so another
 // browser can become an approver. It names a claim key, whose seed travels

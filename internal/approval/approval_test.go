@@ -64,10 +64,36 @@ func TestOpenOwnerApprover(t *testing.T) {
 	notUser, _ := Sign(owner, ownerAsKey)
 	badSig := good
 	badSig.Sig = good.Sig[:len(good.Sig)-4] + "AAAA"
-	for name, s := range map[string]v1.Signed{"signed by the approver": byApprover, "another world": otherWorld, "owner key as approver": notUser, "bad signature": badSig} {
+	unknownDevice := entry
+	unknownDevice.Device = "toaster"
+	toaster, _ := Sign(owner, unknownDevice)
+	for name, s := range map[string]v1.Signed{"signed by the approver": byApprover, "another world": otherWorld, "owner key as approver": notUser, "bad signature": badSig, "unknown device": toaster} {
 		if _, err := OpenOwnerApprover(s, ownerPub); err == nil {
 			t.Errorf("%s: OpenOwnerApprover accepted it", name)
 		}
+	}
+}
+
+// TestOpenVouchedCLIApprover opens the entry a host's CLI signs with an
+// invite link's claim key, which names it as a CLI.
+func TestOpenVouchedCLIApprover(t *testing.T) {
+	_, cli, ownerPub, cliPub := keys(t)
+	claim, _ := nkeys.CreateUser()
+	claimPub, _ := claim.PublicKey()
+	entry := v1.ApproverEntry{Type: "approver", World: ownerPub, Key: cliPub, Name: "CLI on wopr", Created: Now(), Voucher: claimPub, Device: v1.ApproverDeviceCLI}
+	good, _ := Sign(claim, entry)
+	if a, err := OpenVouchedApprover(good, ownerPub); err != nil || a.Key != cliPub || a.Device != v1.ApproverDeviceCLI {
+		t.Fatalf("OpenVouchedApprover = %+v, %v", a, err)
+	}
+	unknown := entry
+	unknown.Device = "toaster"
+	bad, _ := Sign(claim, unknown)
+	if _, err := OpenVouchedApprover(bad, ownerPub); err == nil {
+		t.Error("OpenVouchedApprover accepted an entry for an unknown device")
+	}
+	selfSigned, _ := Sign(cli, entry)
+	if _, err := OpenVouchedApprover(selfSigned, ownerPub); err == nil {
+		t.Error("OpenVouchedApprover accepted an entry the CLI signed itself")
 	}
 }
 

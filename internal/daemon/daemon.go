@@ -245,7 +245,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	// Session and repository commands arrive by request-reply, one subject
 	// per session or repository.
-	cmds := &commands{host: hostName, sessions: sessions, agg: agg}
+	cmds := &commands{host: hostName, sessions: sessions, agg: agg, world: pin.get}
 	sub, err := nc.Subscribe(v1.SessionCommandFilter(hostName), func(msg *nats.Msg) { go cmds.handle(ctx, msg) })
 	if err != nil {
 		return fmt.Errorf("subscribe to session commands: %w", err)
@@ -455,6 +455,25 @@ type commands struct {
 	host     string
 	sessions *session.Manager
 	agg      *host.Host
+	// world is the owner key of the world this island belongs to, or ""
+	// before a devworld's world is set up, when the island takes no
+	// commands: nothing can be signed yet.
+	world func() string
+}
+
+// errNoWorld refuses what would set an agent working or decide for one
+// before the island's world is set up. Until then there's no approver to
+// sign anything, and the daemon takes nothing unsigned.
+var errNoWorld = errors.New("this island's world isn't set up yet, so it takes no sessions or decisions; set the world up from the link the citadel printed")
+
+// ready reports whether the island takes commands, answering msg with
+// errNoWorld when it doesn't.
+func (c *commands) ready(msg *nats.Msg) bool {
+	if c.world != nil && c.world() != "" {
+		return true
+	}
+	c.reply(msg, v1.Reply{Error: errNoWorld.Error()})
+	return false
 }
 
 // handleRepo answers one repository command.
@@ -466,6 +485,9 @@ func (c *commands) handleRepo(ctx context.Context, msg *nats.Msg) {
 		return
 	}
 	repoID, commandType := parts[4], parts[6]
+	if !c.ready(msg) {
+		return
+	}
 	ctx, cancel := context.WithTimeout(ctx, v1.CommandTimeoutFor(commandType))
 	defer cancel()
 	switch commandType {
@@ -495,6 +517,9 @@ func (c *commands) handle(ctx context.Context, msg *nats.Msg) {
 		return
 	}
 	sessionID, commandType := parts[4], parts[6]
+	if !c.ready(msg) {
+		return
+	}
 	ctx, cancel := context.WithTimeout(ctx, v1.CommandTimeoutFor(commandType))
 	defer cancel()
 	switch commandType {
@@ -744,6 +769,10 @@ func terminalSubject(subject string) (sessionID, terminalID string, ok bool) {
 func (c *commands) terminalInput(ctx context.Context, msg *nats.Msg) {
 	sessionID, terminalID, ok := terminalSubject(msg.Subject)
 	if !ok {
+		return
+	}
+	if c.world == nil || c.world() == "" {
+		slog.Warn("daemon: terminal input refused", "session", sessionID, "terminal", terminalID, "err", errNoWorld)
 		return
 	}
 	var in v1.TerminalInput
@@ -997,12 +1026,12 @@ func (a *localAPI) Decision(_ context.Context, requestID string) (socket.Decisio
 	return socket.DecisionDetail{}, fmt.Errorf("%w: no decision on %s", session.ErrUnknownRequest, requestID)
 }
 
-// signatureStatus says whether a decision through the citadel is signed,
-// whether its signature is over the decision as the daemon recorded it,
-// and whether its approver still approves.
+// signatureStatus says whether a person's decision, through the citadel or
+// the host's CLI, is signed, whether its signature is over the decision
+// as the daemon recorded it, and whether its approver still approves.
 func (a *localAPI) signatureStatus(world string, reg *approval.Registry, sessionID string, d session.Decided) string {
 	switch {
-	case d.By != "citadel":
+	case d.By != "citadel" && d.By != "local":
 		return ""
 	case d.Approver == "":
 		return "unsigned"
@@ -1042,7 +1071,7 @@ func (a *localAPI) questionInfo(q session.WaitingQuestion) socket.QuestionInfo {
 	return socket.QuestionInfo{ID: q.Question.QuestionID, Session: q.Session.ID, Conversation: title, Repo: name, Agent: q.Session.Agent, Message: q.Question.Message, Fields: q.Question.Fields, Since: q.Question.At}
 }
 
-func (a *localAPI) AnswerQuestion(ctx context.Context, questionID, commandID string, answers json.RawMessage, decline bool) (socket.QuestionInfo, error) {
+func (a *localAPI) AnswerQuestion(ctx context.Context, questionID string, req socket.AnswerRequest) (socket.QuestionInfo, error) {
 	s, ok := a.sessions.FindQuestion(questionID)
 	if !ok {
 		return socket.QuestionInfo{}, session.ErrUnknownQuestion
@@ -1053,27 +1082,48 @@ func (a *localAPI) AnswerQuestion(ctx context.Context, questionID, commandID str
 			info = a.questionInfo(session.WaitingQuestion{Session: s, Question: q})
 		}
 	}
-	_, err := a.sessions.Answer(ctx, v1.AnswerQuestion{ID: commandID, SessionID: s.ID, QuestionID: questionID, Answers: answers, Decline: decline}, "local")
+	if a.pin.get() == "" {
+		return info, errNoWorld
+	}
+	_, err := a.sessions.Answer(ctx, v1.AnswerQuestion{ID: req.CommandID, SessionID: s.ID, QuestionID: questionID, Answers: req.Answers, Decline: req.Decline, Signature: req.Signature}, "local")
 	return info, err
 }
 
-func (a *localAPI) Approve(ctx context.Context, requestID, commandID string) (socket.RequestInfo, error) {
+// RequestInput is the whole input of a waiting request, which the CLI
+// hashes itself before it signs an approval of it.
+func (a *localAPI) RequestInput(_ context.Context, requestID string) (v1.RequestInput, error) {
+	s, ok := a.sessions.FindRequest(requestID)
+	if !ok {
+		return v1.RequestInput{}, session.ErrUnknownRequest
+	}
+	return a.sessions.RequestInput(s.ID, requestID)
+}
+
+// Approve and Deny take a decision from the host's CLI, which signs it as
+// an approver once the world exists, and refuse one before it does.
+func (a *localAPI) Approve(ctx context.Context, requestID string, d socket.DecideRequest) (socket.RequestInfo, error) {
 	s, ok := a.sessions.FindRequest(requestID)
 	if !ok {
 		return socket.RequestInfo{}, session.ErrUnknownRequest
 	}
 	info := a.pendingInfo(s, requestID)
-	_, err := a.sessions.Approve(ctx, v1.ApproveToolCall{ID: commandID, SessionID: s.ID, RequestID: requestID}, "local")
+	if a.pin.get() == "" {
+		return info, errNoWorld
+	}
+	_, err := a.sessions.Approve(ctx, v1.ApproveToolCall{ID: d.CommandID, SessionID: s.ID, RequestID: requestID, OptionID: d.OptionID, InputHash: d.InputHash, Signature: d.Signature}, "local")
 	return info, err
 }
 
-func (a *localAPI) Deny(ctx context.Context, requestID, commandID string) (socket.RequestInfo, error) {
+func (a *localAPI) Deny(ctx context.Context, requestID string, d socket.DecideRequest) (socket.RequestInfo, error) {
 	s, ok := a.sessions.FindRequest(requestID)
 	if !ok {
 		return socket.RequestInfo{}, session.ErrUnknownRequest
 	}
 	info := a.pendingInfo(s, requestID)
-	_, err := a.sessions.Deny(ctx, v1.DenyToolCall{ID: commandID, SessionID: s.ID, RequestID: requestID}, "local")
+	if a.pin.get() == "" {
+		return info, errNoWorld
+	}
+	_, err := a.sessions.Deny(ctx, v1.DenyToolCall{ID: d.CommandID, SessionID: s.ID, RequestID: requestID, Signature: d.Signature}, "local")
 	return info, err
 }
 
@@ -1094,8 +1144,11 @@ func (a *localAPI) Rules(context.Context) []socket.RepoRulesInfo {
 	return out
 }
 
-func (a *localAPI) SetRepoRules(ctx context.Context, repoID, commandID string, list []v1.Rule) (socket.RepoRulesInfo, error) {
-	r, err := a.agg.SetRules(ctx, v1.SetRepoRules{ID: commandID, RepoID: repoID, Rules: list}, "local")
+func (a *localAPI) SetRepoRules(ctx context.Context, repoID string, req socket.SetRulesRequest) (socket.RepoRulesInfo, error) {
+	if a.pin.get() == "" {
+		return socket.RepoRulesInfo{}, errNoWorld
+	}
+	r, err := a.agg.SetRules(ctx, v1.SetRepoRules{ID: req.CommandID, RepoID: repoID, Rules: req.Rules, Revision: req.Revision, Signature: req.Signature}, "local")
 	return repoRules(r), err
 }
 
@@ -1104,7 +1157,7 @@ func repoRules(r host.Repo) socket.RepoRulesInfo {
 	if list == nil {
 		list = []v1.Rule{}
 	}
-	return socket.RepoRulesInfo{RepoID: r.ID, Repo: r.Name, Rules: list, By: r.RulesBy, Approver: r.RulesApprover, Lapsed: r.RulesLapsed}
+	return socket.RepoRulesInfo{RepoID: r.ID, Repo: r.Name, Rules: list, By: r.RulesBy, Approver: r.RulesApprover, Lapsed: r.RulesLapsed, Revision: r.RulesRevision}
 }
 
 func (a *localAPI) RegisterRepo(ctx context.Context, path, commandID string) (socket.RepoInfo, error) {
