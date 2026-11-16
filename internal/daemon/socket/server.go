@@ -29,8 +29,11 @@ type API interface {
 	// Decision is one answered or expired request with the input it named
 	// and what its tool call produced, as the host kept them.
 	Decision(ctx context.Context, requestID string) (DecisionDetail, error)
-	Approve(ctx context.Context, requestID, commandID string) (RequestInfo, error)
-	Deny(ctx context.Context, requestID, commandID string) (RequestInfo, error)
+	// RequestInput is the whole input of a waiting request, which an
+	// approval names by its hash.
+	RequestInput(ctx context.Context, requestID string) (v1.RequestInput, error)
+	Approve(ctx context.Context, requestID string, d DecideRequest) (RequestInfo, error)
+	Deny(ctx context.Context, requestID string, d DecideRequest) (RequestInfo, error)
 	// Sessions lists every session on this host, newest first.
 	Sessions(ctx context.Context) []SessionInfo
 	StopSession(ctx context.Context, sessionID, commandID string) (SessionInfo, error)
@@ -45,10 +48,10 @@ type API interface {
 	PruneSessions(ctx context.Context) []PruneResult
 	// Questions lists every question waiting on a person.
 	Questions(ctx context.Context) []QuestionInfo
-	AnswerQuestion(ctx context.Context, questionID, commandID string, answers json.RawMessage, decline bool) (QuestionInfo, error)
+	AnswerQuestion(ctx context.Context, questionID string, a AnswerRequest) (QuestionInfo, error)
 	// Rules lists every repository's rules.
 	Rules(ctx context.Context) []RepoRulesInfo
-	SetRepoRules(ctx context.Context, repoID, commandID string, rules []v1.Rule) (RepoRulesInfo, error)
+	SetRepoRules(ctx context.Context, repoID string, r SetRulesRequest) (RepoRulesInfo, error)
 	// CheckAgents checks now which agents this host can launch, in the
 	// daemon's own environment, records what changed, and returns it.
 	CheckAgents(ctx context.Context) ([]v1.AgentAvailability, error)
@@ -100,11 +103,22 @@ func Serve(ctx context.Context, ln net.Listener, api API) error {
 	mux.HandleFunc("GET /v1/requests", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, api.Requests(r.Context()))
 	})
-	decide := func(do func(ctx context.Context, requestID, commandID string) (RequestInfo, error)) http.HandlerFunc {
+	mux.HandleFunc("GET /v1/requests/{id}/input", func(w http.ResponseWriter, r *http.Request) {
+		in, err := api.RequestInput(r.Context(), r.PathValue("id"))
+		switch {
+		case errors.Is(err, session.ErrUnknownRequest):
+			reply(w, http.StatusNotFound, ErrorResponse{Error: err.Error()})
+		case err != nil:
+			reply(w, http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		default:
+			reply(w, http.StatusOK, in)
+		}
+	})
+	decide := func(do func(ctx context.Context, requestID string, d DecideRequest) (RequestInfo, error)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			var req DecideRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
-			info, err := do(r.Context(), r.PathValue("id"), req.CommandID)
+			info, err := do(r.Context(), r.PathValue("id"), req)
 			switch {
 			case errors.Is(err, session.ErrUnknownRequest):
 				reply(w, http.StatusNotFound, ErrorResponse{Error: err.Error()})
@@ -124,7 +138,7 @@ func Serve(ctx context.Context, ln net.Listener, api API) error {
 	mux.HandleFunc("POST /v1/questions/{id}/answer", func(w http.ResponseWriter, r *http.Request) {
 		var req AnswerRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		info, err := api.AnswerQuestion(r.Context(), r.PathValue("id"), req.CommandID, req.Answers, req.Decline)
+		info, err := api.AnswerQuestion(r.Context(), r.PathValue("id"), req)
 		switch {
 		case errors.Is(err, session.ErrUnknownQuestion):
 			reply(w, http.StatusNotFound, ErrorResponse{Error: err.Error()})
@@ -213,7 +227,7 @@ func Serve(ctx context.Context, ln net.Listener, api API) error {
 			reply(w, http.StatusBadRequest, ErrorResponse{Error: "a list of rules is required"})
 			return
 		}
-		info, err := api.SetRepoRules(r.Context(), r.PathValue("id"), req.CommandID, req.Rules)
+		info, err := api.SetRepoRules(r.Context(), r.PathValue("id"), req)
 		switch {
 		case errors.Is(err, host.ErrUnknownRepo):
 			reply(w, http.StatusNotFound, ErrorResponse{Error: err.Error()})

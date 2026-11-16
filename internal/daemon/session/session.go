@@ -492,15 +492,16 @@ func (m *Manager) resume(id string) {
 // allow option and records who did. By names the path the answer came
 // over, "local" or "citadel".
 //
-// An approval through the citadel must name the hash of the input the
-// person approved, and it is refused unless that is the hash of the input
-// the agent proposed, so an input changed on the way to the person isn't
-// approved. Approvals on the host, and through a session's trust, need
-// none.
+// An approval from a person, through the citadel or the host's CLI, must
+// name the hash of the input the person approved, and it is refused unless
+// that is the hash of the input the agent proposed, so an input changed on
+// the way to the person isn't approved. Approvals through a session's
+// trust need none.
 //
-// Once the world exists, an approval or a denial through the citadel must
-// also carry an approver's signature over the decision, which is checked
-// against the daemon's own record of the request.
+// Once the world exists, an approval or a denial from a person must also
+// carry an approver's signature over the decision, which is checked
+// against the daemon's own record of the request. The host's CLI signs as
+// an approver too, so nothing a person decides goes unsigned.
 func (m *Manager) Approve(ctx context.Context, cmd v1.ApproveToolCall, by string) (Session, error) {
 	return m.decide(ctx, cmd.ID, cmd.SessionID, cmd.RequestID, by, cmd.OptionID, cmd.InputHash, cmd.Signature, true)
 }
@@ -512,7 +513,7 @@ func (m *Manager) Approve(ctx context.Context, cmd v1.ApproveToolCall, by string
 // approver and signature to record, or none for a decision that needs no
 // signature.
 func (m *Manager) checkSigned(ctx context.Context, sessionID, requestID, by, optionID, option string, sig *v1.DecisionSignature, pending *Permission, allow bool) (string, string, error) {
-	if allow && by == "citadel" && m.world() != "" && (optionID == "" || option != optionID) {
+	if allow && byPerson(by) && m.world() != "" && (optionID == "" || option != optionID) {
 		// The option signed is the option chosen, which must be one of the
 		// agent's "once" options.
 		return "", "", fmt.Errorf("%w: a signed approval must name the agent's \"allow once\" option", ErrUnsigned)
@@ -536,14 +537,16 @@ func (m *Manager) world() string {
 }
 
 // signed checks a decision, or a command that sets an agent working or
-// changes the repository, through the citadel once the world exists: an
+// changes the repository, from a person once the world exists: an
 // approver must have signed the decision build makes from the daemon's own
 // record, and must approve for the world. It returns the approver and
-// signature to record, or none for one that needs no signature: one on
-// the host, or one before the world exists.
+// signature to record, or none for one that needs no signature: one that
+// trust or a rule made, or one before the world exists. The daemon
+// refuses every command before its world exists, so only tests of this
+// package decide anything then.
 func (m *Manager) signed(ctx context.Context, by string, sig *v1.DecisionSignature, what string, build func(world string) approval.Decision) (string, string, error) {
 	world := m.world()
-	if by != "citadel" || world == "" {
+	if !byPerson(by) || world == "" {
 		return "", "", nil
 	}
 	if sig == nil {
@@ -570,19 +573,25 @@ func (m *Manager) signedAt(ctx context.Context, s Session, revision int, sig *v1
 }
 
 // stands reports whether trust or a rule list still stands on who set it:
-// the host always does, nothing needs an approver before the world exists,
-// and otherwise the approver who signed it must still approve.
+// nothing needs an approver before the world exists, and otherwise the
+// approver who signed it must still approve, whether they set it through
+// the citadel or the host's CLI.
 func (m *Manager) stands(ctx context.Context, by, approver string, lapsed bool) bool {
 	switch {
 	case lapsed:
 		return false
-	case by == "local", m.world() == "":
+	case m.world() == "":
 		return true
 	case approver == "" || m.cfg.Valid == nil:
 		return false
 	}
 	return m.cfg.Valid(ctx, approver)
 }
+
+// byPerson reports whether by names a person's decision, which must be
+// signed once the world exists: one through the citadel, or one through
+// the host's CLI. Trust and rules decide for nobody in particular.
+func byPerson(by string) bool { return by == "citadel" || by == "local" }
 
 // ErrStale is a change to trust or rules made against an older revision
 // than the daemon's: something else changed them since.
@@ -654,10 +663,13 @@ func (m *Manager) decide(ctx context.Context, commandID, sessionID, requestID, b
 	if pending == nil || ask == nil {
 		return *s, fmt.Errorf("%w: %s", ErrUnknownRequest, requestID)
 	}
-	if allow && by == "citadel" {
+	// An approval through the citadel always names its input. One from the
+	// host's CLI does once the world exists, since that is when it is
+	// signed, and the signature covers the input.
+	if allow && (by == "citadel" || (by == "local" && m.world() != "")) {
 		switch {
 		case inputHash == "":
-			return *s, fmt.Errorf("%w: an approval through the citadel must name the input it approves", ErrInputMismatch)
+			return *s, fmt.Errorf("%w: an approval must name the input it approves", ErrInputMismatch)
 		case inputHash != pending.InputHash:
 			slog.Warn("session: an approval named another input", "session", sessionID, "request", requestID)
 			return *s, ErrInputMismatch
@@ -945,7 +957,8 @@ func (m *Manager) SetRules(ctx context.Context, cmd v1.SetSessionRules, by strin
 // approve: an open session's trust that one of them turned on is turned
 // off, and a rule list one of them stands behind lapses, so its allow
 // rules ask until an approver sets the list again. valid reports whether
-// an approver approves now. Trust and rules set on the host never lapse.
+// an approver approves now. Trust and rules set on the host lapse the same
+// way, since the host's CLI signs them as an approver.
 func (m *Manager) Lapse(ctx context.Context, valid func(approver string) bool) {
 	if m.world() == "" {
 		return
@@ -956,14 +969,14 @@ func (m *Manager) Lapse(ctx context.Context, valid func(approver string) bool) {
 		if s.Status == StatusEnded || s.Status == StatusFailed {
 			continue
 		}
-		if s.Trusted && s.TrustedBy != "local" && !valid(s.TrustApprover) {
+		if s.Trusted && !valid(s.TrustApprover) {
 			if err := m.record(ctx, s.ID, "", v1.EventSessionTrusted, v1.SessionTrusted{SessionID: s.ID, By: "revocation", Approver: s.TrustApprover, Revision: s.TrustRevision}); err != nil {
 				slog.Warn("session: end the trust of a revoked approver", "session", s.ID, "err", err)
 			} else {
 				slog.Info("session: trust ended, its approver no longer approves", "session", s.ID, "approver", s.TrustApprover)
 			}
 		}
-		if !s.RulesLapsed && s.RulesBy != "local" && rules.HasAllow(s.Rules) && !valid(s.RulesApprover) {
+		if !s.RulesLapsed && rules.HasAllow(s.Rules) && !valid(s.RulesApprover) {
 			if err := m.record(ctx, s.ID, "", v1.EventSessionRulesLapsed, v1.SessionRulesLapsed{SessionID: s.ID, Approver: s.RulesApprover}); err != nil {
 				slog.Warn("session: lapse the rules of a revoked approver", "session", s.ID, "err", err)
 			} else {

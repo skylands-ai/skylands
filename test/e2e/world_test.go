@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/nats-io/nkeys"
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
 	"github.com/skylands-ai/skylands/internal/citadel"
@@ -55,12 +56,22 @@ func freeAddr(t *testing.T) string {
 
 // world is one running world: the hub, one citadel, and whatever daemons a
 // test starts. The hub keeps fixed ports so it can be restarted in place.
+// The world is set up, with an owner key and one approver, whose browser
+// http is: it is signed in, and signs what it decides.
 type world struct {
-	t      *testing.T
-	ctx    context.Context
-	hubCfg natsembed.Config
-	hub    *natsembed.Server
-	webURL string
+	t        *testing.T
+	ctx      context.Context
+	hubCfg   natsembed.Config
+	hub      *natsembed.Server
+	webURL   string
+	owner    nkeys.KeyPair
+	ownerPub string
+	approver nkeys.KeyPair
+	http     *http.Client
+	// first is the first browser the test opened, whose view of sessions
+	// and repositories gives the revisions what it decides names.
+	mu    sync.Mutex
+	first *browser
 }
 
 func startWorld(t *testing.T, ctx context.Context) *world {
@@ -74,8 +85,15 @@ func startWorld(t *testing.T, ctx context.Context) *world {
 	w.webURL = "http://" + webAddr
 	cctx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
+	links := make(chan string, 4)
 	go func() {
-		done <- citadel.Run(cctx, citadel.Config{NATSURL: w.hub.ClientURL(), HTTPAddr: webAddr, PollInterval: 200 * time.Millisecond, PollWindow: 100 * time.Millisecond})
+		done <- citadel.Run(cctx, citadel.Config{NATSURL: w.hub.ClientURL(), HTTPAddr: webAddr, PollInterval: 200 * time.Millisecond, PollWindow: 100 * time.Millisecond,
+			OnSetupLink: func(l string) {
+				select {
+				case links <- l:
+				default:
+				}
+			}})
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -83,9 +101,14 @@ func startWorld(t *testing.T, ctx context.Context) *world {
 			t.Errorf("citadel.Run returned %v", err)
 		}
 	})
-	// Until the citadel knows whether the world is set up, it lets no
-	// browser in, since it can't tell whether one has to sign in. These
-	// worlds are never set up, so nobody needs to.
+	// Nothing is decided before the world exists, so it is set up from
+	// the link the citadel offers, and its approver signs in.
+	select {
+	case l := <-links:
+		w.setUp(strings.TrimPrefix(l, w.webURL+"/setup#"))
+	case <-time.After(15 * time.Second):
+		t.Fatal("the citadel never offered a setup link")
+	}
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		var info web.WorldInfo
@@ -93,12 +116,12 @@ func startWorld(t *testing.T, ctx context.Context) *world {
 		if err == nil {
 			_ = json.NewDecoder(resp.Body).Decode(&info)
 			_ = resp.Body.Close()
-			if info.Checked {
+			if info.Checked && info.Ready {
 				return w
 			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("citadel never looked for the world: %v", err)
+			t.Fatalf("the world never showed as set up: %v", err)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -134,8 +157,8 @@ func (w *world) startDaemonIn(host, socketPath, dataDir string) (stop func()) {
 	fakeCmd, fakeEnv := fakeagent.TestCommand()
 	go func() {
 		done <- daemon.Run(ctx, daemon.Config{
-			TrustFirstWorld: true,
-			Host:            host, NATSURL: w.hub.LeafURL(), DataDir: dataDir, SocketPath: socketPath, Version: "v0.1.0",
+			World: w.ownerPub, WorldDomain: "world",
+			Host: host, NATSURL: w.hub.LeafURL(), DataDir: dataDir, SocketPath: socketPath, Version: "v0.1.0",
 			Adapters: agents.Registry{
 				"fake": {Name: "fake", Provider: "local", Command: fakeCmd, Env: fakeEnv},
 				// moded offers a mode and a model setting, lists two of its
@@ -171,12 +194,17 @@ type browser struct {
 
 func (w *world) openBrowser() *browser {
 	w.t.Helper()
-	c, _, err := websocket.Dial(w.ctx, "ws"+w.webURL[len("http"):]+"/ws", nil)
+	c, _, err := websocket.Dial(w.ctx, "ws"+w.webURL[len("http"):]+"/ws", &websocket.DialOptions{HTTPClient: w.http})
 	if err != nil {
 		w.t.Fatalf("dial: %v", err)
 	}
 	w.t.Cleanup(func() { _ = c.CloseNow() })
 	b := &browser{c: c, ctx: w.ctx, islands: map[string]projections.Island{}, repos: map[string]projections.Repo{}, sessions: map[string]projections.Session{}}
+	w.mu.Lock()
+	if w.first == nil {
+		w.first = b
+	}
+	w.mu.Unlock()
 	go func() {
 		for {
 			_, data, err := c.Read(w.ctx)
@@ -505,7 +533,7 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 
 	post2 := func(path, body string) (int, map[string]any) {
 		t.Helper()
-		resp, err := http.Post(w.webURL+path, "application/json", bytes.NewBufferString(body))
+		resp, err := w.http.Post(w.webURL+path, "application/json", bytes.NewBufferString(body))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -517,7 +545,7 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 	}
 	post := func(body string) (int, map[string]any) {
 		t.Helper()
-		resp, err := http.Post(w.webURL+"/api/sessions", "application/json", bytes.NewBufferString(body))
+		resp, err := w.http.Post(w.webURL+"/api/sessions", "application/json", bytes.NewBufferString(body))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -558,7 +586,7 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 	if code, out := post2("/api/sessions/ws/"+id+"/requests/"+req.RequestID+"/approve", `{}`); code == http.StatusOK || !strings.Contains(fmt.Sprint(out), "input") {
 		t.Errorf("an approval naming no input: %d %v, want a refusal", code, out)
 	}
-	inResp, err := http.Get(w.webURL + "/api/sessions/ws/" + id + "/requests/" + req.RequestID + "/input")
+	inResp, err := w.http.Get(w.webURL + "/api/sessions/ws/" + id + "/requests/" + req.RequestID + "/input")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -677,7 +705,7 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 
 	// The agent's commands are listed less the withheld one, which is
 	// refused as a prompt, as is one the agent didn't announce.
-	cresp, err := http.Get(w.webURL + "/api/sessions/ws/" + moded + "/commands")
+	cresp, err := w.http.Get(w.webURL + "/api/sessions/ws/" + moded + "/commands")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -710,7 +738,7 @@ func TestSessionStartedFromTheWorld(t *testing.T) {
 	// The response and the diff are fetched from the host through the citadel.
 	get := func(path string) (int, string) {
 		t.Helper()
-		resp, err := http.Get(w.webURL + path)
+		resp, err := w.http.Get(w.webURL + path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -835,7 +863,7 @@ func TestSessionSurvivesDaemonRestart(t *testing.T) {
 
 	post := func(path, body string) (int, map[string]any) {
 		t.Helper()
-		resp, err := http.Post(w.webURL+path, "application/json", bytes.NewBufferString(body))
+		resp, err := w.http.Post(w.webURL+path, "application/json", bytes.NewBufferString(body))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -875,7 +903,7 @@ func TestSessionSurvivesDaemonRestart(t *testing.T) {
 		s, ok := v.sessions[id]
 		return ok && len(s.Pending) == 1 && s.Pending[0].RequestID != first
 	})
-	if code, out := post("/api/sessions/ws/"+id+"/requests/"+v.sessions[id].Pending[0].RequestID+"/approve", approval(v.sessions[id].Pending[0])); code != http.StatusOK {
+	if code, out := post("/api/sessions/ws/"+id+"/requests/"+v.sessions[id].Pending[0].RequestID+"/approve", approvalBody(v.sessions[id].Pending[0])); code != http.StatusOK {
 		t.Fatalf("approve: %d %v", code, out)
 	}
 	v = b.wait(t, "the resumed turn to end", 30*time.Second, func(v view) bool {
@@ -891,11 +919,11 @@ func TestSessionSurvivesDaemonRestart(t *testing.T) {
 		t.Fatalf("prompt: %d %v", code, out)
 	}
 	v = b.wait(t, "the next edit to wait", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && len(s.Pending) == 1 })
-	if code, out := post("/api/sessions/ws/"+id+"/requests/"+v.sessions[id].Pending[0].RequestID+"/approve", approval(v.sessions[id].Pending[0])); code != http.StatusOK {
+	if code, out := post("/api/sessions/ws/"+id+"/requests/"+v.sessions[id].Pending[0].RequestID+"/approve", approvalBody(v.sessions[id].Pending[0])); code != http.StatusOK {
 		t.Fatalf("approve: %d %v", code, out)
 	}
 	b.wait(t, "the second turn to end", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "idle" && s.Turns == 2 })
-	resp, err := http.Get(w.webURL + "/api/sessions/ws/" + id + "/transcript")
+	resp, err := w.http.Get(w.webURL + "/api/sessions/ws/" + id + "/transcript")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -942,7 +970,7 @@ func TestRulesSettleToolCallsAndSessionsInheritThem(t *testing.T) {
 
 	post := func(path, body string) (int, map[string]any) {
 		t.Helper()
-		resp, err := http.Post(w.webURL+path, "application/json", bytes.NewBufferString(body))
+		resp, err := w.http.Post(w.webURL+path, "application/json", bytes.NewBufferString(body))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1022,7 +1050,7 @@ func TestQuestionsReachTheBrowser(t *testing.T) {
 	b.wait(t, "the terrace", 20*time.Second, func(v view) bool { _, ok := v.repos[info.ID]; return ok })
 	post := func(path, body string) (int, map[string]any) {
 		t.Helper()
-		resp, err := http.Post(w.webURL+path, "application/json", bytes.NewBufferString(body))
+		resp, err := w.http.Post(w.webURL+path, "application/json", bytes.NewBufferString(body))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1058,7 +1086,7 @@ func TestQuestionsReachTheBrowser(t *testing.T) {
 	if p := v.sessions[id].Pending[0]; p.Title != "Edit util.go" {
 		t.Errorf("the agent edits %q, want util.go", p.Title)
 	}
-	if code, out := post("/api/sessions/ws/"+id+"/requests/"+v.sessions[id].Pending[0].RequestID+"/approve", approval(v.sessions[id].Pending[0])); code != http.StatusOK {
+	if code, out := post("/api/sessions/ws/"+id+"/requests/"+v.sessions[id].Pending[0].RequestID+"/approve", approvalBody(v.sessions[id].Pending[0])); code != http.StatusOK {
 		t.Fatalf("approve: %d %v", code, out)
 	}
 	b.wait(t, "the turn to end", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && s.Status == "idle" })
@@ -1068,7 +1096,7 @@ func TestQuestionsReachTheBrowser(t *testing.T) {
 		t.Fatalf("prompt: %d %v", code, out)
 	}
 	v = b.wait(t, "the second question", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && len(s.Questions) == 1 })
-	if _, err := cli.AnswerQuestion(ctx, v.sessions[id].Questions[0].QuestionID, nil); err != nil {
+	if err := w.declineOverSocket(ctx, cli, "ws", id, v.sessions[id].Questions[0]); err != nil {
 		t.Fatalf("decline over the socket: %v", err)
 	}
 	v = b.wait(t, "the edit to wait again", 30*time.Second, func(v view) bool { s, ok := v.sessions[id]; return ok && len(s.Questions) == 0 && len(s.Pending) == 1 })
@@ -1077,9 +1105,9 @@ func TestQuestionsReachTheBrowser(t *testing.T) {
 	}
 }
 
-// approval is the body of an approval of p, naming the hash of its input,
+// approvalBody is the body of an approval of p, naming the hash of its input,
 // which for the fake agent's small edits is all in the preview.
-func approval(p projections.Permission) string {
+func approvalBody(p projections.Permission) string {
 	sum := sha256.Sum256([]byte(p.InputPreview))
 	return fmt.Sprintf(`{"inputHash":%q}`, hex.EncodeToString(sum[:]))
 }
@@ -1127,7 +1155,7 @@ func TestPromptsCarryMentionsAndImages(t *testing.T) {
 	})
 	get := func(path string) (int, string, []byte) {
 		t.Helper()
-		resp, err := http.Get(w.webURL + path)
+		resp, err := w.http.Get(w.webURL + path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1137,7 +1165,7 @@ func TestPromptsCarryMentionsAndImages(t *testing.T) {
 	}
 	send := func(path, contentType string, body []byte) (int, map[string]any) {
 		t.Helper()
-		resp, err := http.Post(w.webURL+path, contentType, bytes.NewReader(body))
+		resp, err := w.http.Post(w.webURL+path, contentType, bytes.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}

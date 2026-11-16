@@ -15,9 +15,12 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/nats-io/nats.go/micro"
+	"github.com/nats-io/nkeys"
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
+	"github.com/skylands-ai/skylands/internal/approval"
 	"github.com/skylands-ai/skylands/internal/daemon/agents"
 	"github.com/skylands-ai/skylands/internal/daemon/socket"
 	"github.com/skylands-ai/skylands/internal/fakeagent"
@@ -127,13 +130,45 @@ func TestStartSessionOverNATS(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(sockDir) }()
 	sock := filepath.Join(sockDir, "d.sock")
+
+	// The island belongs to a world with one approver, who signs what
+	// starts the session and what decides for it, from the world and from
+	// the host's CLI alike.
+	nc, err := nats.Connect(hub.ClientURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := js.CreateOrUpdateStream(ctx, approval.StreamConfig()); err != nil {
+		t.Fatal(err)
+	}
+	owner, ownerPub := ownerKey(t)
+	approver, _ := nkeys.CreateUser()
+	approverPub, _ := approver.PublicKey()
+	entry, _ := approval.Sign(owner, v1.ApproverEntry{Type: "approver", World: ownerPub, Key: approverPub, Name: "laptop", Created: approval.Now()})
+	if _, err := approval.Append(ctx, js, v1.ApproverSubject("approver", approverPub), entry); err != nil {
+		t.Fatal(err)
+	}
+	sign := func(d approval.Decision) *v1.DecisionSignature {
+		t.Helper()
+		s, err := approval.SignDecision(approver, d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &s
+	}
+
 	fakeCmd, fakeEnv := fakeagent.TestCommand()
 	runCtx, stop := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() {
 		done <- Run(runCtx, Config{
-			TrustFirstWorld: true,
-			Host:            "ws", NATSURL: hub.LeafURL(), DataDir: t.TempDir(), SocketPath: sock, Version: "v0.1.0",
+			World: ownerPub, WorldDomain: "world",
+			Host: "ws", NATSURL: hub.LeafURL(), DataDir: t.TempDir(), SocketPath: sock, Version: "v0.1.0",
 			Adapters: agents.Registry{"fake": {Name: "fake", Provider: "local", Command: fakeCmd, Env: fakeEnv}},
 		})
 	}()
@@ -173,12 +208,9 @@ func TestStartSessionOverNATS(t *testing.T) {
 	}
 
 	// The world sends StartSession to the host and gets the worktree back.
-	nc, err := nats.Connect(hub.ClientURL())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer nc.Close()
-	cmd, _ := json.Marshal(v1.StartSession{ID: "cmd-1", SessionID: "sess-1", RepoID: repo.ID, Agent: "fake", Prompt: "fix it"})
+	start := v1.StartSession{ID: "cmd-1", SessionID: "sess-1", RepoID: repo.ID, Agent: "fake", Prompt: "fix it"}
+	start.Signature = sign(approval.Start{V: approval.DecisionVersion, Kind: approval.KindStart, World: ownerPub, Host: "ws", Session: "sess-1", Repo: repo.ID, Agent: "fake", Prompt: approval.TextHash("fix it")})
+	cmd, _ := json.Marshal(start)
 	var reply v1.Reply
 	for {
 		msg, err := nc.Request(v1.SessionCommandSubject("ws", "sess-1", v1.CommandStartSession), cmd, 5*time.Second)
@@ -235,10 +267,19 @@ func TestStartSessionOverNATS(t *testing.T) {
 			if reqs[0].Tool != "Edit "+reqs[0].Locations[0] || reqs[0].Repo != repo.Name || reqs[0].Agent != "fake" || len(reqs[0].Options) != 3 {
 				t.Errorf("request = %+v", reqs[0])
 			}
-			if _, err := cli.Deny(ctx, "nope"); err == nil || !strings.Contains(err.Error(), "no such request") {
+			if _, err := cli.Deny(ctx, "nope", socket.DecideRequest{}); err == nil || !strings.Contains(err.Error(), "no such request") {
 				t.Errorf("deny an unknown request: err = %v", err)
 			}
-			if r, err := cli.Approve(ctx, reqs[0].ID); err != nil || r.ID != reqs[0].ID {
+			in, err := cli.RequestInput(ctx, reqs[0].ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := approval.BytesHash([]byte(in.Input))
+			allow := approval.ToolCall{V: approval.DecisionVersion, Kind: approval.KindToolCall, World: ownerPub, Host: "ws", Session: "sess-1", Request: reqs[0].ID, Decision: "allow", Option: "allow", Input: input}
+			if _, err := cli.Approve(ctx, reqs[0].ID, socket.DecideRequest{OptionID: "allow", InputHash: input}); err == nil || !strings.Contains(err.Error(), "must be signed") {
+				t.Errorf("an unsigned approval from the host = %v, want a refusal", err)
+			}
+			if r, err := cli.Approve(ctx, reqs[0].ID, socket.DecideRequest{OptionID: "allow", InputHash: input, Signature: sign(allow)}); err != nil || r.ID != reqs[0].ID {
 				t.Fatalf("approve: %+v, %v", r, err)
 			}
 			break
@@ -266,7 +307,8 @@ func TestStartSessionOverNATS(t *testing.T) {
 		_ = json.Unmarshal(msg.Data, &r)
 		return r
 	}
-	if r := command(v1.CommandSendPrompt, v1.SendPrompt{ID: "cmd-p", Text: "once more"}); r.Error != "" {
+	prompt := sign(approval.Prompt{V: approval.DecisionVersion, Kind: approval.KindPrompt, World: ownerPub, Host: "ws", Session: "sess-1", Revision: 1, Prompt: approval.TextHash("once more")})
+	if r := command(v1.CommandSendPrompt, v1.SendPrompt{ID: "cmd-p", Text: "once more", Revision: 1, Signature: prompt}); r.Error != "" {
 		t.Fatalf("SendPrompt failed: %s", r.Error)
 	}
 	for {
@@ -291,7 +333,8 @@ func TestStartSessionOverNATS(t *testing.T) {
 			if r := command(v1.CommandApproveToolCall, v1.ApproveToolCall{ID: "cmd-bad", RequestID: reqs[0].ID, InputHash: hex.EncodeToString(wrong[:])}); !strings.Contains(r.Error, "isn't the input") {
 				t.Fatalf("an approval naming another input = %+v, want a refusal", r)
 			}
-			if r := command(v1.CommandApproveToolCall, v1.ApproveToolCall{ID: "cmd-ok", RequestID: reqs[0].ID, InputHash: hex.EncodeToString(sum[:])}); r.Error != "" {
+			ok := sign(approval.ToolCall{V: approval.DecisionVersion, Kind: approval.KindToolCall, World: ownerPub, Host: "ws", Session: "sess-1", Request: reqs[0].ID, Decision: "allow", Option: "allow", Input: hex.EncodeToString(sum[:])})
+			if r := command(v1.CommandApproveToolCall, v1.ApproveToolCall{ID: "cmd-ok", RequestID: reqs[0].ID, OptionID: "allow", InputHash: hex.EncodeToString(sum[:]), Signature: ok}); r.Error != "" {
 				t.Fatalf("ApproveToolCall failed: %s", r.Error)
 			}
 			break
@@ -502,4 +545,78 @@ func TestASecondDaemonForAnIslandStops(t *testing.T) {
 func TestMain(m *testing.M) {
 	fakeagent.TestMainHook()
 	os.Exit(m.Run())
+}
+
+// TestNothingIsDecidedBeforeTheWorldExists runs a devworld's daemon
+// before its world is set up: it registers repositories, but it starts no
+// session and takes no decision or rule change, from the world or the
+// host, since no approver exists to sign one.
+func TestNothingIsDecidedBeforeTheWorldExists(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	hub, err := natsembed.Start(ctx, natsembed.Config{Name: "hub", ClientAddr: "127.0.0.1:0", LeafAddr: freePort(t), StoreDir: t.TempDir(), Domain: "world"})
+	if err != nil {
+		t.Fatalf("hub: %v", err)
+	}
+	defer hub.Shutdown()
+	sockDir, err := os.MkdirTemp("", "sk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(sockDir) }()
+	fakeCmd, fakeEnv := fakeagent.TestCommand()
+	cfg := Config{
+		TrustFirstWorld: true,
+		Host:            "ws", NATSURL: hub.LeafURL(), DataDir: t.TempDir(), SocketPath: filepath.Join(sockDir, "d.sock"),
+		Adapters: agents.Registry{"fake": {Name: "fake", Provider: "local", Command: fakeCmd, Env: fakeEnv}},
+	}
+	runCtx, stop := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- Run(runCtx, cfg) }()
+	defer func() {
+		stop()
+		if err := <-done; err != nil {
+			t.Errorf("daemon: %v", err)
+		}
+	}()
+	cli := socket.Dial(cfg.SocketPath)
+	var repo socket.RepoInfo
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		if repo, err = cli.RegisterRepo(ctx, gitRepo(t, "main.go")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("register repo: %v", err)
+		}
+	}
+
+	nc, err := nats.Connect(hub.ClientURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+	request := func(subject string, body any) v1.Reply {
+		t.Helper()
+		data, _ := json.Marshal(body)
+		msg, err := nc.Request(subject, data, 5*time.Second)
+		if err != nil {
+			t.Fatalf("%s: %v", subject, err)
+		}
+		var r v1.Reply
+		_ = json.Unmarshal(msg.Data, &r)
+		return r
+	}
+	const notYet = "isn't set up yet"
+	if r := request(v1.SessionCommandSubject("ws", "s1", v1.CommandStartSession), v1.StartSession{ID: "c1", SessionID: "s1", RepoID: repo.ID, Agent: "fake", Prompt: "fix it"}); !strings.Contains(r.Error, notYet) {
+		t.Errorf("StartSession before the world exists = %+v, want a refusal", r)
+	}
+	if r := request(v1.RepoCommandSubject("ws", repo.ID, v1.CommandSetRepoRules), v1.SetRepoRules{ID: "c2", RepoID: repo.ID, Rules: []v1.Rule{{Decision: "allow", Kind: "*"}}}); !strings.Contains(r.Error, notYet) {
+		t.Errorf("rules from the world before it exists = %+v, want a refusal", r)
+	}
+	if _, err := cli.SetRepoRules(ctx, repo.ID, socket.SetRulesRequest{Rules: []v1.Rule{{Decision: "allow", Kind: "*"}}}); err == nil || !strings.Contains(err.Error(), notYet) {
+		t.Errorf("rules from the host before the world exists = %v, want a refusal", err)
+	}
+	if st, err := cli.Status(ctx); err != nil || len(st.Sessions) != 0 {
+		t.Errorf("sessions before the world exists = %+v, %v", st.Sessions, err)
+	}
 }

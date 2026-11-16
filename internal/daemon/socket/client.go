@@ -76,17 +76,35 @@ func (c *Client) Decision(ctx context.Context, requestID string) (DecisionDetail
 	return out, err
 }
 
-// Approve answers a waiting request with the agent's first allow option.
-func (c *Client) Approve(ctx context.Context, requestID string) (RequestInfo, error) {
+// RequestInput is the whole input of a waiting request, as the agent
+// proposed it, unchecked: whoever approves it hashes it themselves.
+func (c *Client) RequestInput(ctx context.Context, requestID string) (v1.RequestInput, error) {
+	var out v1.RequestInput
+	err := c.call(ctx, http.MethodGet, "/v1/requests/"+url.PathEscape(requestID)+"/input", nil, &out)
+	return out, err
+}
+
+// Approve answers a waiting request with the option d names, approving the
+// input it names by hash. Once the world exists, d must carry an
+// approver's signature over the decision.
+func (c *Client) Approve(ctx context.Context, requestID string, d DecideRequest) (RequestInfo, error) {
+	if d.CommandID == "" {
+		d.CommandID = nuid.Next()
+	}
 	var out RequestInfo
-	err := c.call(ctx, http.MethodPost, "/v1/requests/"+requestID+"/approve", DecideRequest{CommandID: nuid.Next()}, &out)
+	err := c.call(ctx, http.MethodPost, "/v1/requests/"+url.PathEscape(requestID)+"/approve", d, &out)
 	return out, err
 }
 
 // Deny answers a waiting request with the agent's first reject option.
-func (c *Client) Deny(ctx context.Context, requestID string) (RequestInfo, error) {
+// Once the world exists, d must carry an approver's signature over the
+// decision.
+func (c *Client) Deny(ctx context.Context, requestID string, d DecideRequest) (RequestInfo, error) {
+	if d.CommandID == "" {
+		d.CommandID = nuid.Next()
+	}
 	var out RequestInfo
-	err := c.call(ctx, http.MethodPost, "/v1/requests/"+requestID+"/deny", DecideRequest{CommandID: nuid.Next()}, &out)
+	err := c.call(ctx, http.MethodPost, "/v1/requests/"+url.PathEscape(requestID)+"/deny", d, &out)
 	return out, err
 }
 
@@ -98,10 +116,14 @@ func (c *Client) Questions(ctx context.Context) ([]QuestionInfo, error) {
 }
 
 // AnswerQuestion answers a waiting question with values by field key, or
-// declines it when answers is nil.
-func (c *Client) AnswerQuestion(ctx context.Context, questionID string, answers json.RawMessage) (QuestionInfo, error) {
+// declines it. Once the world exists, a must carry an approver's
+// signature over the answer.
+func (c *Client) AnswerQuestion(ctx context.Context, questionID string, a AnswerRequest) (QuestionInfo, error) {
+	if a.CommandID == "" {
+		a.CommandID = nuid.Next()
+	}
 	var out QuestionInfo
-	err := c.call(ctx, http.MethodPost, "/v1/questions/"+questionID+"/answer", AnswerRequest{CommandID: nuid.Next(), Answers: answers, Decline: answers == nil}, &out)
+	err := c.call(ctx, http.MethodPost, "/v1/questions/"+url.PathEscape(questionID)+"/answer", a, &out)
 	return out, err
 }
 
@@ -172,10 +194,15 @@ func (c *Client) Rules(ctx context.Context) ([]RepoRulesInfo, error) {
 	return out, err
 }
 
-// SetRepoRules replaces a repository's rules.
-func (c *Client) SetRepoRules(ctx context.Context, repoID string, rules []v1.Rule) (RepoRulesInfo, error) {
+// SetRepoRules replaces a repository's rules with r's list, at the
+// revision r names. Once the world exists, r must carry an approver's
+// signature over the list and revision.
+func (c *Client) SetRepoRules(ctx context.Context, repoID string, r SetRulesRequest) (RepoRulesInfo, error) {
+	if r.CommandID == "" {
+		r.CommandID = nuid.Next()
+	}
 	var out RepoRulesInfo
-	err := c.call(ctx, http.MethodPut, "/v1/repos/"+repoID+"/rules", SetRulesRequest{CommandID: nuid.Next(), Rules: rules}, &out)
+	err := c.call(ctx, http.MethodPut, "/v1/repos/"+url.PathEscape(repoID)+"/rules", r, &out)
 	return out, err
 }
 

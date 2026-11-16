@@ -1,4 +1,4 @@
-import { citadelAddress } from '../address'
+import { citadelAddress, cliCommand } from '../address'
 import { myApprover, myKey, type ApproverActions } from '../approvers'
 import { el } from '../dom'
 import type { ApproverInfo, Rule } from '../protocol'
@@ -8,11 +8,11 @@ import type { State } from '../store'
 import { copyButton, factsBox, hint, note, timeNode } from './parts'
 
 /**
- * What the Approvers page of Settings holds: every browser that can approve
- * what agents do in this world, a link that makes another browser one,
- * revocation, and whether this browser's storage keeps its key. Every
- * change is signed in this browser with its approver key, so only an
- * approver can make one.
+ * What the Approvers page of Settings holds: every browser and host's CLI
+ * that can approve what agents do in this world, a link that makes another
+ * browser or CLI one, revocation, and whether this browser's storage keeps
+ * its key. Every change is signed in this browser with its approver key,
+ * so only an approver can make one.
  */
 export function approversContent(s: State, actions: ApproverActions, keep: () => void): (Node | null)[] {
   if (!s.world?.ready) {
@@ -78,6 +78,7 @@ function approverRow(a: ApproverInfo, s: State, actions: ApproverActions, canAct
     el('div', { class: 'grow' }, [
       el('span', { style: 'font-weight:600', text: a.name }),
       mine ? el('span', { class: 'me-tag', text: 'this browser' }) : null,
+      a.device === 'cli' ? el('span', { class: 'device-tag', text: 'CLI', title: 'A host’s CLI, which signs what you decide on that host' }) : null,
       el('span', { class: 'sub' }, ['Added ', timeNode(a.enrolled), a.by === 'owner' ? ' with the owner key' : ` by ${nameOf(a.by)}`]),
     ]),
     canAct && s.revoking !== a.key ? el('button', { type: 'button', class: 'copy', text: 'Revoke', 'aria-label': `Revoke ${a.name}`, onclick: () => actions.askRevoke(a.key) }) : null,
@@ -150,7 +151,9 @@ function inviteBox(s: State, actions: ApproverActions): HTMLElement {
       : null,
     qrCode(inv.link, 'QR code of the link that adds an approver'),
     el('div', { class: 'addhost' }, [el('pre', {}, [el('code', { text: inv.link })])]),
-    el('p', { class: 'sub', text: 'Anyone who opens it first becomes an approver, so share it only with yourself.' }),
+    el('p', { class: 'sub', text: 'To make a host’s CLI an approver instead, so it can sign what you decide there, run this on the host:' }),
+    el('div', { class: 'addhost' }, [el('pre', {}, [el('code', { text: cliCommand(inv.link) })]), copyButton(cliCommand(inv.link), 'Copy the command that makes a host’s CLI an approver')]),
+    el('p', { class: 'sub', text: 'Anyone who uses it first becomes an approver, so share it only with yourself.' }),
     el('div', { class: 'actions' }, [copyButton(inv.link, 'Copy the link that adds an approver', 'btn small'), close]),
   ])
 }

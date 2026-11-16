@@ -41,8 +41,9 @@ type startSessionRequest struct {
 // can send. Each one is relayed to the daemon that owns the target by
 // request-reply, and the daemon's answer comes back.
 //
-// Once the world exists, every call needs a signed-in approver, except
-// what a browser without a key needs to become an approver and sign in:
+// Every call needs a signed-in approver, so none goes through before the
+// world exists, except what a browser or a host's CLI without a key needs
+// to become an approver and sign in:
 // setting the world up, which the one-time token guards; reading the
 // world, its approvers, and a voucher, which only someone holding the link
 // can name; and enrolling with an entry the owner key or a voucher's claim

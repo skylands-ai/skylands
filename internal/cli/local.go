@@ -3,13 +3,17 @@ package cli
 // The local CLI talks to the daemon on this host over its Unix socket. It
 // registers repos, lists what is waiting on a person, approves or denies
 // those requests, lists, stops, and cleans up sessions, and reports status.
-// The daemon accepts these from the OS user that owns it, which unblocks
-// agents even while the host is offline.
+// Only the OS user that owns the daemon can reach its socket, and agents
+// run as that user too, so a decision through the socket carries a
+// signature like one through a citadel: the CLI signs it as one of the
+// world's approvers, with a key only the passphrase a person types opens.
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -18,6 +22,8 @@ import (
 	"github.com/spf13/cobra"
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
+	"github.com/skylands-ai/skylands/internal/approval"
+	"github.com/skylands-ai/skylands/internal/daemon/session"
 	"github.com/skylands-ai/skylands/internal/daemon/socket"
 	"github.com/skylands-ai/skylands/internal/rules"
 )
@@ -208,14 +214,13 @@ func newRequestApproveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "approve <request>",
 		Short: "Approve a waiting request on this host",
-		Args:  cobra.ExactArgs(1),
+		Long: `Request approve shows the exact input the agent proposed, then signs an
+approval of that input with this CLI's approver key, which asks for its
+passphrase. The agent makes the call once. Make this CLI an approver first
+with skylands approver add.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			r, err := socket.Dial(socketPath).Approve(cmd.Context(), args[0])
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Approved %s for %s in %s\n", r.Tool, r.Agent, r.Repo)
-			return nil
+			return decideRequest(cmd.Context(), cmd.OutOrStdout(), socket.Dial(socketPath), args[0], true)
 		},
 	}
 	socketFlag(cmd, &socketPath)
@@ -227,18 +232,77 @@ func newRequestDenyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deny <request>",
 		Short: "Deny a waiting request on this host",
-		Args:  cobra.ExactArgs(1),
+		Long: `Request deny signs a refusal of the request with this CLI's approver key,
+which asks for its passphrase. Make this CLI an approver first with
+skylands approver add.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			r, err := socket.Dial(socketPath).Deny(cmd.Context(), args[0])
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Denied %s for %s in %s\n", r.Tool, r.Agent, r.Repo)
-			return nil
+			return decideRequest(cmd.Context(), cmd.OutOrStdout(), socket.Dial(socketPath), args[0], false)
 		},
 	}
 	socketFlag(cmd, &socketPath)
 	return cmd
+}
+
+// decideRequest signs and sends an approval or a denial of the request id.
+// It hashes the input itself, as a browser does, and an approval shows the
+// person that input first, so what is signed is what they saw.
+func decideRequest(ctx context.Context, out io.Writer, cli *socket.Client, id string, allow bool) error {
+	reqs, err := cli.Requests(ctx)
+	if err != nil {
+		return err
+	}
+	var r *socket.RequestInfo
+	for i := range reqs {
+		if reqs[i].ID == id {
+			r = &reqs[i]
+		}
+	}
+	if r == nil {
+		return fmt.Errorf("no request %s is waiting on this host; skylands request list shows those that are", id)
+	}
+	in, err := cli.RequestInput(ctx, id)
+	if err != nil {
+		return err
+	}
+	input := approval.BytesHash([]byte(in.Input))
+	d := approval.ToolCall{V: approval.DecisionVersion, Kind: approval.KindToolCall, Session: r.Session, Request: r.ID, Decision: "deny", Input: input}
+	if allow {
+		for _, o := range r.Options {
+			if o.Kind == "allow_once" && d.Option == "" {
+				d.Option = o.ID
+			}
+		}
+		if d.Option == "" {
+			return errors.New("the agent offers no \"allow once\" answer to this request, so it can't be approved here")
+		}
+		d.Decision = "allow"
+		fmt.Fprintf(out, "%s in %s asks to run %s with this input:\n\n%s\n\n", r.Agent, r.Repo, r.Tool, in.Input)
+	}
+	signer, err := signerFor(ctx, cli)
+	if err != nil {
+		return err
+	}
+	d.World, d.Host = signer.world, signer.host
+	sig, err := signer.sign(d)
+	if err != nil {
+		return err
+	}
+	req := socket.DecideRequest{Signature: sig}
+	if !allow {
+		_, err := cli.Deny(ctx, id, req)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "Denied %s for %s in %s\n", r.Tool, r.Agent, r.Repo)
+		return nil
+	}
+	req.OptionID, req.InputHash = d.Option, input
+	if _, err := cli.Approve(ctx, id, req); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Approved %s for %s in %s\n", r.Tool, r.Agent, r.Repo)
+	return nil
 }
 
 func newSessionCmd() *cobra.Command {
@@ -446,7 +510,11 @@ everything inside the session's worktree. A deny is final: a call any
 deny rule matches is refused. Otherwise the most specific matching rule
 wins. Among equals, a session's own rule beats one copied from its
 repository, and then an ask beats an allow. No match asks a person. A
-session copies its repository's rules when it starts.`,
+session copies its repository's rules when it starts.
+
+Adding and removing rules is signed with this host's CLI as one of the
+world's approvers, so make it one first with skylands approver add. Rules
+it set lapse if it is revoked, as any approver's do.`,
 	}
 	cmd.AddCommand(newRuleListCmd(), newRuleAddCmd(), newRuleRemoveCmd())
 	return cmd
@@ -483,7 +551,7 @@ func newRuleListCmd() *cobra.Command {
 			}
 			for _, r := range repos {
 				if r.Lapsed {
-					fmt.Fprintf(out, "%s's rules lapsed: the approver who set them no longer approves, so their allow rules ask until an approver or this host sets them again.\n", r.Repo)
+					fmt.Fprintf(out, "%s's rules lapsed: the approver who set them no longer approves, so their allow rules ask until an approver sets them again.\n", r.Repo)
 				}
 			}
 			return nil
@@ -512,7 +580,7 @@ func newRuleAddCmd() *cobra.Command {
 			if len(args) == 4 {
 				rule.Pattern = args[3]
 			}
-			info, err := cli.SetRepoRules(cmd.Context(), r.RepoID, append(r.Rules, rule))
+			info, err := setRepoRules(cmd.Context(), cli, r, append(append([]v1.Rule{}, r.Rules...), rule))
 			if err != nil {
 				return err
 			}
@@ -541,7 +609,7 @@ func newRuleRemoveCmd() *cobra.Command {
 				return fmt.Errorf("%s has %d rules; give a number from rule list", r.Repo, len(r.Rules))
 			}
 			removed := r.Rules[n-1]
-			info, err := cli.SetRepoRules(cmd.Context(), r.RepoID, append(append([]v1.Rule{}, r.Rules[:n-1]...), r.Rules[n:]...))
+			info, err := setRepoRules(cmd.Context(), cli, r, append(append([]v1.Rule{}, r.Rules[:n-1]...), r.Rules[n:]...))
 			if err != nil {
 				return err
 			}
@@ -551,6 +619,29 @@ func newRuleRemoveCmd() *cobra.Command {
 	}
 	socketFlag(cmd, &socketPath)
 	return cmd
+}
+
+// setRepoRules signs and sends list as r's rules, replacing the revision
+// the CLI read them at. The signature covers the list as the host keeps
+// it, so it is normalized the same way first.
+func setRepoRules(ctx context.Context, cli *socket.Client, r socket.RepoRulesInfo, list []v1.Rule) (socket.RepoRulesInfo, error) {
+	kept, err := rules.ForRepository(list)
+	if err != nil {
+		return socket.RepoRulesInfo{}, err
+	}
+	hash, err := approval.RulesHash(kept)
+	if err != nil {
+		return socket.RepoRulesInfo{}, err
+	}
+	signer, err := signerFor(ctx, cli)
+	if err != nil {
+		return socket.RepoRulesInfo{}, err
+	}
+	sig, err := signer.sign(approval.RepoRules{V: approval.DecisionVersion, Kind: approval.KindRepoRules, World: signer.world, Host: signer.host, Repo: r.RepoID, Rules: hash, Revision: r.Revision})
+	if err != nil {
+		return socket.RepoRulesInfo{}, err
+	}
+	return cli.SetRepoRules(ctx, r.RepoID, socket.SetRulesRequest{Rules: list, Revision: r.Revision, Signature: sig})
 }
 
 // repoRulesNamed finds a repository's rules by the repository's name or id.
@@ -626,18 +717,22 @@ the agent is told you will not answer.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cli := socket.Dial(socketPath)
+			questions, err := cli.Questions(cmd.Context())
+			if err != nil {
+				return err
+			}
+			var waiting *socket.QuestionInfo
+			for i := range questions {
+				if questions[i].ID == args[0] {
+					waiting = &questions[i]
+				}
+			}
+			if waiting == nil {
+				return fmt.Errorf("no question %s is waiting on this host; skylands request list shows those that are", args[0])
+			}
+			fields := waiting.Fields
 			var answers json.RawMessage
 			if !decline {
-				questions, err := cli.Questions(cmd.Context())
-				if err != nil {
-					return err
-				}
-				var fields []v1.QuestionField
-				for _, q := range questions {
-					if q.ID == args[0] {
-						fields = q.Fields
-					}
-				}
 				values := map[string]any{}
 				for _, kv := range args[1:] {
 					k, v, ok := strings.Cut(kv, "=")
@@ -680,7 +775,32 @@ the agent is told you will not answer.`,
 				}
 				answers, _ = json.Marshal(values)
 			}
-			q, err := cli.AnswerQuestion(cmd.Context(), args[0], answers)
+			form, err := approval.FormHash(waiting.Message, waiting.Fields)
+			if err != nil {
+				return err
+			}
+			d := approval.Answer{V: approval.DecisionVersion, Kind: approval.KindAnswer, Session: waiting.Session, Question: waiting.ID, Form: form, Declined: decline}
+			if !decline {
+				// The daemon signs over the answers as it checks them, so
+				// they're checked here the same way first.
+				checked, err := session.CheckAnswers(fields, answers)
+				if err != nil {
+					return err
+				}
+				if d.Answers, err = approval.AnswersHash(checked); err != nil {
+					return err
+				}
+			}
+			signer, err := signerFor(cmd.Context(), cli)
+			if err != nil {
+				return err
+			}
+			d.World, d.Host = signer.world, signer.host
+			sig, err := signer.sign(d)
+			if err != nil {
+				return err
+			}
+			q, err := cli.AnswerQuestion(cmd.Context(), args[0], socket.AnswerRequest{Answers: answers, Decline: decline, Signature: sig})
 			if err != nil {
 				return err
 			}

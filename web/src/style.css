@@ -383,6 +383,7 @@ button.row{ color:inherit; font:inherit; }
 .install-app{ display:flex; flex-direction:column; align-items:flex-start; gap:6px; }
 .approver .grow > span:first-child{ overflow:hidden; text-overflow:ellipsis; }
 .me-tag{ align-self:flex-start; margin:2px 0; padding:0 6px; border-radius:999px; background:var(--accent-bg); color:var(--accent); font-size:11px; font-weight:600; }
+.device-tag{ align-self:flex-start; margin:2px 0; padding:0 6px; border-radius:999px; border:1px solid var(--line); color:var(--muted); font-size:11px; font-weight:600; }
 .approver .copy, .sec .facts .copy, .settings-card .facts .copy{ min-height:28px; padding:0 10px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); font-size:12px; font-weight:600; }
 .approver .copy:hover{ background:var(--surface); color:var(--text); }
 .confirming{ display:flex; flex-direction:column; gap:8px; padding:8px; border-radius:8px; border:1px solid var(--bad); }

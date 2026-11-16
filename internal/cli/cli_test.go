@@ -46,6 +46,8 @@ func TestEveryRunnableCommandIsListed(t *testing.T) {
 		"skylands rule list":          true,
 		"skylands rule add":           true,
 		"skylands rule remove":        true,
+		"skylands approver add":       true,
+		"skylands approver list":      true,
 		"skylands preflight":          true,
 		"skylands theme check":        true,
 		"skylands theme search":       true,

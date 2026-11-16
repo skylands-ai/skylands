@@ -92,8 +92,10 @@ type Inbound struct {
 
 // ApproverInfo is one approver key, as the world's registry decides it.
 type ApproverInfo struct {
-	Key      string `json:"key"`
-	Name     string `json:"name"`
+	Key  string `json:"key"`
+	Name string `json:"name"`
+	// Device is "cli" for a host's CLI, and empty for a browser.
+	Device   string `json:"device,omitempty"`
 	Enrolled string `json:"enrolled"`
 	// By is "owner" for an approver the owner key enrolled, through setup
 	// or the recovery file, or the key of the approver whose voucher it

@@ -1118,7 +1118,7 @@ func TestRulesSettleToolCallsBeforeAnyoneIsAsked(t *testing.T) {
 
 	// Rules survive a reload, and a changed repository rule reaches only
 	// new sessions.
-	if _, err := f.agg.SetRules(f.ctx, v1.SetRepoRules{ID: "r3", RepoID: f.repo.ID, Rules: nil}, "local"); err != nil {
+	if _, err := f.agg.SetRules(f.ctx, v1.SetRepoRules{ID: "r3", RepoID: f.repo.ID, Revision: 1, Rules: nil}, "local"); err != nil {
 		t.Fatal(err)
 	}
 	m2, err := Load(f.ctx, f.store, f.cfg)

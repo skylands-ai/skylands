@@ -27,6 +27,9 @@ type Record struct {
 type Approver struct {
 	Key  string
 	Name string
+	// Device is v1.ApproverDeviceCLI for a host's CLI, and empty for a
+	// browser.
+	Device string
 	// Enrolled is when its entry was stored. By is the key that enrolled
 	// it: the owner key, or the approver whose voucher it used, named in
 	// Voucher.
@@ -162,7 +165,7 @@ func (r *Registry) enroll(a v1.ApproverEntry, by, voucher string, at time.Time) 
 	if _, ok := r.approvers[a.Key]; ok {
 		return fmt.Errorf("approver %s is already enrolled", a.Key)
 	}
-	r.approvers[a.Key] = &Approver{Key: a.Key, Name: a.Name, Enrolled: at, By: by, Voucher: voucher}
+	r.approvers[a.Key] = &Approver{Key: a.Key, Name: a.Name, Device: a.Device, Enrolled: at, By: by, Voucher: voucher}
 	r.order = append(r.order, a.Key)
 	return nil
 }

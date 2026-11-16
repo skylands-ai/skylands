@@ -306,8 +306,9 @@ func SignDecision(kp nkeys.KeyPair, d Decision) (v1.DecisionSignature, error) {
 var ErrStale = errors.New("this changed since it was shown; look again")
 
 // ErrUnsigned is a decision, or a command that sets an agent working or
-// changes the repository, through the citadel that no approver signed.
-var ErrUnsigned = errors.New("this must be signed by one of the world's approvers when it comes through the citadel")
+// changes the repository, that no approver signed, through the citadel
+// or the host's CLI.
+var ErrUnsigned = errors.New("this must be signed by one of the world's approvers")
 
 // ErrBadSignature is a decision signature that doesn't verify.
 var ErrBadSignature = errors.New("the decision's signature doesn't verify")

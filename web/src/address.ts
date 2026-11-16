@@ -24,3 +24,8 @@ export function citadelAddress(raw: string): { address: string } | { error: stri
 export function linkAt(link: string, address: string): string {
   return `${address}/setup${new URL(link).hash}`
 }
+
+/** The command that makes a host's CLI an approver with an invite link, quoted for a shell. */
+export function cliCommand(link: string): string {
+  return `skylands approver add '${link.replace(/'/g, `'\\''`)}'`
+}

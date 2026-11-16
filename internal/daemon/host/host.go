@@ -74,8 +74,9 @@ type Host struct {
 	verify func(ctx context.Context, d approval.Decision, s v1.DecisionSignature) error
 }
 
-// RequireSignatures makes a change to a repository's rules through the
-// citadel need an approver's signature once the world exists: world is
+// RequireSignatures makes a change to a repository's rules, through the
+// citadel or the host's CLI, need an approver's signature once the world
+// exists: world is
 // the world's owner key, or "" before it is known, and verify checks a
 // signature against the world's approvers.
 func (h *Host) RequireSignatures(world func() string, verify func(ctx context.Context, d approval.Decision, s v1.DecisionSignature) error) {
@@ -183,9 +184,9 @@ func (h *Host) RegisterRepo(ctx context.Context, cmd v1.RegisterRepo) (Repo, err
 // SetRules handles SetRepoRules: the repository's rules become the given
 // list, which sessions started on it from now on copy. A command id
 // already in the history gets the repo back and changes nothing. By is
-// "local" for the host's CLI or "citadel"; a change through the citadel
-// names the revision of the rules it replaces, and once the world exists
-// it must be signed by one of the world's approvers.
+// "local" for the host's CLI or "citadel". Either way the change names the
+// revision of the rules it replaces, and once the world exists it must be
+// signed by one of the world's approvers, which a host's CLI can be.
 func (h *Host) SetRules(ctx context.Context, cmd v1.SetRepoRules, by string) (Repo, error) {
 	h.cmdMu.Lock()
 	defer h.cmdMu.Unlock()
@@ -202,19 +203,15 @@ func (h *Host) SetRules(ctx context.Context, cmd v1.SetRepoRules, by string) (Re
 	}
 	revision := r.RulesRevision
 	h.mu.Unlock()
-	list, err := rules.Validate(cmd.Rules)
+	list, err := rules.ForRepository(cmd.Rules)
 	if err != nil {
 		return *r, err
 	}
-	// A repository's rules have no source: they are the source.
-	for i := range list {
-		list[i].Source = ""
-	}
-	if by == "citadel" && cmd.Revision != revision {
+	if cmd.Revision != revision {
 		return *r, fmt.Errorf("%w: the repository's rules are at revision %d, not %d", approval.ErrStale, revision, cmd.Revision)
 	}
 	var approver, signature string
-	if world, verify := h.signer(); by == "citadel" && world != "" {
+	if world, verify := h.signer(); world != "" {
 		if cmd.Signature == nil {
 			return *r, approval.ErrUnsigned
 		}
@@ -245,7 +242,8 @@ func (h *Host) SetRules(ctx context.Context, cmd v1.SetRepoRules, by string) (Re
 // LapseRules lapses every repository's rules whose signer no longer
 // approves, so their allow rules ask until an approver sets them again.
 // valid reports whether an approver approves now. Rules set on the host
-// never lapse, and nothing does before the world exists.
+// lapse the same way, since a host's CLI signs them as an approver, and
+// nothing lapses before the world exists.
 func (h *Host) LapseRules(ctx context.Context, valid func(approver string) bool) {
 	if world, _ := h.signer(); world == "" {
 		return
@@ -253,7 +251,7 @@ func (h *Host) LapseRules(ctx context.Context, valid func(approver string) bool)
 	h.cmdMu.Lock()
 	defer h.cmdMu.Unlock()
 	for _, r := range h.Repos() {
-		if r.RulesLapsed || r.RulesBy == "local" || !rules.HasAllow(r.Rules) || valid(r.RulesApprover) {
+		if r.RulesLapsed || !rules.HasAllow(r.Rules) || valid(r.RulesApprover) {
 			continue
 		}
 		ev, err := v1.NewEvent(v1.EventRepoRulesLapsed, "", v1.RepoRulesLapsed{RepoID: r.ID, Approver: r.RulesApprover})

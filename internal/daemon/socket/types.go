@@ -195,13 +195,20 @@ type RepoRulesInfo struct {
 	By       string `json:"by,omitempty"`
 	Approver string `json:"approver,omitempty"`
 	Lapsed   bool   `json:"lapsed,omitempty"`
+	// Revision is how many times the rules have been set, which a change
+	// names as the revision it replaces.
+	Revision int `json:"revision"`
 }
 
-// SetRulesRequest is the body of PUT /v1/repos/{id}/rules.
+// SetRulesRequest is the body of PUT /v1/repos/{id}/rules: the whole
+// list, the revision of the rules it replaces, and, once the world exists,
+// an approver's signature over both.
 type SetRulesRequest struct {
 	// CommandID identifies the command. The client fills it in when empty.
-	CommandID string    `json:"commandId,omitempty"`
-	Rules     []v1.Rule `json:"rules"`
+	CommandID string                `json:"commandId,omitempty"`
+	Rules     []v1.Rule             `json:"rules"`
+	Revision  int                   `json:"revision"`
+	Signature *v1.DecisionSignature `json:"signature,omitempty"`
 }
 
 // QuestionInfo describes one question waiting on a person.
@@ -217,17 +224,25 @@ type QuestionInfo struct {
 }
 
 // AnswerRequest is the body of POST /v1/questions/{id}/answer: values by
-// field key, or a refusal.
+// field key, or a refusal, and once the world exists an approver's
+// signature over it.
 type AnswerRequest struct {
-	CommandID string          `json:"commandId,omitempty"`
-	Answers   json.RawMessage `json:"answers,omitempty"`
-	Decline   bool            `json:"decline,omitempty"`
+	CommandID string                `json:"commandId,omitempty"`
+	Answers   json.RawMessage       `json:"answers,omitempty"`
+	Decline   bool                  `json:"decline,omitempty"`
+	Signature *v1.DecisionSignature `json:"signature,omitempty"`
 }
 
 // DecideRequest is the body of POST /v1/requests/{id}/approve and deny.
+// An approval names the option it chooses and the hash of the input it
+// approves, and once the world exists every decision carries an
+// approver's signature over it.
 type DecideRequest struct {
 	// CommandID identifies the decision. The client fills it in when empty.
-	CommandID string `json:"commandId,omitempty"`
+	CommandID string                `json:"commandId,omitempty"`
+	OptionID  string                `json:"optionId,omitempty"`
+	InputHash string                `json:"inputHash,omitempty"`
+	Signature *v1.DecisionSignature `json:"signature,omitempty"`
 }
 
 // StatusInfo is what GET /v1/status returns.

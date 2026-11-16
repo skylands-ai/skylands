@@ -356,11 +356,7 @@ func TestSignedPromptsCoverWhatTheyCarry(t *testing.T) {
 	f.cfg.VerifyDecision = func(_ context.Context, d approval.Decision, s v1.DecisionSignature) error {
 		return approval.VerifyDecision(d, s)
 	}
-	m, err := Load(f.ctx, f.store, f.cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer m.Wait()
+	f.cfg.Valid = func(context.Context, string) bool { return true }
 	sign := func(d approval.Decision) *v1.DecisionSignature {
 		t.Helper()
 		s, err := approval.SignDecision(kp, d)
@@ -369,6 +365,20 @@ func TestSignedPromptsCoverWhatTheyCarry(t *testing.T) {
 		}
 		return &s
 	}
+	// In a world, the repository's rules stand only on an approver's
+	// signature, from the host as from the world.
+	f.agg.RequireSignatures(f.cfg.World, f.cfg.VerifyDecision)
+	edits := []v1.Rule{{Decision: v1.RuleAllow, Kind: "edit"}}
+	edited, _ := approval.RulesHash(edits)
+	if _, err := f.agg.SetRules(f.ctx, v1.SetRepoRules{ID: "rules-signed", RepoID: repo.ID, Rules: edits, Revision: repo.RulesRevision,
+		Signature: sign(approval.RepoRules{V: approval.DecisionVersion, Kind: approval.KindRepoRules, World: world, Host: "ws", Repo: repo.ID, Rules: edited, Revision: repo.RulesRevision})}, "local"); err != nil {
+		t.Fatal(err)
+	}
+	m, err := Load(f.ctx, f.store, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Wait()
 	img := upload(t, f, "a.png", png(100))
 	text := "fix @a.go"
 	startAs := func(mentions []string, images []v1.PromptImage) approval.Decision {
