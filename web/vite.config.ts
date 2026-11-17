@@ -39,9 +39,9 @@ export default defineConfig({
   },
   server: {
     // During "npm run dev", a running citadel answers the WebSocket and the
-    // API. The proxy keeps the page's Host, which the citadel checks against
-    // its Origin and names the sign-in cookie for; Vite's shorthand would
-    // send the citadel's own instead.
+    // API. The proxy keeps the page's Host, which the citadel names the
+    // sign-in cookie for; Vite's shorthand would send the citadel's own
+    // instead.
     proxy: {
       '/ws': { target: 'ws://127.0.0.1:8080', ws: true, changeOrigin: false },
       '/healthz': { target: 'http://127.0.0.1:8080', changeOrigin: false },

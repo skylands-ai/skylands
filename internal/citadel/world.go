@@ -255,6 +255,7 @@ func (c *citadel) worldInfo() *web.WorldInfo {
 	if c.cfg.PublicURL != "" {
 		info.URL = c.publicURL()
 	}
+	info.Canonical = c.publicURL()
 	if w.signed != nil {
 		info.Name, info.Owner = w.record.Name, w.record.Owner
 	}

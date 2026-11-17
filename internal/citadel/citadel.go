@@ -129,7 +129,7 @@ func Run(ctx context.Context, cfg Config) error {
 		slog.Warn("web: this binary has no web client, so the browser gets a placeholder page; " +
 			"use a release binary from " + web.ReleasesURL + ", or build with make web && make build")
 	}
-	c.web = web.New(web.Config{Addr: cfg.HTTPAddr, Snapshot: c.snapshot, Dist: dist, API: c.api(), Live: c.live, Terminal: terminals{c}, NeedsSetup: c.needsSetup, Canonical: c.publicURL(), SignedIn: c.signedInAs, InSight: c.inSight, Themes: http.HandlerFunc(c.serveTheme)})
+	c.web = web.New(web.Config{Addr: cfg.HTTPAddr, Snapshot: c.snapshot, Dist: dist, API: c.api(), Live: c.live, Terminal: terminals{c}, NeedsSetup: c.needsSetup, SignedIn: c.signedInAs, InSight: c.inSight, Themes: http.HandlerFunc(c.serveTheme)})
 
 	opts := []nats.Option{
 		nats.Name("skylands-citadel"),

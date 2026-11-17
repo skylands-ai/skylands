@@ -5,6 +5,10 @@ package web
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,7 +17,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
-	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,10 +48,6 @@ type Config struct {
 	// NeedsSetup, if set and true, sends the world's page to /setup,
 	// because there is no world to show yet.
 	NeedsSetup func() bool
-	// Canonical is the URL people open the citadel at. A page asked for
-	// through another loopback name, such as localhost for 127.0.0.1, is
-	// sent there, so a browser always finds what it keeps for this origin.
-	Canonical string
 	// SignedIn, if set, says who a WebSocket request signed in as, which
 	// Drop is later asked about, or the status and reason to refuse it with.
 	SignedIn func(r *http.Request) (who string, status int, why string)
@@ -81,6 +81,9 @@ type Server struct {
 	hub     *hub
 	mux     *http.ServeMux
 	handler http.Handler
+	// ticketKey signs the tickets that open the WebSocket. Each server
+	// makes its own, so a ticket works only at the citadel that gave it.
+	ticketKey []byte
 }
 
 // New builds a server from cfg. Call Run or Serve to start it.
@@ -91,12 +94,14 @@ func init() {
 }
 
 func New(cfg Config) *Server {
-	s := &Server{cfg: cfg, hub: newHub()}
+	s := &Server{cfg: cfg, hub: newHub(), ticketKey: make([]byte, 32)}
+	_, _ = rand.Read(s.ticketKey)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "ok\n")
 	})
 	mux.HandleFunc("GET /ws", s.handleWS)
+	mux.HandleFunc("GET /ws/ticket", s.handleTicket)
 	if cfg.API != nil {
 		mux.Handle("/api/", cfg.API)
 	}
@@ -170,20 +175,82 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	}
 }
 
+// signedIn is who r signed in as, or the status and reason to refuse it
+// with.
+func (s *Server) signedIn(r *http.Request) (who string, status int, why string) {
+	if s.cfg.SignedIn == nil {
+		return "", 0, ""
+	}
+	return s.cfg.SignedIn(r)
+}
+
+// ticketLife is how long a WebSocket ticket works after a page asks for it.
+const ticketLife = time.Minute
+
+// handleTicket answers GET /ws/ticket with a ticket that opens the
+// WebSocket, for whoever the request signed in as. The citadel lets no
+// other origin read what it answers, so only its own pages can hold one.
+func (s *Server) handleTicket(w http.ResponseWriter, r *http.Request) {
+	who, status, why := s.signedIn(r)
+	if status != 0 {
+		http.Error(w, why, status)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]string{"ticket": s.ticket(who, time.Now())})
+}
+
+// ticket is a WebSocket ticket for who, working until ticketLife after
+// now: when it ends and who it's for, signed with the server's key.
+func (s *Server) ticket(who string, now time.Time) string {
+	payload := strconv.FormatInt(now.Add(ticketLife).Unix(), 10) + "." + who
+	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + base64.RawURLEncoding.EncodeToString(s.ticketMAC(payload))
+}
+
+func (s *Server) ticketMAC(payload string) []byte {
+	mac := hmac.New(sha256.New, s.ticketKey)
+	mac.Write([]byte(payload))
+	return mac.Sum(nil)
+}
+
+// validTicket says whether t is a ticket this server gave for who that
+// still works at now.
+func (s *Server) validTicket(t, who string, now time.Time) bool {
+	enc, sig, ok := strings.Cut(t, ".")
+	if !ok {
+		return false
+	}
+	payload, err := base64.RawURLEncoding.Strict().DecodeString(enc)
+	if err != nil {
+		return false
+	}
+	got, err := base64.RawURLEncoding.Strict().DecodeString(sig)
+	if err != nil || !hmac.Equal(got, s.ticketMAC(string(payload))) {
+		return false
+	}
+	end, forWho, ok := strings.Cut(string(payload), ".")
+	n, err := strconv.ParseInt(end, 10, 64)
+	return ok && err == nil && forWho == who && now.Unix() <= n
+}
+
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
-	var who string
-	if s.cfg.SignedIn != nil {
-		var status int
-		var why string
-		if who, status, why = s.cfg.SignedIn(r); status != 0 {
-			http.Error(w, why, status)
-			return
-		}
+	who, status, why := s.signedIn(r)
+	if status != 0 {
+		http.Error(w, why, status)
+		return
 	}
 	// Only this citadel's own pages may connect. A browser sends the
 	// sign-in cookie with a socket opened from any page on the same site,
-	// such as another port on 127.0.0.1, so the origin has to match too.
-	c, err := websocket.Accept(w, r, nil)
+	// such as another port on 127.0.0.1. A socket opened with a ticket
+	// comes from one, since only they can read a ticket. One opened
+	// without is held to an Origin matching the Host it reached, which a
+	// proxy or port forwarder in front of the citadel may have changed.
+	var opts *websocket.AcceptOptions
+	if s.validTicket(r.URL.Query().Get("ticket"), who, time.Now()) {
+		opts = &websocket.AcceptOptions{InsecureSkipVerify: true}
+	}
+	c, err := websocket.Accept(w, r, opts)
 	if err != nil {
 		slog.Debug("web: websocket accept", "remote", r.RemoteAddr, "err", err)
 		return
@@ -332,17 +399,12 @@ func sendJSON(ctx context.Context, c *websocket.Conn, m Message) error {
 	return c.Write(ctx, websocket.MessageText, data)
 }
 
-// pages sends a page asked for through another loopback name to the
-// canonical one, the world's page to setup while there is no world, /setup
+// pages sends the world's page to setup while there is no world, /setup
 // to the setup page, and the inbox's links to the world's page, which
 // opens at what they name.
 func (s *Server) pages(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet || r.Method == http.MethodHead {
-			if to := s.loopbackRedirect(r); to != "" {
-				http.Redirect(w, r, to, http.StatusTemporaryRedirect)
-				return
-			}
 			inbox := isInboxPath(r.URL.Path)
 			if (r.URL.Path == "/" || r.URL.Path == "/index.html" || inbox) && s.cfg.NeedsSetup != nil && s.cfg.NeedsSetup() {
 				http.Redirect(w, r, "/setup", http.StatusFound)
@@ -366,38 +428,6 @@ func (s *Server) pages(next http.Handler) http.Handler {
 // session, request, or question under it, which a notification opens.
 func isInboxPath(path string) bool {
 	return path == "/inbox" || strings.HasPrefix(path, "/inbox/")
-}
-
-// loopbackRedirect is where to send a page request that reached the
-// citadel through a loopback name other than the canonical one, or "".
-func (s *Server) loopbackRedirect(r *http.Request) string {
-	u, err := url.Parse(s.cfg.Canonical)
-	if err != nil || u.Host == "" || strings.HasPrefix(r.URL.Path, "/assets/") {
-		return ""
-	}
-	if !isLoopback(u.Hostname()) || !isLoopback(hostOnly(r.Host)) || strings.EqualFold(r.Host, u.Host) {
-		return ""
-	}
-	_, reqPort, _ := net.SplitHostPort(r.Host)
-	if reqPort != u.Port() {
-		return ""
-	}
-	return u.Scheme + "://" + u.Host + r.URL.RequestURI()
-}
-
-func hostOnly(hostport string) string {
-	if h, _, err := net.SplitHostPort(hostport); err == nil {
-		return h
-	}
-	return hostport
-}
-
-func isLoopback(host string) bool {
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(strings.Trim(host, "[]"))
-	return ip != nil && ip.IsLoopback()
 }
 
 // staticHandler serves the built client, or the placeholder when there is

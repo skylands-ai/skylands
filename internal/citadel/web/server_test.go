@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -160,4 +161,89 @@ func TestWebSocketSendsSnapshotThenBroadcasts(t *testing.T) {
 	if second.Server == nil || second.Server.Connected || second.Server.URL != "nats://gone" {
 		t.Fatalf("broadcast message = %+v, want disconnected server", second)
 	}
+}
+
+// TestWebSocketTicket: a socket opened with a ticket from GET /ws/ticket
+// connects whatever Origin and Host it arrives with, as through a port
+// forwarder that sends the citadel's own address. Without a ticket, or
+// with one for someone else, expired, or altered, its Origin must match.
+func TestWebSocketTicket(t *testing.T) {
+	cfg := Config{
+		Snapshot: func() Message { return Message{Type: "snapshot"} },
+		SignedIn: func(r *http.Request) (string, int, string) {
+			if r.Header.Get("X-Who") == "" {
+				return "", http.StatusUnauthorized, "sign in"
+			}
+			return r.Header.Get("X-Who"), 0, ""
+		},
+	}
+	s := New(cfg)
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ticketFor := func(who string) (int, string) {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+"/ws/ticket", nil)
+		if who != "" {
+			req.Header.Set("X-Who", who)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var body struct{ Ticket string }
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		return resp.StatusCode, body.Ticket
+	}
+	dial := func(who, ticket string) error {
+		t.Helper()
+		u := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
+		if ticket != "" {
+			u += "?ticket=" + url.QueryEscape(ticket)
+		}
+		c, _, err := websocket.Dial(ctx, u, &websocket.DialOptions{HTTPHeader: http.Header{"Origin": {"http://localhost:8081"}, "X-Who": {who}}})
+		if err == nil {
+			_, _, err = c.Read(ctx)
+			_ = c.CloseNow()
+		}
+		return err
+	}
+
+	if code, _ := ticketFor(""); code != http.StatusUnauthorized {
+		t.Errorf("a ticket without signing in = %d, want 401", code)
+	}
+	code, alice := ticketFor("alice")
+	if code != http.StatusOK || alice == "" {
+		t.Fatalf("a ticket for alice = %d %q", code, alice)
+	}
+	if err := dial("alice", alice); err != nil {
+		t.Errorf("alice's socket with her ticket: %v", err)
+	}
+	if err := dial("alice", alice); err != nil {
+		t.Errorf("alice's socket with her ticket again: %v", err)
+	}
+	for what, ticket := range map[string]string{
+		"no ticket":                  "",
+		"bob's ticket":               s.ticket("bob", time.Now()),
+		"an expired ticket":          s.ticket("alice", time.Now().Add(-ticketLife-time.Second)),
+		"an altered ticket":          altered(alice),
+		"its last character changed": alice[:len(alice)-1] + map[bool]string{true: "B", false: "A"}[strings.HasSuffix(alice, "A")],
+		"another citadel's":          New(cfg).ticket("alice", time.Now()),
+	} {
+		if err := dial("alice", ticket); err == nil {
+			t.Errorf("alice's socket from another origin with %s connected", what)
+		}
+	}
+}
+
+// altered is t with a character of its signature changed.
+func altered(t string) string {
+	i := len(t) - 10
+	if t[i] == 'A' {
+		return t[:i] + "B" + t[i+1:]
+	}
+	return t[:i] + "A" + t[i+1:]
 }

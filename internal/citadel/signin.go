@@ -217,35 +217,38 @@ func (c *citadel) requireSignIn(h http.HandlerFunc) http.Handler {
 // another origin sent it. A browser sends its cookies with requests from
 // pages on the same site, such as another port on 127.0.0.1, so the
 // sign-in cookie alone doesn't show that this citadel's own page asked.
+//
+// The browser's Sec-Fetch-Site header decides, since the browser sets it
+// from the page's address and the request's before anything between them
+// can change either. Only a browser that doesn't send it is judged by its
+// Origin header against the Host the request reached, which a proxy or
+// port forwarder in front of the citadel may have changed.
 func sameOrigin(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			if origin := r.Header.Get("Origin"); origin != "" {
-				if u, err := url.Parse(origin); err != nil || !strings.EqualFold(u.Host, r.Host) {
-					refuseOrigin(w, r, origin)
-					return
-				}
-			}
-		}
-		next.ServeHTTP(w, r)
-	})
+	p := http.NewCrossOriginProtection()
+	p.SetDenyHandler(http.HandlerFunc(refuseOrigin))
+	return p.Handler(next)
 }
 
-// refuseOrigin answers a request whose Origin names another host than its
-// Host header, saying both, and logs it with the headers a proxy adds, so
-// whoever runs the citadel can tell what changed which.
-func refuseOrigin(w http.ResponseWriter, r *http.Request, origin string) {
+// refuseOrigin answers a request sameOrigin refused, saying what differed,
+// and logs it with the headers a proxy adds, so whoever runs the citadel
+// can tell what changed which.
+func refuseOrigin(w http.ResponseWriter, r *http.Request) {
+	origin, site := r.Header.Get("Origin"), r.Header.Get("Sec-Fetch-Site")
 	attrs := []any{"method", r.Method, "path", r.URL.Path, "origin", origin, "host", r.Host, "remote", r.RemoteAddr}
-	for _, h := range []string{"X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-For", "Forwarded"} {
+	for _, h := range []string{"Sec-Fetch-Site", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-For", "Forwarded"} {
 		if v := r.Header.Get(h); v != "" {
 			attrs = append(attrs, strings.ToLower(h), v)
 		}
 	}
-	slog.Warn("citadel: refused a request whose Origin isn't the citadel's address", attrs...)
+	slog.Warn("citadel: refused a request from another origin", attrs...)
 
 	u, err := url.Parse(origin)
 	var why string
 	switch {
+	case site != "" && origin != "":
+		why = "a page from another origin, " + origin + ", can't do that here"
+	case site != "":
+		why = "a page from another origin can't do that here"
 	case origin == "null":
 		why = "the browser sent this with Origin: null, so the citadel can't tell its own page sent it"
 	case err != nil || u.Host == "":
