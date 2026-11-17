@@ -72,7 +72,7 @@ func TestThemeAddListRemove(t *testing.T) {
 		t.Errorf("theme add took a pack whose hash isn't the one asked for: %d %s", code, errOut)
 	}
 	code, out, errOut = run(t, "theme", "add", dir, "--nats-url", url, "--sha256", p.Hash)
-	if code != 0 || !strings.Contains(out, "Added Test Pack 1.2.3 (test-pack), sha256 "+p.Hash) {
+	if code != 0 || out != "Added Test Pack 1.2.3 (test-pack), sha256 "+p.Hash+"\n" {
 		t.Fatalf("theme add: %d %q %s", code, out, errOut)
 	}
 	code, out, _ = run(t, "theme", "add", dir, "--nats-url", url)

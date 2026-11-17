@@ -31,6 +31,7 @@ func TestEveryRunnableCommandIsListed(t *testing.T) {
 		"skylands daemon up":          true,
 		"skylands daemon status":      true,
 		"skylands repo register":      true,
+		"skylands repo match":         true,
 		"skylands request list":       true,
 		"skylands request history":    true,
 		"skylands request approve":    true,
@@ -72,7 +73,7 @@ func TestEveryRunnableCommandIsListed(t *testing.T) {
 
 func TestLocalCommandsNeedTheDaemon(t *testing.T) {
 	sock := t.TempDir() + "/none.sock"
-	for _, args := range [][]string{{"repo", "register", ".", "--socket", sock}, {"daemon", "status", "--socket", sock}, {"session", "list", "--socket", sock}, {"session", "prune", "--socket", sock}, {"session", "mode", "s1", "plan", "--socket", sock}, {"session", "model", "s1", "opus", "--socket", sock}, {"rule", "list", "--socket", sock}, {"request", "history", "--socket", sock}, {"rule", "add", "r", "allow", "edit", "--socket", sock}, {"request", "answer", "q", "--decline", "--socket", sock}} {
+	for _, args := range [][]string{{"repo", "register", ".", "--socket", sock}, {"repo", "match", "pricing", "--socket", sock}, {"repo", "match", "--replay", "--socket", sock}, {"daemon", "status", "--socket", sock}, {"session", "list", "--socket", sock}, {"session", "prune", "--socket", sock}, {"session", "mode", "s1", "plan", "--socket", sock}, {"session", "model", "s1", "opus", "--socket", sock}, {"rule", "list", "--socket", sock}, {"request", "history", "--socket", sock}, {"rule", "add", "r", "allow", "edit", "--socket", sock}, {"request", "answer", "q", "--decline", "--socket", sock}} {
 		code, _, stderr := run(t, args...)
 		if code != 1 || !strings.Contains(stderr, "no daemon is listening") {
 			t.Errorf("%v: exit %d, stderr %q; want a no-daemon error", args, code, stderr)

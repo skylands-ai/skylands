@@ -421,12 +421,14 @@ type UsageReported struct {
 // the sum over its sessions.
 const EventTokensUsed = "TokensUsed"
 
-// What a TokensUsed event paid for: a turn, the conversation's title, or a
-// commit message or pull request the agent wrote from the changes.
+// What a TokensUsed event paid for: a turn, the conversation's title, a
+// commit message or pull request the agent wrote from the changes, or the
+// question that chose the session's repository.
 const (
 	TokensForTurn        = "turn"
 	TokensForTitle       = "title"
 	TokensForDescription = "description"
+	TokensForDispatch    = "dispatch"
 )
 
 // TokenUsage counts tokens by kind, for one request or summed over many.
@@ -456,7 +458,7 @@ func (t *TokenUsage) Add(o TokenUsage) {
 func (t TokenUsage) IsZero() bool { return t == TokenUsage{} }
 
 // TokensUsed records the tokens one request cost. For is TokensForTurn,
-// TokensForTitle, or TokensForDescription.
+// TokensForTitle, TokensForDescription, or TokensForDispatch.
 type TokensUsed struct {
 	SessionID string     `json:"sessionId"`
 	For       string     `json:"for,omitempty"`

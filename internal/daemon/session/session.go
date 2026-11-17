@@ -1039,6 +1039,16 @@ func (m *Manager) Get(id string) (Session, bool) {
 	return s.copy(), true
 }
 
+// RecordTokens records what a request made for the session outside its
+// agent cost, such as the question that chose its repository. purpose is
+// a v1.TokensFor value.
+func (m *Manager) RecordTokens(ctx context.Context, id, purpose string, t v1.TokenUsage) error {
+	if _, ok := m.Get(id); !ok {
+		return ErrUnknownSession
+	}
+	return m.record(ctx, id, "", v1.EventTokensUsed, v1.TokensUsed{SessionID: id, For: purpose, Tokens: t})
+}
+
 // copy returns s with slices of its own, for a caller to read without the
 // manager's lock. apply changes a tool call in place and filters pending
 // requests and questions in place, so a copy sharing their backing arrays

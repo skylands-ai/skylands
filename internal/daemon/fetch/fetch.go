@@ -1,7 +1,8 @@
 // Package fetch answers on-demand reads from the host's disk: a session's
 // transcript, the diff in its worktree, where its changes stand, the
 // record of one of its tool calls, the images its prompts carried, the
-// files a prompt can mention, and what one of its terminals shows. The
+// files a prompt can mention, and what one of its terminals shows. It
+// also answers which repository a prompt is for, through Placement. The
 // citadel asks through the island's fetch subjects, and the daemon decides
 // what leaves the host.
 package fetch
@@ -47,6 +48,14 @@ type Repos interface {
 	Repo(id string) (host.Repo, bool)
 }
 
+// Placement places work asked for at the world or an island: it scores a
+// prompt against the island's repositories, and asks one of its agents to
+// break a close call, which the placement package provides.
+type Placement interface {
+	Match(ctx context.Context, req v1.MatchRequest) v1.MatchResult
+	Pick(ctx context.Context, req v1.PickRequest) (v1.PickResult, error)
+}
+
 // Responder answers fetch requests for one host.
 type Responder struct {
 	host           string
@@ -56,7 +65,9 @@ type Responder struct {
 	// MaxPiece is the most of an image one answer carries, so it fits in
 	// the host's NATS messages. Zero means 512 KB.
 	MaxPiece int
-	listings listings
+	// Placement answers match and pick fetches. Nil refuses them.
+	Placement Placement
+	listings  listings
 }
 
 // New returns a responder for host whose transcripts live in dir.
@@ -67,6 +78,10 @@ func New(host string, sessions Sessions, repos Repos, transcriptsDir string) *Re
 // Handle answers one request. The kind is the subject's last token.
 func (r *Responder) Handle(ctx context.Context, msg *nats.Msg) {
 	kind := msg.Subject[strings.LastIndex(msg.Subject, ".")+1:]
+	if kind == v1.FetchMatch || kind == v1.FetchPick {
+		r.place(ctx, msg, kind)
+		return
+	}
 	var req v1.FetchSessionRequest
 	if err := json.Unmarshal(msg.Data, &req); err != nil || (req.SessionID == "" && (kind != v1.FetchFiles || req.RepoID == "")) {
 		r.reply(msg, v1.Reply{Error: "a sessionId is required"})
@@ -169,6 +184,42 @@ func (r *Responder) Handle(ctx context.Context, msg *nats.Msg) {
 		res.Text, res.Truncated = res.Text[:MaxBytes], true
 	}
 	data, _ := json.Marshal(res)
+	r.reply(msg, v1.Reply{Result: data})
+}
+
+// place answers a match or a pick, whose requests are their own.
+func (r *Responder) place(ctx context.Context, msg *nats.Msg, kind string) {
+	if r.Placement == nil {
+		r.reply(msg, v1.Reply{Error: r.host + " doesn't place work"})
+		return
+	}
+	var out any
+	switch kind {
+	case v1.FetchMatch:
+		var req v1.MatchRequest
+		if err := json.Unmarshal(msg.Data, &req); err != nil || strings.TrimSpace(req.Prompt) == "" {
+			r.reply(msg, v1.Reply{Error: "a prompt is required"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(ctx, v1.MatchTimeout)
+		defer cancel()
+		out = r.Placement.Match(ctx, req)
+	case v1.FetchPick:
+		var req v1.PickRequest
+		if err := json.Unmarshal(msg.Data, &req); err != nil || strings.TrimSpace(req.Prompt) == "" {
+			r.reply(msg, v1.Reply{Error: "a prompt is required"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(ctx, v1.PickTimeout)
+		defer cancel()
+		picked, err := r.Placement.Pick(ctx, req)
+		if err != nil {
+			r.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		out = picked
+	}
+	data, _ := json.Marshal(out)
 	r.reply(msg, v1.Reply{Result: data})
 }
 

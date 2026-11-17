@@ -187,6 +187,21 @@ func (c *Client) CheckAgents(ctx context.Context) ([]v1.AgentAvailability, error
 	return out, err
 }
 
+// Match asks how this island alone would place a prompt.
+func (c *Client) Match(ctx context.Context, prompt string) (MatchInfo, error) {
+	var out MatchInfo
+	err := c.call(ctx, http.MethodPost, "/v1/match", MatchRequest{Prompt: prompt}, &out)
+	return out, err
+}
+
+// Replay asks how this island would place each past session's first
+// prompt today.
+func (c *Client) Replay(ctx context.Context) ([]ReplayedSession, error) {
+	var out []ReplayedSession
+	err := c.call(ctx, http.MethodGet, "/v1/match/replay", nil, &out)
+	return out, err
+}
+
 // Rules lists every repository's rules on this host.
 func (c *Client) Rules(ctx context.Context) ([]RepoRulesInfo, error) {
 	var out []RepoRulesInfo

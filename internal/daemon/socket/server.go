@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
@@ -55,6 +56,12 @@ type API interface {
 	// CheckAgents checks now which agents this host can launch, in the
 	// daemon's own environment, records what changed, and returns it.
 	CheckAgents(ctx context.Context) ([]v1.AgentAvailability, error)
+	// Match places a prompt as a citadel would if this island were the
+	// only one it asked.
+	Match(ctx context.Context, prompt string) MatchInfo
+	// Replay places every past session's first prompt the same way,
+	// beside the repository each ran in.
+	Replay(ctx context.Context) []ReplayedSession
 }
 
 // Serve answers the CLI on ln, a socket from Listen, until ctx ends, and
@@ -220,6 +227,17 @@ func Serve(ctx context.Context, ln net.Listener, api API) error {
 			return
 		}
 		reply(w, http.StatusOK, agents)
+	})
+	mux.HandleFunc("POST /v1/match", func(w http.ResponseWriter, r *http.Request) {
+		var req MatchRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Prompt) == "" {
+			reply(w, http.StatusBadRequest, ErrorResponse{Error: "a prompt is required"})
+			return
+		}
+		reply(w, http.StatusOK, api.Match(r.Context(), req.Prompt))
+	})
+	mux.HandleFunc("GET /v1/match/replay", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, http.StatusOK, api.Replay(r.Context()))
 	})
 	mux.HandleFunc("PUT /v1/repos/{id}/rules", func(w http.ResponseWriter, r *http.Request) {
 		var req SetRulesRequest

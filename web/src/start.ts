@@ -110,10 +110,11 @@ export function imagesRefused(island: Island | null | undefined, agent: string):
 /**
  * Starts a session on the island's daemon. The browser picks the session's
  * id, which the signature names, so the signed start starts this one
- * session. Resolves with the id, or with what went wrong.
+ * session: session when given, such as the one an agent's choice of
+ * repository was asked for, or a new one. Resolves with the id, or with
+ * what went wrong.
  */
-export async function startSession(s: State, start: Start): Promise<{ session: string; error?: undefined } | { error: string }> {
-  const session = newSessionId()
+export async function startSession(s: State, start: Start, session = newSessionId()): Promise<{ session: string; error?: undefined } | { error: string }> {
   const signed = signStart(s, { ...start, session })
   if (signed.error) return { error: signed.error }
   try {

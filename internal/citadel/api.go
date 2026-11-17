@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nuid"
@@ -63,6 +64,8 @@ func (c *citadel) api() http.Handler {
 	signedIn("POST /api/world/revocations", c.revokeApprover)
 	signedIn("POST /api/push/subscriptions", c.subscribePush)
 	signedIn("POST /api/push/unsubscribe", c.unsubscribePush)
+	signedIn("POST /api/dispatch", c.dispatchWork)
+	signedIn("POST /api/dispatch/pick", c.pickRepo)
 	signedIn("POST /api/sessions", c.startSession)
 	signedIn("POST /api/sessions/{host}/{id}/prompt", c.sendPrompt)
 	signedIn("POST /api/sessions/{host}/{id}/cancel", c.cancelTurn)
@@ -497,8 +500,10 @@ func (c *citadel) uploadImage(w http.ResponseWriter, r *http.Request) {
 // session's subjects, worktree, and files, so letters and digits only.
 var sessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9]{8,64}$`)
 
-// startSession dispatches a prompt straight to the island that holds the
-// repository. Choosing the host or repo for a work order comes later.
+// startSession starts a session on the island that holds the repository,
+// with a start an approver signed for it. Work asked for at the world or
+// an island is placed by dispatchWork first, and started here once the
+// person confirms where it goes.
 func (c *citadel) startSession(w http.ResponseWriter, r *http.Request) {
 	var req startSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -548,6 +553,12 @@ func (c *citadel) startSession(w http.ResponseWriter, r *http.Request) {
 // daemon's result, or its error as a Go error. It waits as long as the
 // host has to answer: the command's type is the subject's last token.
 func (c *citadel) sendCommand(ctx context.Context, subject string, cmd any) (json.RawMessage, error) {
+	return c.requestWithin(ctx, subject, cmd, v1.CommandTimeoutFor(subject[strings.LastIndexByte(subject, '.')+1:]))
+}
+
+// requestWithin relays one request as sendCommand does, waiting at most
+// timeout for the answer.
+func (c *citadel) requestWithin(ctx context.Context, subject string, cmd any, timeout time.Duration) (json.RawMessage, error) {
 	c.mu.Lock()
 	nc := c.nc
 	c.mu.Unlock()
@@ -558,7 +569,7 @@ func (c *citadel) sendCommand(ctx context.Context, subject string, cmd any) (jso
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, v1.CommandTimeoutFor(subject[strings.LastIndexByte(subject, '.')+1:]))
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	msg, err := nc.RequestWithContext(ctx, subject, data)
 	if err != nil {

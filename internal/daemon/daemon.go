@@ -30,8 +30,10 @@ import (
 	"github.com/skylands-ai/skylands/internal/daemon/blobs"
 	"github.com/skylands-ai/skylands/internal/daemon/fetch"
 	"github.com/skylands-ai/skylands/internal/daemon/host"
+	"github.com/skylands-ai/skylands/internal/daemon/placement"
 	"github.com/skylands-ai/skylands/internal/daemon/session"
 	"github.com/skylands-ai/skylands/internal/daemon/socket"
+	"github.com/skylands-ai/skylands/internal/dispatch"
 	"github.com/skylands-ai/skylands/internal/es"
 	"github.com/skylands-ai/skylands/internal/filelock"
 	"github.com/skylands-ai/skylands/internal/natsembed"
@@ -225,9 +227,20 @@ func Run(ctx context.Context, cfg Config) error {
 		agg.LapseRules(ctx, reg.Valid)
 	}
 
+	// Work asked for at the world or the island is placed by searching the
+	// island's own repositories, whose index is built now so the first
+	// match needn't wait for it.
+	registry := cfg.Adapters
+	if registry == nil {
+		registry = agents.DefaultRegistry()
+	}
+	placer := placement.New(hostName, agg, sessions, registry, filepath.Join(cfg.DataDir, "placement", hostName))
+	go placer.Entries(ctx)
+
 	// On-demand reads of transcripts and diffs leave the host only when asked.
 	responder := fetch.New(hostName, sessions, agg, transcriptsDir)
 	responder.MaxPiece = v1.PieceSize(nc.MaxPayload())
+	responder.Placement = placer
 	fetchSub, err := nc.Subscribe(v1.IslandFetchFilter(hostName), func(msg *nats.Msg) { go responder.Handle(ctx, msg) })
 	if err != nil {
 		return fmt.Errorf("subscribe to fetch requests: %w", err)
@@ -245,7 +258,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	// Session and repository commands arrive by request-reply, one subject
 	// per session or repository.
-	cmds := &commands{host: hostName, sessions: sessions, agg: agg, world: pin.get}
+	cmds := &commands{host: hostName, sessions: sessions, agg: agg, world: pin.get, placer: placer}
 	sub, err := nc.Subscribe(v1.SessionCommandFilter(hostName), func(msg *nats.Msg) { go cmds.handle(ctx, msg) })
 	if err != nil {
 		return fmt.Errorf("subscribe to session commands: %w", err)
@@ -309,7 +322,7 @@ func Run(ctx context.Context, cfg Config) error {
 		<-checksDone
 	}()
 
-	api := &localAPI{host: hostName, world: cfg.NATSURL, version: cfg.Version, started: started, agg: agg, sessions: sessions, checker: checker, pin: pin, setupURL: cfg.SetupURL, approvers: appr}
+	api := &localAPI{host: hostName, world: cfg.NATSURL, version: cfg.Version, started: started, agg: agg, sessions: sessions, checker: checker, pin: pin, setupURL: cfg.SetupURL, approvers: appr, placer: placer}
 	errc := make(chan error, 1)
 	if cfg.SocketPath != "" {
 		go func() { errc <- socket.Serve(ctx, ln, api) }()
@@ -455,6 +468,9 @@ type commands struct {
 	host     string
 	sessions *session.Manager
 	agg      *host.Host
+	// placer records on a session that starts what choosing its
+	// repository cost.
+	placer *placement.Placer
 	// world is the owner key of the world this island belongs to, or ""
 	// before a devworld's world is set up, when the island takes no
 	// commands: nothing can be signed yet.
@@ -539,6 +555,9 @@ func (c *commands) handle(ctx context.Context, msg *nats.Msg) {
 		if err != nil {
 			c.reply(msg, v1.Reply{Error: err.Error()})
 			return
+		}
+		if c.placer != nil {
+			c.placer.Started(ctx, s.ID)
 		}
 		c.replyResult(msg, v1.StartSessionResult{SessionID: s.ID, Worktree: s.Worktree, Branch: s.Branch})
 	case v1.CommandSendPrompt:
@@ -832,6 +851,24 @@ type localAPI struct {
 	pin       *worldPin
 	setupURL  func() string
 	approvers *approvers
+	placer    *placement.Placer
+}
+
+// Match places a prompt as a citadel would if this island were the only
+// one it asked.
+func (a *localAPI) Match(ctx context.Context, prompt string) socket.MatchInfo {
+	res := a.placer.Match(ctx, v1.MatchRequest{Prompt: prompt})
+	return socket.MatchInfo{Repos: res.Repos, Verdict: dispatch.Decide([]dispatch.Answer{{Host: a.host, Candidates: res.Candidates}})}
+}
+
+// Replay places every past session's first prompt the same way.
+func (a *localAPI) Replay(ctx context.Context) []socket.ReplayedSession {
+	out := []socket.ReplayedSession{}
+	for _, r := range a.placer.Replay(ctx) {
+		repo, _ := a.agg.Repo(r.Session.RepoID)
+		out = append(out, socket.ReplayedSession{Session: r.Session.ID, Prompt: r.Session.Prompt, RepoID: r.Session.RepoID, Repo: repo.Name, Verdict: r.Verdict})
+	}
+	return out
 }
 
 func (a *localAPI) CheckAgents(ctx context.Context) ([]v1.AgentAvailability, error) {

@@ -126,8 +126,8 @@ Dispatch has two levels. The citadel picks the host, and the host's daemon picks
 
 | Where you are | What the bar does |
 | --- | --- |
-| World | Sends the work to the citadel, which picks a host, and picks the repo too when the text names one or a keyword settles it |
-| Island | Sends the work to that host, and its daemon picks the repo |
+| World | Asks every host the citadel can reach which of its repos the work fits, and shows where it would go |
+| Island | Asks that host's daemon which of its repos the work fits, and shows where it would go |
 | Terrace | Starts the work in that repo |
 | File | Starts the work in that repo, with the file attached as context |
 | Agent | Sends a message to that agent |
@@ -138,9 +138,23 @@ Dispatch has two levels. The citadel picks the host, and the host's daemon picks
 - Each attempt runs on a different provider, in a session of its own. A model the target host can't run, such as a local model on a host without a GPU, is swapped for one it can, and the preview names the swap. The terrace's panel lists the sessions of one request together, as its attempts, so they can be compared.
 - Enter shows a one-line dispatch preview, and a second Enter starts the work.
 - The citadel chooses the host by routing rules. For work scoped to the world, it chooses when the work is asked for, considers only hosts it can reach, and records its reason, which the preview and the session's panel show. For work scoped to a host, the daemon chooses the repo and model under the same rules, which it holds as a projection, and records its reason too. The lead agent breaks the work into subagents itself.
-- The daemon finds the repo by searching its own repos, so no code leaves the host to make the choice. When nothing fits, it asks a person which repo to use instead of guessing, and that question leads the waiting list because the work can't start until someone answers it.
+- The daemon finds the repo by searching its own repos, so no code leaves the host to make the choice, as [Choosing the repo](#choosing-the-repo) describes. When nothing fits, the bar asks the person which repo to use instead of guessing.
 - When the citadel can't reach the target host, the preview says the work will wait, and it starts when the host is reachable again. Until then the island's panel lists it as waiting for the host.
 - When the citadel can't determine a target, it asks the person to pick one from the destinations that fit.
+
+### Choosing the repo
+
+Picking a repo for work is ranking a short list of labeled candidates: an island has a few repos and a world has tens. Keyword matching usually gets it right, as "add multi-currency support to pricing" matches `internal/pricing/`, and it needs no embedding model on the host and sends nothing off it.
+
+1. **A name settles it.** A prompt that names a repo, a module it declares, or, at the world, a host, picks that target without scoring. On an island, terrace, or file, that place stays the scope whatever the text names. A host with one repo, whether it's the scope or the prompt names it, has nothing to choose between, so the work goes to that repo, and on such an island the bar starts work as it does on the repo's terrace.
+2. **The scope sets who's asked.** From an island, only its daemon scores the prompt. From the world, the citadel asks every host it can reach, each with its own `match` fetch, all at once, since NATS request-reply returns only the first answer. A host that doesn't answer within five seconds is left out, and the preview names it, as it names hosts it can't reach.
+3. **Each daemon scores its own repos.** It keeps a keyword index of each one: its name, the modules its `go.mod`, `package.json`, and `Cargo.toml` files declare, its tracked file paths, the first section of its README, and its recent commit subjects, rebuilt when the checkout's HEAD moves, plus the titles of earlier sessions on it. It answers with its best candidates, each with a confidence from 0 to 1 and the reasons the preview shows, such as "pricing in internal/pricing/".
+4. **The confidence means the same on every island:** how much of the prompt the repo accounts for. Each meaningful word in the prompt adds a fixed weight, set by the best place it matched: a repo or module name most, then a file path, then the README, a commit subject, or a session title. Stopwords and words any request to an agent uses, such as "add", "fix", "test", and "support", are dropped first. Nothing in it depends on what else is on the island, so the citadel can compare answers from different islands. A word that's in many repos, such as "pricing" in three, isn't weighted down; that only matters in a close call, and close calls go to the tie-break.
+5. **A clear winner starts the work:** a confidence of at least 0.35, more than 0.15 ahead of the runner-up.
+6. **A close call between repos on one island goes to that island's agent.** Its daemon asks, in a side session as it asks for titles and commit messages, giving the close repos' short descriptions: name, modules, top-level entries, the start of the README, and what matched. The agent answers with a pick or with "unsure". It costs a few tokens, recorded on the session the work starts, for `dispatch`.
+7. **A close call across islands, an "unsure", a weak lone match, or nothing fitting goes to the person,** in the inbox's New form, with the prompt filled in and the repos that fit best listed first. Neither island's agent sees the other island's repo descriptions.
+
+Every past session is a labeled example: its prompt, and the repo it ran in. `skylands repo match --replay` replays a host's sessions through the ranker, each without its own title, and reports how often the work would have gone to its repo, which is how the thresholds above are checked.
 
 Labels and name tags are real buttons, so every level is reachable by keyboard. Reduced-motion settings turn off flight animation, bobbing, and camera glides. The light theme renders a day sky and the dark theme renders dusk.
 
@@ -189,7 +203,7 @@ The subject namespace is the public API, versioned by its first token. Events ar
 | `v1.island.<host>.session.<session>.evt.<type>` | Session events | Captured on the host, then mirrored into the world's JetStream domain |
 | `v1.island.<host>.session.<session>.cmd.<type>` | Commands to a session aggregate | Request-reply only |
 | `v1.island.<host>.evt.<type>` | Host events, such as terrain snapshots and adapter availability | Captured on the host, then mirrored into the world's JetStream domain |
-| `v1.island.<host>.fetch.<kind>` | On-demand reads, such as a diff or a file's contents | Request-reply only |
+| `v1.island.<host>.fetch.<kind>` | On-demand reads, such as a diff, a file's contents, or which repo a prompt fits | Request-reply only |
 | `v1.island.<host>.session.<session>.live` | A session's transcript as it is written, for whoever reads the conversation | Plain NATS, captured by no stream |
 | `v1.island.<host>.session.<session>.term.<terminal>.{in,size,out}` | A terminal's signed input, its size, and what its shell writes | Plain NATS, captured by no stream |
 | `v1.world.<aggregate>.<id>.evt.<type>` | Events from citadel-owned aggregates, one subject per aggregate instance | Captured in the world's JetStream domain; rule and user events are mirrored into every daemon's domain |
@@ -303,6 +317,8 @@ When a repo is registered, the daemon snapshots its tracked files and their size
 ### Placement
 
 A work order scoped to the host goes to the daemon's placement processor. It searches the host's repos, chooses the repo and the model under the world's routing rules, and records WorkOrderPlaced with the reason it gives people, such as a keyword it matched in a file path. When no repo fits, it records RepoChoiceRequested, and the order waits until someone picks a repo, which arrives as a ChooseRepo command.
+
+The search is the keyword index [Choosing the repo](#choosing-the-repo) describes, which the daemon answers `match` fetches from, and its agent breaks close calls through `pick` fetches. Until work orders hold requests, the browser asks for both through the citadel while the person is at the bar, and signs the start once the person confirms the repo.
 
 ### Rules and local control
 
@@ -448,6 +464,7 @@ The daemon decides what leaves the host. Session and host events carry metadata 
 - NATS stores events. Each citadel derives its projections from them _in memory_, so no citadel holds data of its own, and it keeps fetched content only for as long as a person is viewing it.
 - Event streams on each host are capped by size. When an offline host reaches the cap, the daemon stops starting new sessions rather than dropping events that haven't synced.
 - Push notifications carry no tool input, file contents, or commands.
+- Work asked for at the world sends the prompt's text to every host the citadel can reach, to be scored against that host's repos. Daemons are trusted participants in the world, but this is the one way a prompt reaches a host that doesn't run it. It reaches an agent only on a host breaking a close call between its own repos, and what comes back is each candidate's name, confidence, and reasons.
 - A commit message or a pull request's title and body that a person leaves blank is written from the changes alone. The session's agent writes it in a side session that sees only the diff, and the branch's commit messages for a pull request. Without an agent, git's account of the files and commits is used. Neither the prompt nor the conversation's title reaches a repository or a pull request, since a pull request can be public.
 
 ## Agents and adapters
@@ -509,12 +526,14 @@ skylands/
 │   │   ├── blobs/             exact inputs, outputs, and prompts' files and images, under their SHA-256
 │   │   ├── fetch/             on-demand reads: transcripts, diffs, tool calls, files, and images
 │   │   ├── host/              Host aggregate
+│   │   ├── placement/         the island's index of its repos, for choosing where work goes
 │   │   ├── session/           Session aggregate
 │   │   ├── socket/            local API for the CLI
 │   │   ├── terminal/          a person's shell in a session's worktree, in a terminal of its own
 │   │   └── terrain/           a repository's files as the world shows them
 │   ├── approval/              approvers, signed decisions, and their verification
 │   ├── canonical/             JSON in RFC 8785's canonical form, for signing
+│   ├── dispatch/              ranking repos against a prompt, and comparing islands' answers
 │   ├── es/                    event-sourcing kit over JetStream
 │   ├── fakeagent/             scripted ACP agent for tests
 │   ├── filelock/              the lock a daemon holds on its island while it runs
