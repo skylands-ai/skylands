@@ -71,9 +71,13 @@ void fetch('/api/world')
     if (w?.version) store.update({ citadelVersion: w.version })
   })
   .catch(() => {})
-const bar = new CommandBar()
 // A session started from the inbox's New form opens there.
 const newSession = new NewSessionForm((id) => openConversation(id))
+// Work the command bar can't place goes to the person in the same form.
+const bar = new CommandBar({
+  choose: (c) => newSession.open(store.state, c),
+  land: (host, repo) => nav.land(host, repo),
+})
 const cache = new FetchCache(() => store.touch())
 const live = new LiveText()
 

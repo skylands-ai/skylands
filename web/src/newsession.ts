@@ -8,6 +8,23 @@ import { isStale } from './status'
 import type { State } from './store'
 
 /**
+ * What the command bar hands the form when it can't tell where work goes,
+ * so the person chooses: the work, the repositories that fit best, and
+ * why the bar couldn't choose.
+ */
+export interface Choosing {
+  prompt: string
+  /** The repositories offered first, best first. */
+  among: { host: string; repoId: string; name: string }[]
+  /** Why the person is choosing. */
+  note: string
+  /** The session to start, which an agent's choice may have been asked for. */
+  session: string
+  /** Runs instead of opening the conversation, once the session starts. */
+  started: (session: string, host: string, repo: string) => void
+}
+
+/**
  * The inbox's New form, which starts a session on any repository
  * registered across the world with what the command bar takes: the
  * agent, its mode and model, where it works, and the first prompt. It is
@@ -16,6 +33,11 @@ import type { State } from './store'
  */
 export class NewSessionForm {
   private readonly dialog = el('dialog', { class: 'newsession', 'aria-labelledby': 'newsessionTitle' })
+  private readonly title = el('h2', { id: 'newsessionTitle', text: 'New conversation' })
+  /** Why the command bar handed the work over, while it has. */
+  private readonly why = el('p', { class: 'ns-why', hidden: '' })
+  /** What the command bar handed over, until the form closes. */
+  private choosing: Choosing | null = null
   private readonly repo = el('select', { 'aria-label': 'Repository' })
   private readonly island = el('span', { class: 'muted' })
   private readonly chips: StartChips
@@ -62,7 +84,8 @@ export class NewSessionForm {
     this.refreshCarry = carry.refresh
     const cancel = el('button', { type: 'button', class: 'btn small ghost', text: 'Cancel', onclick: () => this.dialog.close() })
     const body = el('div', { class: 'ns-body' }, [
-      el('h2', { id: 'newsessionTitle', text: 'New conversation' }),
+      this.title,
+      this.why,
       el('div', { class: 'ns-row' }, [el('label', { class: 'chip' }, ['Repository', this.repo]), this.island]),
       el('div', { class: 'ns-row' }, [el('label', { class: 'chip' }, ['Agent', agent]), modeChip, el('span', { class: 'chip' }, [el('label', {}, ['Model', model]), otherModel]), el('label', { class: 'chip' }, ['Where', where])]),
       el('div', { class: 'cmd-anchor' }, [carry.menu, this.prompt]),
@@ -85,6 +108,11 @@ export class NewSessionForm {
         this.refresh()
       })
     }
+    // Closing the form ends what the command bar handed over.
+    this.dialog.addEventListener('close', () => {
+      this.choosing = null
+      this.reposShown = null
+    })
     this.start.addEventListener('click', () => void this.submit())
     this.prompt.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -94,11 +122,27 @@ export class NewSessionForm {
     })
   }
 
-  /** Opens the form, on what was chosen last. */
-  open(s: State): void {
+  /**
+   * Opens the form, on what was chosen last. With choosing, it opens on
+   * the work the command bar couldn't place, the repositories that fit
+   * best first, for the person to choose where it goes.
+   */
+  open(s: State, choosing?: Choosing): void {
+    this.choosing = choosing ?? null
+    this.reposShown = null
+    this.title.textContent = choosing ? 'Where should this go?' : 'New conversation'
+    this.why.textContent = choosing?.note ?? ''
+    this.why.hidden = !choosing
+    if (choosing) {
+      this.prompt.value = choosing.prompt
+      this.draft.clear()
+      this.error = ''
+    }
     if (!this.dialog.open) this.dialog.showModal()
     this.update(s)
-    ;(this.repo.value ? this.prompt : this.repo).focus()
+    if (choosing?.among.length && s.repos[choosing.among[0].repoId]) this.repo.value = choosing.among[0].repoId
+    this.refresh()
+    ;(choosing ? this.repo : this.repo.value ? this.prompt : this.repo).focus()
   }
 
   /** Follows what the world says while the form is open. A phone's screen has no inbox to start from, so the form closes there. */
@@ -113,14 +157,18 @@ export class NewSessionForm {
     this.refresh()
   }
 
-  /** Lists the repositories by island, keeping the chosen one while it is listed. */
+  /** Lists the repositories by island, keeping the chosen one while it is listed, and the ones that fit best first while the person chooses where work goes. */
   private syncRepos(s: State): void {
     const groups = repoChoices(s)
-    const key = JSON.stringify(groups.map((g) => [g.host, !!s.islands[g.host]?.reachable, g.repos.map((r) => [r.id, r.name, r.path])]))
+    const best = (this.choosing?.among ?? []).filter((c) => s.repos[c.repoId])
+    const key = JSON.stringify([best.map((c) => c.repoId), groups.map((g) => [g.host, !!s.islands[g.host]?.reachable, g.repos.map((r) => [r.id, r.name, r.path])])])
     if (key === this.reposShown) return
     this.reposShown = key
     const keep = this.repo.value
     this.repo.replaceChildren(
+      // The island shows beside the choice, so a repository is named by
+      // its island too only where two that fit best share a name.
+      ...(best.length ? [el('optgroup', { label: 'Fits best' }, best.map((c) => el('option', { value: c.repoId, text: best.some((o) => o !== c && o.name === c.name) ? `${c.name} on ${c.host}` : c.name })))] : []),
       ...groups.map((g) =>
         el(
           'optgroup',
@@ -184,8 +232,9 @@ export class NewSessionForm {
     if (!s || !repo || !prompt || this.start.disabled) return
     this.busy = true
     this.refresh()
+    const choosing = this.choosing
     const carried = await this.draft.carried(prompt, repo.host)
-    const out = typeof carried === 'string' ? { error: carried } : await startSession(s, { host: repo.host, repo: repo.id, ...this.chips.chosen(), prompt, ...carried })
+    const out = typeof carried === 'string' ? { error: carried } : await startSession(s, { host: repo.host, repo: repo.id, ...this.chips.chosen(), prompt, ...carried }, choosing?.session)
     this.busy = false
     if (out.error !== undefined) {
       this.error = out.error
@@ -196,6 +245,7 @@ export class NewSessionForm {
     this.draft.clear()
     this.dialog.close()
     this.refresh()
-    this.started(out.session)
+    if (choosing) choosing.started(out.session, repo.host, repo.id)
+    else this.started(out.session)
   }
 }

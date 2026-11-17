@@ -8,6 +8,7 @@ import (
 	"time"
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
+	"github.com/skylands-ai/skylands/internal/dispatch"
 )
 
 // RegisterRepoRequest is the body of POST /v1/repos.
@@ -271,4 +272,27 @@ type StatusInfo struct {
 // ErrorResponse is the body of every error reply.
 type ErrorResponse struct {
 	Error string `json:"error"`
+}
+
+// MatchRequest is the body of POST /v1/match.
+type MatchRequest struct {
+	Prompt string `json:"prompt"`
+}
+
+// MatchInfo is how this island alone places a prompt: the verdict a
+// citadel reaches when this island is the only one it asks, and how many
+// repositories the island scored.
+type MatchInfo struct {
+	Repos   int              `json:"repos"`
+	Verdict dispatch.Verdict `json:"verdict"`
+}
+
+// ReplayedSession is how this island would place one past session's
+// first prompt today, beside the repository the session ran in.
+type ReplayedSession struct {
+	Session string           `json:"session"`
+	Prompt  string           `json:"prompt"`
+	RepoID  string           `json:"repoId"`
+	Repo    string           `json:"repo"`
+	Verdict dispatch.Verdict `json:"verdict"`
 }

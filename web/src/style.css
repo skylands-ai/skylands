@@ -36,11 +36,14 @@ button{ font:inherit; color:inherit; cursor:pointer; }
 .cmdrow{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .scope{ display:inline-flex; align-items:center; gap:6px; min-height:44px; padding:0 6px 0 12px; border-radius:8px; border:2px solid var(--accent); background:var(--accent-bg); font-size:13px; font-weight:600; }
 .scope select{ min-height:40px; max-width:280px; border:none; background:transparent; color:var(--text); font:inherit; font-weight:600; }
-.scope-to{ padding-right:8px; }
+/* The label reads as a chip's does, and the scope it names as a value, boxed as a chip's choice is. */
+.scope-label{ font-size:12px; font-weight:500; color:var(--muted); }
+.scope-to{ display:inline-flex; align-items:center; min-height:32px; padding:0 10px; border-radius:6px; border:1px solid var(--line); background:var(--surface); color:var(--text); }
 .cmd-anchor.cmd-input{ flex:1 1 260px; min-width:0; flex-direction:row; align-items:center; gap:6px; }
 #cmdInput{ flex:1 1 auto; min-width:0; min-height:44px; padding:0 12px; border-radius:8px; border:1px solid var(--line); background:var(--surface); color:var(--text); font:inherit; font-size:15px; }
 #cmdInput:focus-visible{ outline:2px solid var(--accent); outline-offset:1px; }
 .why{ font-size:12px; color:var(--muted); margin-right:auto; }
+.why .linkish{ padding:0; border:none; background:none; color:var(--accent); font:inherit; text-decoration:underline; cursor:pointer; }
 .chip{ display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); }
 .chip select{ min-height:32px; padding:0 6px; border-radius:6px; border:1px solid var(--line); background:var(--surface); color:var(--text); font:inherit; font-size:13px; }
 .theme-select{ min-height:34px; min-width:220px; max-width:100%; padding:0 8px; border-radius:6px; border:1px solid var(--line); background:var(--surface); color:var(--text); font:inherit; font-size:14px; }
@@ -111,6 +114,7 @@ button:focus-visible,a:focus-visible{ outline:2px solid var(--accent); outline-o
 .newsession textarea{ min-height:120px; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--surface); color:var(--text); font:inherit; font-size:14px; resize:vertical; }
 .newsession textarea:focus-visible{ outline:2px solid var(--accent); outline-offset:1px; }
 .newsession .ns-foot{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.newsession .ns-why{ margin:0; font-size:13px; color:var(--muted); }
 .newsession .ns-note{ margin-right:auto; flex:1 1 240px; font-size:12px; color:var(--muted); }
 .newsession .ns-note.bad{ color:var(--bad); }
 .newsession .ns-note a{ color:var(--accent); }

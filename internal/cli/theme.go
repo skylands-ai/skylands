@@ -208,7 +208,6 @@ A pack already in the world under the same id is never replaced unless
 				verb = "Replaced " + had.Version + " with"
 			}
 			fmt.Fprintf(out, "%s %s %s (%s), sha256 %s\n", verb, m.Name, m.Version, m.ID, p.Hash)
-			fmt.Fprintln(out, "Each browser picks it under World theme, on the citadel's page.")
 			return nil
 		},
 	}

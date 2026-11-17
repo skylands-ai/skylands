@@ -114,6 +114,9 @@ func (f *fakeAPI) AnswerQuestion(_ context.Context, id string, a AnswerRequest) 
 	f.mu.Unlock()
 	return QuestionInfo{ID: id, Message: string(a.Answers), Agent: fmt.Sprint(a.Decline)}, nil
 }
+func (f *fakeAPI) Match(context.Context, string) MatchInfo  { return MatchInfo{} }
+func (f *fakeAPI) Replay(context.Context) []ReplayedSession { return nil }
+
 func (f *fakeAPI) CheckAgents(context.Context) ([]v1.AgentAvailability, error) {
 	return []v1.AgentAvailability{{Name: "fake", Available: true}}, nil
 }

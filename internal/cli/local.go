@@ -39,7 +39,7 @@ func newRepoCmd() *cobra.Command {
 		GroupID: groupLocal,
 		Short:   "Manage the repositories the daemon on this host works in",
 	}
-	cmd.AddCommand(newRepoRegisterCmd())
+	cmd.AddCommand(newRepoRegisterCmd(), newRepoMatchCmd())
 	return cmd
 }
 
