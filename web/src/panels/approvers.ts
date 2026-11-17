@@ -4,15 +4,15 @@ import { el } from '../dom'
 import type { ApproverInfo, Rule } from '../protocol'
 import { qrCode } from '../qr'
 import { isOpen } from '../status'
-import type { State } from '../store'
+import type { Renaming, State } from '../store'
 import { copyButton, factsBox, hint, note, timeNode } from './parts'
 
 /**
  * What the Approvers page of Settings holds: every browser and host's CLI
  * that can approve what agents do in this world, a link that makes another
- * browser or CLI one, revocation, and whether this browser's storage keeps
- * its key. Every change is signed in this browser with its approver key,
- * so only an approver can make one.
+ * browser or CLI one, renaming, revocation, and whether this browser's
+ * storage keeps its key. Every change is signed in this browser with its
+ * approver key, so only an approver can make one.
  */
 export function approversContent(s: State, actions: ApproverActions, keep: () => void): (Node | null)[] {
   if (!s.world?.ready) {
@@ -81,8 +81,14 @@ function approverRow(a: ApproverInfo, s: State, actions: ApproverActions, canAct
       a.device === 'cli' ? el('span', { class: 'device-tag', text: 'CLI', title: 'A host’s CLI, which signs what you decide on that host' }) : null,
       el('span', { class: 'sub' }, ['Added ', timeNode(a.enrolled), a.by === 'owner' ? ' with the owner key' : ` by ${nameOf(a.by)}`]),
     ]),
-    canAct && s.revoking !== a.key ? el('button', { type: 'button', class: 'copy', text: 'Revoke', 'aria-label': `Revoke ${a.name}`, onclick: () => actions.askRevoke(a.key) }) : null,
+    canAct && s.revoking !== a.key && s.renaming?.key !== a.key
+      ? el('div', { class: 'acts' }, [
+          el('button', { type: 'button', class: 'copy', text: 'Rename', 'aria-label': `Rename ${a.name}`, onclick: () => actions.askRename(a.key) }),
+          el('button', { type: 'button', class: 'copy', text: 'Revoke', 'aria-label': `Revoke ${a.name}`, onclick: () => actions.askRevoke(a.key) }),
+        ])
+      : null,
   ])
+  if (canAct && s.renaming?.key === a.key) return renameBox(a, row, s.renaming, actions)
   if (!canAct || s.revoking !== a.key) return row
   // What goes along with it, and whether this browser does.
   const through = a.through ?? []
@@ -107,6 +113,34 @@ function approverRow(a: ApproverInfo, s: State, actions: ApproverActions, canAct
       el('button', { type: 'button', class: 'btn small danger', text: `Revoke ${a.name}`, onclick: () => actions.revoke(a.key) }),
       el('button', { type: 'button', class: 'btn small ghost', text: 'Cancel', onclick: () => actions.askRevoke(null) }),
     ]),
+  ])
+}
+
+/** The row of an approver being renamed, with the name being typed. */
+function renameBox(a: ApproverInfo, row: HTMLElement, r: Renaming, actions: ApproverActions): HTMLElement {
+  const input = el('input', { type: 'text', value: r.text, maxlength: '80', autocomplete: 'off', 'aria-label': `New name for ${a.name}`, 'data-keep': `rename-${a.key}` })
+  input.addEventListener('input', () => {
+    r.text = input.value
+  })
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') actions.rename()
+    else if (e.key === 'Escape') actions.askRename(null)
+  })
+  // Opening the box puts the keyboard in it with the name selected; drawn
+  // again while typing, it already has the keyboard back.
+  queueMicrotask(() => {
+    if (document.activeElement === input) return
+    input.focus()
+    input.select()
+  })
+  return el('div', { class: 'approver renaming' }, [
+    row,
+    el('div', { class: 'actions' }, [
+      input,
+      el('button', { type: 'button', class: 'btn small', text: 'Save', disabled: r.saving ? '' : null, onclick: () => actions.rename() }),
+      el('button', { type: 'button', class: 'btn small ghost', text: 'Cancel', onclick: () => actions.askRename(null) }),
+    ]),
+    r.error ? el('p', { class: 'approver-error', role: 'alert', text: r.error }) : null,
   ])
 }
 

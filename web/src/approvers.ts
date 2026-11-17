@@ -1,4 +1,4 @@
-import { keepStorage, keyFromSeed, loadApprover, newApproverKey, seedOf, sign, type Signed } from './approver'
+import { approverNamed, keepStorage, keyFromSeed, loadApprover, newApproverKey, seedOf, sign, type Signed } from './approver'
 import { citadelAddress, linkAt } from './address'
 import type { KeyPair } from '@nats-io/nkeys'
 import { answersHash, attachmentsHash, bytesHash, DECISION_VERSION, formHash, normalizeRules, rulesHash, signDecision, textHash, type Decision, type DecisionSignature } from './decision'
@@ -6,7 +6,7 @@ import type { ApproverInfo, Carried, Permission, Question, Repo, Rule, Session, 
 import { api } from './signin'
 import type { State, Store } from './store'
 
-/** What the Approvers section can do: show an "Add an approver" link, and revoke an approver once confirmed. */
+/** What the Approvers section can do: show an "Add an approver" link, rename an approver, and revoke one once confirmed. */
 export interface ApproverActions {
   invite(): void
   /** Makes the link open the world at another address; the claim stays the same. */
@@ -17,6 +17,10 @@ export interface ApproverActions {
   /** Asks for a confirmation before revoking key, or stops asking with null. */
   askRevoke(key: string | null): void
   revoke(key: string): void
+  /** Starts typing a new name for key, or stops with null. */
+  askRename(key: string | null): void
+  /** Gives the approver being renamed the name typed, or says what's wrong with it. */
+  rename(): void
 }
 
 /** Reads this browser's approver key, and whether its storage is kept, into the store. */
@@ -124,7 +128,7 @@ export function approverActions(store: Store): ApproverActions {
       store.update({ invite: null })
     },
     askRevoke(key) {
-      store.update({ revoking: key, approverError: null })
+      store.update({ revoking: key, renaming: null, approverError: null })
     },
     revoke(key) {
       void (async () => {
@@ -135,6 +139,43 @@ export function approverActions(store: Store): ApproverActions {
           store.update({ revoking: null, approverError: null })
         } catch (err) {
           store.update({ approverError: `Couldn’t revoke: ${(err as Error).message}` })
+        }
+      })()
+    },
+    askRename(key) {
+      const a = key ? store.state.approvers?.find((x) => x.key === key) : undefined
+      store.update({ renaming: a ? { key: a.key, text: a.name, error: '' } : null, revoking: null, approverError: null })
+    },
+    rename() {
+      const r = store.state.renaming
+      if (!r || r.saving) return
+      const name = r.text.trim()
+      const approvers = store.state.approvers ?? []
+      if (!name) {
+        store.update({ renaming: { ...r, error: 'Give it a name.' } })
+        return
+      }
+      if (name === approvers.find((a) => a.key === r.key)?.name) {
+        store.update({ renaming: null })
+        return
+      }
+      const other = approverNamed(name, approvers, r.key)
+      if (other) {
+        store.update({ renaming: { ...r, error: `Another approver is called “${other.name}”.` } })
+        return
+      }
+      store.update({ renaming: { ...r, error: '', saving: true } })
+      void (async () => {
+        try {
+          const { kp, owner } = signer()
+          const rename = sign(kp, { type: 'rename', world: owner, key: r.key, name, created: now() })
+          await post('/api/world/renames', { rename })
+          // The citadel sends the registry with the new name too; this shows it without waiting.
+          const still = store.state.renaming?.key === r.key
+          store.update({ renaming: still ? null : store.state.renaming, approvers: store.state.approvers?.map((a) => (a.key === r.key ? { ...a, name } : a)) ?? null })
+        } catch (err) {
+          const cur = store.state.renaming
+          if (cur?.key === r.key) store.update({ renaming: { ...cur, error: `Couldn’t rename: ${(err as Error).message}`, saving: false } })
         }
       })()
     },

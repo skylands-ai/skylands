@@ -3,8 +3,10 @@ package citadel
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -515,6 +517,52 @@ func (c *citadel) revokeApprover(w http.ResponseWriter, r *http.Request) {
 		slog.Info("citadel: approver revoked", "approver", target.Name, "key", rv.Key, "through", len(reg.Through(rv.Key)))
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"key": rv.Key})
+}
+
+// renameApprover answers POST /api/world/renames: a new name for an
+// approver, signed by the owner key or an approver. A rename to the name
+// it has already is stored nowhere.
+func (c *citadel) renameApprover(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Rename v1.Signed `json:"rename"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "a rename is required")
+		return
+	}
+	view, ok := c.readyWorld(w)
+	if !ok {
+		return
+	}
+	reg := view.registry
+	rn, err := approval.OpenRename(req.Rename, view.record.Owner)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "the rename: "+err.Error())
+		return
+	}
+	if req.Rename.Signer != reg.Owner() && !reg.Valid(req.Rename.Signer) {
+		writeError(w, http.StatusForbidden, "this browser doesn't approve for this world, so it can't rename an approver")
+		return
+	}
+	target, known := reg.Approver(rn.Key)
+	switch {
+	case !known:
+		writeError(w, http.StatusNotFound, "that key was never an approver for this world")
+		return
+	case !reg.Valid(rn.Key):
+		writeError(w, http.StatusConflict, "that approver no longer approves for this world")
+		return
+	}
+	if target.Name != rn.Name {
+		// Each rename has a subject of its own, named for its signature, so
+		// the same signed rename can't be stored twice to undo a later one.
+		id := sha256.Sum256([]byte(req.Rename.Sig))
+		if !c.storeRecord(w, r.Context(), v1.RenameSubject(rn.Key, hex.EncodeToString(id[:])), req.Rename, "that rename is already stored") {
+			return
+		}
+		slog.Info("citadel: approver renamed", "from", target.Name, "to", rn.Name, "key", rn.Key)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"key": rn.Key, "name": rn.Name})
 }
 
 // getApprovers answers GET /api/world/approvers.

@@ -34,6 +34,18 @@ export interface Invite {
   other?: { text: string; error: string }
 }
 
+/**
+ * An approver being renamed in Settings: the name being typed, what's
+ * wrong with it, and whether it's being saved. Typing changes the text in
+ * place, so the panel isn't drawn again for each key.
+ */
+export interface Renaming {
+  key: string
+  text: string
+  error: string
+  saving?: boolean
+}
+
 /** What the page shows under its header: the world, the inbox, or Settings. */
 export type View = 'world' | 'inbox' | 'settings'
 
@@ -68,6 +80,8 @@ export interface State extends Nav {
   invite: Invite | null
   /** The approver whose revocation is waiting for a confirmation, if any. */
   revoking: string | null
+  /** The approver being renamed, if any. */
+  renaming: Renaming | null
   /** The last thing that went wrong adding or revoking an approver. */
   approverError: string | null
   /** Every island the citadel knows, by host. */
@@ -173,7 +187,7 @@ type Listener = (s: State) => void
 
 /** One place for everything the page renders from. Every change notifies every listener. */
 export class Store {
-  state: State = { link: 'connecting', loading: null, server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), settingsPage: loadSettingsPage(), inbox: null, inboxFilter: loadFilter(), convoMode: {}, worldTheme: loadWorldTheme(), themes: [], themeProblem: null, notify: loadNotify(), push: false, pushError: null, phone: false, route: {}, install: 'no' }
+  state: State = { link: 'connecting', loading: null, server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, renaming: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), settingsPage: loadSettingsPage(), inbox: null, inboxFilter: loadFilter(), convoMode: {}, worldTheme: loadWorldTheme(), themes: [], themeProblem: null, notify: loadNotify(), push: false, pushError: null, phone: false, route: {}, install: 'no' }
   private listeners: Listener[] = []
 
   subscribe(fn: Listener): void {

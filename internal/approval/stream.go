@@ -22,7 +22,7 @@ const StreamName = "skylands-approvers"
 func StreamConfig() jetstream.StreamConfig {
 	return jetstream.StreamConfig{
 		Name:                 StreamName,
-		Description:          "The Skylands world's approvers: owner entries, vouchers, vouched entries, and revocations",
+		Description:          "The Skylands world's approvers: owner entries, vouchers, vouched entries, revocations, and renames",
 		Subjects:             []string{v1.ApproversSubjectPrefix + ".>"},
 		Storage:              jetstream.FileStorage,
 		Retention:            jetstream.LimitsPolicy,
