@@ -100,8 +100,10 @@ func TestSettingUpAWorld(t *testing.T) {
 	// page moves to the citadel's own address, which the world names,
 	// since a proxy may send the citadel a Host that isn't the browser's.
 	localhost := strings.Replace(base, "127.0.0.1", "localhost", 1)
-	if resp, err := noRedirect.Get(localhost + "/setup"); err != nil || resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET localhost /setup = %v, %v; want the setup page", resp, err)
+	// Whether the setup page is there depends on whether the web client was
+	// built, which go test doesn't do, so only the redirect is checked.
+	if resp, err := noRedirect.Get(localhost + "/setup"); err != nil || resp.StatusCode/100 == 3 || resp.Header.Get("Location") != "" {
+		t.Fatalf("GET localhost /setup = %v, %v; want it served there, not redirected", resp, err)
 	}
 	if resp, err := http.Get(localhost + "/api/world"); err != nil {
 		t.Fatal(err)
