@@ -393,7 +393,10 @@ button.row{ color:inherit; font:inherit; }
 .confirming{ display:flex; flex-direction:column; gap:8px; padding:8px; border-radius:8px; border:1px solid var(--bad); }
 .confirming > .row{ padding:0; border:none; background:transparent; min-height:0; }
 .confirming .sub, .invite .sub{ margin:0; font-size:12px; color:var(--muted); }
-.confirming .actions, .invite .actions{ display:flex; gap:8px; flex-wrap:wrap; }
+.confirming .actions, .invite .actions, .renaming .actions{ display:flex; gap:8px; flex-wrap:wrap; }
+.renaming{ display:flex; flex-direction:column; gap:8px; padding:8px; border-radius:8px; border:1px solid var(--accent); }
+.renaming > .row{ padding:0; border:none; background:transparent; min-height:0; }
+.renaming input{ flex:1 1 180px; min-width:0; min-height:36px; padding:0 8px; border-radius:6px; border:1px solid var(--line); background:var(--surface); color:var(--text); font:inherit; font-size:13px; }
 .btn.danger{ background:var(--bad); border-color:var(--bad); color:#fff; }
 .invite{ display:flex; flex-direction:column; gap:8px; padding:10px; border-radius:8px; background:var(--surface-2); border:1px solid var(--line); }
 .invite p{ margin:0; }

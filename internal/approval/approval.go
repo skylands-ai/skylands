@@ -178,6 +178,31 @@ func OpenRevocation(s v1.Signed, owner string) (v1.Revocation, error) {
 	return r, nil
 }
 
+// OpenRename verifies a rename signed by the owner key or an approver
+// key, for the world owner names.
+func OpenRename(s v1.Signed, owner string) (v1.Rename, error) {
+	var r v1.Rename
+	if err := open(s, &r); err != nil {
+		return r, err
+	}
+	if r.Type != "rename" {
+		return r, fmt.Errorf("a rename has type %q", r.Type)
+	}
+	if r.World != owner {
+		return r, errors.New("the rename is for another world")
+	}
+	if s.Signer != owner && !nkeys.IsValidPublicUserKey(s.Signer) {
+		return r, errors.New("the rename is not signed by the owner key or an approver key")
+	}
+	if !nkeys.IsValidPublicUserKey(r.Key) {
+		return r, errors.New("the rename names no approver key")
+	}
+	if err := checkName(r.Name, "the approver"); err != nil {
+		return r, err
+	}
+	return r, nil
+}
+
 // OpenSignIn verifies a sign-in signed by an approver key, for the world
 // owner names. Whether its signer is an approver, and whether it is current
 // and for this citadel, are the citadel's to decide.

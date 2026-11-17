@@ -62,6 +62,7 @@ func (c *citadel) api() http.Handler {
 	signedIn := func(pattern string, h http.HandlerFunc) { mux.Handle(pattern, c.requireSignIn(h)) }
 	signedIn("POST /api/world/vouchers", c.addVoucher)
 	signedIn("POST /api/world/revocations", c.revokeApprover)
+	signedIn("POST /api/world/renames", c.renameApprover)
 	signedIn("POST /api/push/subscriptions", c.subscribePush)
 	signedIn("POST /api/push/unsubscribe", c.unsubscribePush)
 	signedIn("POST /api/dispatch", c.dispatchWork)

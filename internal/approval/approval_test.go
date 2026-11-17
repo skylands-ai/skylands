@@ -126,3 +126,37 @@ func TestOpenPushSubscription(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenRename(t *testing.T) {
+	owner, approver, ownerPub, approverPub := keys(t)
+	rename := v1.Rename{Type: "rename", World: ownerPub, Key: approverPub, Name: "Work laptop", Created: Now()}
+	byApprover, _ := Sign(approver, rename)
+	byOwner, _ := Sign(owner, rename)
+	for name, s := range map[string]v1.Signed{"signed by an approver": byApprover, "signed by the owner key": byOwner} {
+		if r, err := OpenRename(s, ownerPub); err != nil || r.Key != approverPub || r.Name != "Work laptop" {
+			t.Errorf("%s: OpenRename = %+v, %v", name, r, err)
+		}
+	}
+
+	_, _, otherPub, _ := keys(t)
+	forOther := rename
+	forOther.World = otherPub
+	otherWorld, _ := Sign(approver, forOther)
+	blank := rename
+	blank.Name = "  "
+	noName, _ := Sign(approver, blank)
+	long := rename
+	long.Name = strings.Repeat("x", MaxNameLength+1)
+	tooLong, _ := Sign(approver, long)
+	ownerAsKey := rename
+	ownerAsKey.Key = ownerPub
+	notUser, _ := Sign(approver, ownerAsKey)
+	wrongType := rename
+	wrongType.Type = "revocation"
+	typed, _ := Sign(approver, wrongType)
+	for name, s := range map[string]v1.Signed{"another world": otherWorld, "no name": noName, "too long": tooLong, "owner key as approver": notUser, "wrong type": typed} {
+		if _, err := OpenRename(s, ownerPub); err == nil {
+			t.Errorf("%s: OpenRename accepted it", name)
+		}
+	}
+}

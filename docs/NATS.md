@@ -82,7 +82,7 @@ skylands daemon install --world O... \
 | Stream `island-HOST`, subjects `v1.island.HOST.>` events | The host's domain | The host's daemon, its only writer |
 | Mirror `island-HOST` | The world's domain | The citadel |
 | Key-value bucket `skylands-world` | The world's domain | The citadel, once, when the world is set up |
-| Stream `skylands-approvers`, subjects `v1.world.approvers.>` | The world's domain | The citadel, once per record: approvers, their links, and revocations, each on a subject of its own. The stream takes no second message on a subject and refuses deletes and purges, so nothing written is taken back. Daemons read it through their leaf nodes |
+| Stream `skylands-approvers`, subjects `v1.world.approvers.>` | The world's domain | The citadel, once per record: approvers, their links, revocations, and renames, each on a subject of its own. The stream takes no second message on a subject and refuses deletes and purges, so nothing written is taken back. Daemons read it through their leaf nodes |
 | Key-value bucket `skylands-push` | The world's domain | A citadel that sends push notifications: the world's push key, once, and approvers' push subscriptions |
 | Key-value bucket `skylands-presence`, in memory, with a one-minute TTL | The world's domain | A citadel that sends push notifications, while a browser has the world's page in sight |
 | Object bucket `skylands-themes` | The world's domain | `skylands theme add` and `remove`, with credentials that may use the world's JetStream; every citadel creates it if it is missing and reads it |

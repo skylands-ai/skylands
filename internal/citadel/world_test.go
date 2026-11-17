@@ -368,6 +368,33 @@ func TestApproversThroughTheCitadel(t *testing.T) {
 		t.Fatalf("approvers = %+v", got)
 	}
 
+	// The laptop renames the phone, then renames it again. The first rename,
+	// sent again, doesn't undo the second.
+	rename := func(by nkeys.KeyPair, key, name string) v1.Signed {
+		s, _ := approval.Sign(by, v1.Rename{Type: "rename", World: ownerPub, Key: key, Name: name, Created: approval.Now()})
+		return s
+	}
+	toPixel := rename(laptop, phonePub, "Pixel")
+	if code, out := postWith(t, asLaptop, base+"/api/world/renames", map[string]any{"rename": toPixel}, nil); code != http.StatusOK {
+		t.Fatalf("rename = %d %s", code, out)
+	}
+	if p := approvers()[phonePub]; p.Name != "Pixel" {
+		t.Errorf("after renaming the phone it is named %q, want Pixel", p.Name)
+	}
+	if code, out := postWith(t, asLaptop, base+"/api/world/renames", map[string]any{"rename": rename(laptop, phonePub, "Work phone")}, nil); code != http.StatusOK {
+		t.Fatalf("second rename = %d %s", code, out)
+	}
+	if code, out := postWith(t, asLaptop, base+"/api/world/renames", map[string]any{"rename": toPixel}, nil); code != http.StatusConflict {
+		t.Errorf("the first rename sent again = %d %s, want 409", code, out)
+	}
+	if p := approvers()[phonePub]; p.Name != "Work phone" {
+		t.Errorf("the phone is named %q, want Work phone", p.Name)
+	}
+	// A key that isn't an approver can't rename one.
+	if code, out := postWith(t, asLaptop, base+"/api/world/renames", map[string]any{"rename": rename(stranger, phonePub, "mine now")}, nil); code != http.StatusForbidden {
+		t.Errorf("a rename from a stranger = %d %s, want 403", code, out)
+	}
+
 	// The owner key revokes the laptop, and the phone it enrolled goes too.
 	revocation, _ := approval.Sign(owner, v1.Revocation{Type: "revocation", World: ownerPub, Key: laptopPub, Created: approval.Now()})
 	if code, out := postWith(t, asDesk, base+"/api/world/revocations", map[string]any{"revocation": revocation}, nil); code != http.StatusOK {
@@ -385,6 +412,10 @@ func TestApproversThroughTheCitadel(t *testing.T) {
 	byLaptop, _ := approval.Sign(laptop, v1.Revocation{Type: "revocation", World: ownerPub, Key: phonePub, Created: approval.Now()})
 	if code, out := postWith(t, asDesk, base+"/api/world/revocations", map[string]any{"revocation": byLaptop}, nil); code != http.StatusForbidden {
 		t.Errorf("a revoked approver revoking = %d %s, want 403", code, out)
+	}
+	// Nor can anyone rename an approver that no longer approves.
+	if code, out := postWith(t, asDesk, base+"/api/world/renames", map[string]any{"rename": rename(desk, laptopPub, "old laptop")}, nil); code != http.StatusConflict {
+		t.Errorf("renaming a revoked approver = %d %s, want 409", code, out)
 	}
 	_, lateClaim := userKey(t)
 	late, _ := approval.Sign(laptop, v1.Voucher{Type: "voucher", World: ownerPub, Claim: lateClaim, Created: approval.Now()})

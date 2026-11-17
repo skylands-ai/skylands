@@ -79,6 +79,19 @@ type Revocation struct {
 	Created string `json:"created"`
 }
 
+// Rename is the payload that gives an approver a new name, signed by the
+// owner key or by an approver. An approver can be renamed any number of
+// times; the latest rename counts.
+type Rename struct {
+	// Type is "rename".
+	Type  string `json:"type"`
+	World string `json:"world"`
+	// Key is the renamed approver's public nkey.
+	Key     string `json:"key"`
+	Name    string `json:"name"`
+	Created string `json:"created"`
+}
+
 // SignIn is the payload a browser signs with its approver key to sign in to
 // a citadel. The citadel names the times when the browser asks, and the
 // browser signs them unchanged. The signed SignIn is the browser's cookie:
@@ -119,11 +132,16 @@ type PushSubscription struct {
 // ApproversSubjectPrefix is where a world's approver registry is stored,
 // each record on a subject of its own: ".approver.KEY" for an entry the
 // owner key signs, ".voucher.CLAIM" for a voucher, ".vouched.CLAIM" for
-// the entry that used it, so each voucher works once, and ".revoked.KEY".
+// the entry that used it, so each voucher works once, ".revoked.KEY", and
+// ".renamed.KEY.ID" for each rename.
 const ApproversSubjectPrefix = "v1.world.approvers"
 
 // ApproverSubject is the subject of one approver registry record.
 func ApproverSubject(kind, key string) string { return ApproversSubjectPrefix + "." + kind + "." + key }
+
+// RenameSubject is the subject of one rename of the approver key: id
+// tells it apart from the key's other renames.
+func RenameSubject(key, id string) string { return ApproverSubject("renamed", key) + "." + id }
 
 // DecisionSignature is an approver's signature over a decision: allowing
 // or denying a tool call, answering a question, trusting a session, or

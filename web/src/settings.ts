@@ -338,7 +338,7 @@ function settingsDeps(s: State): unknown[] {
     case 'islands':
       return ['islands', ...marks, isStale(s), s.world, ...islandList(s)]
     case 'approvers':
-      return ['approvers', ...marks, s.world, s.approvers, s.me, s.persisted, s.invite, s.revoking, s.approverError, s.invite ? Date.now() > Date.parse(s.invite.expires) : false]
+      return ['approvers', ...marks, s.world, s.approvers, s.me, s.persisted, s.invite, s.revoking, s.renaming, s.approverError, s.invite ? Date.now() > Date.parse(s.invite.expires) : false]
     case 'nats':
       return ['nats', ...marks, s.server, s.link]
     case 'notifications':

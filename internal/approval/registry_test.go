@@ -74,6 +74,10 @@ func (w *world) revoke(by nkeys.KeyPair, key string) {
 	w.store(by, v1.Revocation{Type: "revocation", World: w.ownerPub, Key: key, Created: Now()})
 }
 
+func (w *world) rename(by nkeys.KeyPair, key, name string) {
+	w.store(by, v1.Rename{Type: "rename", World: w.ownerPub, Key: key, Name: name, Created: Now()})
+}
+
 func (w *world) registry() *Registry { return NewRegistry(w.ownerPub, w.records) }
 
 func TestRegistryEnrollsThroughVouchers(t *testing.T) {
@@ -215,5 +219,43 @@ func TestRegistryIsTheSameInAnyOrder(t *testing.T) {
 	r := NewRegistry(w.ownerPub, reversed)
 	if r.Valid(laptopPub) || r.Valid(phonePub) || len(r.Approvers()) != 2 || len(r.Skipped) != 0 {
 		t.Errorf("from reversed records: laptop %v, phone %v, %d approvers, skipped %v", r.Valid(laptopPub), r.Valid(phonePub), len(r.Approvers()), r.Skipped)
+	}
+}
+
+func TestRegistryRenames(t *testing.T) {
+	w := newWorld(t)
+	laptop, laptopPub := w.ownerEnrolls("Chrome on macOS")
+	desk, deskPub := w.ownerEnrolls("Chrome on macOS 2")
+	// An approver renames itself, then another, and the owner key renames
+	// one again: the last rename counts.
+	w.rename(laptop, laptopPub, "Work laptop")
+	w.rename(laptop, deskPub, "Desk")
+	w.rename(w.owner, deskPub, "Home desk")
+	r := w.registry()
+	if a, _ := r.Approver(laptopPub); a.Name != "Work laptop" {
+		t.Errorf("the laptop is named %q, want Work laptop; skipped %v", a.Name, r.Skipped)
+	}
+	if a, _ := r.Approver(deskPub); a.Name != "Home desk" {
+		t.Errorf("the desk is named %q, want Home desk; skipped %v", a.Name, r.Skipped)
+	}
+
+	// A key that isn't an approver can't rename one, a revoked approver
+	// can't either, and nobody can rename a revoked approver or a key that
+	// was never one.
+	stranger, strangerPub := w.user()
+	w.rename(stranger, deskPub, "stranger's name")
+	w.revoke(desk, laptopPub)
+	w.rename(laptop, deskPub, "revoked laptop's name")
+	w.rename(desk, laptopPub, "name for the revoked")
+	w.rename(desk, strangerPub, "never an approver")
+	r = w.registry()
+	if a, _ := r.Approver(deskPub); a.Name != "Home desk" {
+		t.Errorf("the desk is named %q, want Home desk", a.Name)
+	}
+	if a, _ := r.Approver(laptopPub); a.Name != "Work laptop" {
+		t.Errorf("the revoked laptop is named %q, want Work laptop", a.Name)
+	}
+	if len(r.Skipped) != 4 {
+		t.Errorf("skipped %d records, want 4: %v", len(r.Skipped), r.Skipped)
 	}
 }

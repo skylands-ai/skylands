@@ -1,4 +1,5 @@
 import { createOperator, createUser, fromSeed, type KeyPair } from '@nats-io/nkeys'
+import type { ApproverInfo } from './protocol'
 
 /** Something signed with an nkey, as internal/approval verifies it: the exact JSON that was signed, the signer's public key, and the signature in unpadded base64url. */
 export interface Signed {
@@ -38,6 +39,12 @@ export function browserName(): string {
   const browser = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser'
   const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Mac OS X/.test(ua) ? 'macOS' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : 'this device'
   return `${browser} on ${os}`
+}
+
+/** The approver, other than except, that approves under name, ignoring case and spaces around it: no two should share a name. */
+export function approverNamed(name: string, approvers: ApproverInfo[], except?: string): ApproverInfo | undefined {
+  const want = name.trim().toLowerCase()
+  return approvers.find((a) => a.valid && a.key !== except && a.name.trim().toLowerCase() === want)
 }
 
 /** This browser's approver key, kept for the citadel's origin. */

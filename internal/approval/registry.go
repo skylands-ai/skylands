@@ -67,6 +67,10 @@ type VoucherState struct {
 //   - An approver approves while it isn't revoked and the approver that
 //     enrolled it approves, back to the owner key. Revoking an approver
 //     takes everything enrolled through it along.
+//   - A rename counts if the owner key signed it, or an approver did while
+//     it was one, and the approver it names approves. The last one that
+//     counts gives the approver its name; until then it has the name it
+//     enrolled with.
 //
 // Records are taken in revision order, so the registry is the same
 // wherever it is built from the same records.
@@ -155,6 +159,19 @@ func (r *Registry) apply(rec Record) error {
 		if a.Revoked.IsZero() {
 			a.Revoked, a.RevokedBy = rec.Stored, rec.Signed.Signer
 		}
+		return nil
+	case "rename":
+		rn, err := OpenRename(rec.Signed, r.owner)
+		if err != nil {
+			return err
+		}
+		if rec.Signed.Signer != r.owner && !r.Valid(rec.Signed.Signer) {
+			return fmt.Errorf("the rename of %s is signed by %s, which isn't an approver", rn.Key, rec.Signed.Signer)
+		}
+		if !r.Valid(rn.Key) {
+			return fmt.Errorf("the rename names %s, which isn't an approver", rn.Key)
+		}
+		r.approvers[rn.Key].Name = rn.Name
 		return nil
 	default:
 		return fmt.Errorf("unknown record type %q", head.Type)
