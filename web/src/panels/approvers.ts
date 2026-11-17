@@ -1,5 +1,5 @@
 import { citadelAddress, cliCommand } from '../address'
-import { myApprover, myKey, type ApproverActions } from '../approvers'
+import { mayChange, myApprover, myKey, type ApproverActions } from '../approvers'
 import { el } from '../dom'
 import type { ApproverInfo, Rule } from '../protocol'
 import { qrCode } from '../qr'
@@ -32,7 +32,7 @@ export function approversContent(s: State, actions: ApproverActions, keep: () =>
     el(
       'div',
       { class: 'approvers' },
-      valid.map((a) => approverRow(a, s, actions, canAct, nameOf)),
+      valid.map((a) => approverRow(a, s, actions, nameOf)),
     ),
   )
   if (s.approverError) kids.push(el('p', { class: 'approver-error', role: 'alert', text: s.approverError }))
@@ -72,8 +72,9 @@ function approverName(s: State): (key: string | undefined) => string {
   return (key) => (key === 'owner' ? 'the owner key' : (byKey.get(key ?? '')?.name ?? 'an unknown approver'))
 }
 
-function approverRow(a: ApproverInfo, s: State, actions: ApproverActions, canAct: boolean, nameOf: (key: string | undefined) => string): HTMLElement {
+function approverRow(a: ApproverInfo, s: State, actions: ApproverActions, nameOf: (key: string | undefined) => string): HTMLElement {
   const mine = a.key === myKey(s)
+  const can = mayChange(s, a.key)
   const row = el('div', { class: 'row approver' }, [
     el('div', { class: 'grow' }, [
       el('span', { style: 'font-weight:600', text: a.name }),
@@ -81,15 +82,15 @@ function approverRow(a: ApproverInfo, s: State, actions: ApproverActions, canAct
       a.device === 'cli' ? el('span', { class: 'device-tag', text: 'CLI', title: 'A host’s CLI, which signs what you decide on that host' }) : null,
       el('span', { class: 'sub' }, ['Added ', timeNode(a.enrolled), a.by === 'owner' ? ' with the owner key' : ` by ${nameOf(a.by)}`]),
     ]),
-    canAct && s.revoking !== a.key && s.renaming?.key !== a.key
+    can && s.revoking !== a.key && s.renaming?.key !== a.key
       ? el('div', { class: 'acts' }, [
           el('button', { type: 'button', class: 'copy', text: 'Rename', 'aria-label': `Rename ${a.name}`, onclick: () => actions.askRename(a.key) }),
           el('button', { type: 'button', class: 'copy', text: 'Revoke', 'aria-label': `Revoke ${a.name}`, onclick: () => actions.askRevoke(a.key) }),
         ])
       : null,
   ])
-  if (canAct && s.renaming?.key === a.key) return renameBox(a, row, s.renaming, actions)
-  if (!canAct || s.revoking !== a.key) return row
+  if (can && s.renaming?.key === a.key) return renameBox(a, row, s.renaming, actions)
+  if (!can || s.revoking !== a.key) return row
   // What goes along with it, and whether this browser does.
   const through = a.through ?? []
   const me = myKey(s)

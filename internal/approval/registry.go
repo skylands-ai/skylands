@@ -62,15 +62,14 @@ type VoucherState struct {
 //   - A voucher counts if its signer was an approver when it was stored.
 //     The first entry that uses it counts, if it was stored within
 //     VoucherLifetime of the voucher.
-//   - A revocation counts if the owner key signed it, or an approver did
-//     while it was one. It is never undone.
+//   - A revocation counts if its signer may change the approver it names
+//     (see MayChange) when it is stored. It is never undone.
 //   - An approver approves while it isn't revoked and the approver that
 //     enrolled it approves, back to the owner key. Revoking an approver
 //     takes everything enrolled through it along.
-//   - A rename counts if the owner key signed it, or an approver did while
-//     it was one, and the approver it names approves. The last one that
-//     counts gives the approver its name; until then it has the name it
-//     enrolled with.
+//   - A rename counts if its signer may change the approver it names, and
+//     that approver approves. The last one that counts gives the approver
+//     its name; until then it has the name it enrolled with.
 //
 // Records are taken in revision order, so the registry is the same
 // wherever it is built from the same records.
@@ -156,6 +155,9 @@ func (r *Registry) apply(rec Record) error {
 		if a == nil {
 			return fmt.Errorf("the revocation names %s, which was never an approver", rv.Key)
 		}
+		if !r.MayChange(rec.Signed.Signer, rv.Key) {
+			return fmt.Errorf("the revocation of %s is signed by %s, which may revoke only itself and the approvers enrolled through it", rv.Key, rec.Signed.Signer)
+		}
 		if a.Revoked.IsZero() {
 			a.Revoked, a.RevokedBy = rec.Stored, rec.Signed.Signer
 		}
@@ -170,6 +172,9 @@ func (r *Registry) apply(rec Record) error {
 		}
 		if !r.Valid(rn.Key) {
 			return fmt.Errorf("the rename names %s, which isn't an approver", rn.Key)
+		}
+		if !r.MayChange(rec.Signed.Signer, rn.Key) {
+			return fmt.Errorf("the rename of %s is signed by %s, which may rename only itself and the approvers enrolled through it", rn.Key, rec.Signed.Signer)
 		}
 		r.approvers[rn.Key].Name = rn.Name
 		return nil
@@ -208,6 +213,36 @@ func (r *Registry) Valid(key string) bool {
 	return false
 }
 
+// MayChange reports whether signer may revoke or rename key. The owner key
+// may change any approver. So may an approver the owner key enrolled, at
+// setup or with the recovery file, while it approves, since only the owner
+// makes one. Any other approver, while it approves, may change only itself
+// and its descendants: never the approver that enrolled it, or a sibling.
+func (r *Registry) MayChange(signer, key string) bool {
+	if signer == r.owner {
+		return true
+	}
+	if !r.Valid(signer) {
+		return false
+	}
+	return signer == key || r.approvers[signer].By == r.owner || r.isDescendant(key, signer)
+}
+
+// isDescendant reports whether key is a descendant of up: enrolled with a
+// voucher up signed, or with one a descendant of up signed.
+func (r *Registry) isDescendant(key, up string) bool {
+	a := r.approvers[key]
+	// An approver is enrolled after the one that enrolled it, so the chain
+	// ends; the bound only guards against a registry built wrong.
+	for n := 0; a != nil && a.By != r.owner && n <= len(r.order); n++ {
+		if a.By == up {
+			return true
+		}
+		a = r.approvers[a.By]
+	}
+	return false
+}
+
 // Approvers is every approver key ever enrolled, valid or not, in the
 // order they were enrolled.
 func (r *Registry) Approvers() []Approver {
@@ -236,24 +271,13 @@ func (r *Registry) Voucher(claim string) (VoucherState, bool) {
 	return *v, true
 }
 
-// Through is every valid approver enrolled through key, directly or
-// further down: what revoking key would take along with it.
+// Through is every valid descendant of key: what revoking key would take
+// along with it.
 func (r *Registry) Through(key string) []string {
 	var out []string
 	for _, k := range r.order {
-		if k == key || !r.Valid(k) {
-			continue
-		}
-		for up, n := r.approvers[k].By, 0; up != r.owner && n <= len(r.order); n++ {
-			if up == key {
-				out = append(out, k)
-				break
-			}
-			a := r.approvers[up]
-			if a == nil {
-				break
-			}
-			up = a.By
+		if k != key && r.Valid(k) && r.isDescendant(k, key) {
+			out = append(out, k)
 		}
 	}
 	return out

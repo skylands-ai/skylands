@@ -476,8 +476,9 @@ func (c *citadel) voucherInfo(w http.ResponseWriter, claim string) {
 	})
 }
 
-// revokeApprover answers POST /api/world/revocations: a revocation the
-// owner key or an approver signed.
+// revokeApprover answers POST /api/world/revocations: a revocation signed
+// by the owner key, or by an approver that may revoke the one it names
+// (see approval.Registry.MayChange).
 func (c *citadel) revokeApprover(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Revocation v1.Signed `json:"revocation"`
@@ -505,8 +506,12 @@ func (c *citadel) revokeApprover(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "that key was never an approver for this world")
 		return
 	}
+	if !reg.MayChange(req.Revocation.Signer, rv.Key) {
+		writeError(w, http.StatusForbidden, "this browser can revoke only itself and the approvers added through it")
+		return
+	}
 	if target.Revoked.IsZero() {
-		rec, err := approval.Append(r.Context(), view.js, v1.ApproverSubject("revoked", rv.Key), req.Revocation)
+		rec, err := approval.Append(r.Context(), view.js, v1.RevocationSubject(rv.Key, recordID(req.Revocation)), req.Revocation)
 		switch {
 		case err == nil:
 			c.addRecords([]approval.Record{rec})
@@ -520,8 +525,9 @@ func (c *citadel) revokeApprover(w http.ResponseWriter, r *http.Request) {
 }
 
 // renameApprover answers POST /api/world/renames: a new name for an
-// approver, signed by the owner key or an approver. A rename to the name
-// it has already is stored nowhere.
+// approver, signed by the owner key, or by an approver that may rename it
+// (see approval.Registry.MayChange). A rename to the name it has already
+// is stored nowhere.
 func (c *citadel) renameApprover(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Rename v1.Signed `json:"rename"`
@@ -552,17 +558,26 @@ func (c *citadel) renameApprover(w http.ResponseWriter, r *http.Request) {
 	case !reg.Valid(rn.Key):
 		writeError(w, http.StatusConflict, "that approver no longer approves for this world")
 		return
+	case !reg.MayChange(req.Rename.Signer, rn.Key):
+		writeError(w, http.StatusForbidden, "this browser can rename only itself and the approvers added through it")
+		return
 	}
 	if target.Name != rn.Name {
-		// Each rename has a subject of its own, named for its signature, so
-		// the same signed rename can't be stored twice to undo a later one.
-		id := sha256.Sum256([]byte(req.Rename.Sig))
-		if !c.storeRecord(w, r.Context(), v1.RenameSubject(rn.Key, hex.EncodeToString(id[:])), req.Rename, "that rename is already stored") {
+		// The same signed rename can't be stored twice to undo a later one.
+		if !c.storeRecord(w, r.Context(), v1.RenameSubject(rn.Key, recordID(req.Rename)), req.Rename, "that rename is already stored") {
 			return
 		}
 		slog.Info("citadel: approver renamed", "from", target.Name, "to", rn.Name, "key", rn.Key)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"key": rn.Key, "name": rn.Name})
+}
+
+// recordID tells a registry record apart from others of its kind for the
+// same approver: its signature's SHA-256, in hex, which is the same each
+// time the same signed record is sent.
+func recordID(s v1.Signed) string {
+	id := sha256.Sum256([]byte(s.Sig))
+	return hex.EncodeToString(id[:])
 }
 
 // getApprovers answers GET /api/world/approvers.

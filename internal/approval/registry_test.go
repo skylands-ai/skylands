@@ -259,3 +259,75 @@ func TestRegistryRenames(t *testing.T) {
 		t.Errorf("skipped %d records, want 4: %v", len(r.Skipped), r.Skipped)
 	}
 }
+
+// TestRegistryChangesOnlyWhatItEnrolled: an approver added by a link may
+// revoke or rename only itself and its descendants. The owner key, and
+// approvers it enrolled, may change any.
+func TestRegistryChangesOnlyWhatItEnrolled(t *testing.T) {
+	w := newWorld(t)
+	laptop, laptopPub := w.ownerEnrolls("laptop")
+	desk, deskPub := w.ownerEnrolls("desk")
+	c, cPub := w.vouch(laptop)
+	phone, phonePub := w.claim(c, cPub, "phone")
+	c, cPub = w.vouch(phone)
+	tablet, tabletPub := w.claim(c, cPub, "tablet")
+	c, cPub = w.vouch(laptop)
+	watch, watchPub := w.claim(c, cPub, "watch")
+	c, cPub = w.vouch(desk)
+	_, kioskPub := w.claim(c, cPub, "kiosk")
+
+	r := w.registry()
+	for _, tc := range []struct {
+		signer, key string
+		may         bool
+		what        string
+	}{
+		{w.ownerPub, laptopPub, true, "the owner key, a first approver"},
+		{laptopPub, deskPub, true, "an approver the owner key enrolled, another such"},
+		{deskPub, tabletPub, true, "an approver the owner key enrolled, a descendant of another"},
+		{phonePub, phonePub, true, "an approver, itself"},
+		{phonePub, tabletPub, true, "an approver, one it enrolled"},
+		{laptopPub, tabletPub, true, "an approver, its grandchild"},
+		{phonePub, laptopPub, false, "an approver, the one that enrolled it"},
+		{tabletPub, laptopPub, false, "an approver, the first approver above it"},
+		{phonePub, watchPub, false, "an approver, its sibling"},
+		{phonePub, deskPub, false, "an approver, another first approver"},
+		{phonePub, kioskPub, false, "an approver, a descendant of another first approver"},
+	} {
+		if got := r.MayChange(tc.signer, tc.key); got != tc.may {
+			t.Errorf("%s: MayChange = %v, want %v", tc.what, got, tc.may)
+		}
+	}
+
+	// What the rule refuses doesn't count when stored.
+	w.revoke(phone, laptopPub)
+	w.revoke(tablet, phonePub)
+	w.revoke(phone, watchPub)
+	w.revoke(phone, kioskPub)
+	w.rename(phone, laptopPub, "phone's name for the laptop")
+	w.rename(watch, deskPub, "watch's name for the desk")
+	r = w.registry()
+	for name, key := range map[string]string{"laptop": laptopPub, "desk": deskPub, "phone": phonePub, "tablet": tabletPub, "watch": watchPub, "kiosk": kioskPub} {
+		if !r.Valid(key) {
+			t.Errorf("the %s was revoked by an approver that didn't enroll it", name)
+		}
+	}
+	if a, _ := r.Approver(laptopPub); a.Name != "laptop" {
+		t.Errorf("the laptop is named %q, want laptop", a.Name)
+	}
+	if len(r.Skipped) != 6 {
+		t.Errorf("skipped %d records, want 6: %v", len(r.Skipped), r.Skipped)
+	}
+
+	// What it allows does.
+	w.rename(phone, tabletPub, "kid's tablet")
+	w.revoke(watch, watchPub)
+	w.revoke(desk, phonePub)
+	r = w.registry()
+	if a, _ := r.Approver(tabletPub); a.Name != "kid's tablet" {
+		t.Errorf("the tablet is named %q, want the name the phone gave it", a.Name)
+	}
+	if r.Valid(watchPub) || r.Valid(phonePub) || r.Valid(tabletPub) || !r.Valid(laptopPub) || !r.Valid(kioskPub) {
+		t.Errorf("watch %v, phone %v, tablet %v, laptop %v, kiosk %v; want the watch, phone, and tablet revoked", r.Valid(watchPub), r.Valid(phonePub), r.Valid(tabletPub), r.Valid(laptopPub), r.Valid(kioskPub))
+	}
+}
