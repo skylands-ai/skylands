@@ -65,8 +65,7 @@ Every visible element in the 3D world stands for one thing in the system, and it
 | Amber building | An agent is editing the file |
 | Blue building | An agent is reading the file |
 | Red building with a "2 sessions" tag | Two different sessions are on the file at once, and their worktrees will collide at merge |
-| Flag on a terrace, in the repo's rope color | A work order: grey while queued, solid while running, yellow when it needs a person, and a check when it's done |
-| Bright spark running down a tether from the citadel | A work order being dispatched to that island |
+| Bright spark running down a tether from the citadel | Work being sent to that island |
 
 ### Agents
 
@@ -119,29 +118,29 @@ Settings is a view of its own beside the world and the inbox, for what isn't a p
 - Approve, Deny, and Retry appear wherever a waiting item is listed, and act immediately.
 - Pause and Resume hold an agent in place, and subagents link back to their lead.
 
-### Work orders
+### Starting work
 
-Work starts as a work order, not as a chat with an agent someone picked. One command bar at the bottom of the screen takes the order, and its target comes from where you are.
+Work starts from one command bar at the bottom of the screen, not from a chat with an agent someone picked, and its target comes from where you are. People ask for work there and watch the agents that do it. They never see or manage a work order: that's the citadel's record behind the bar (see [Aggregates](#aggregates)), which holds a request until it can start and ties together the sessions it starts.
 
 Dispatch has two levels. The citadel picks the host, and the host's daemon picks the repo, because the daemon can search its own code and knows its own load.
 
 | Where you are | What the bar does |
 | --- | --- |
-| World | Posts a work order to the citadel, which picks a host, and picks the repo too when the text names one or a keyword settles it |
-| Island | Posts a work order to that host, and its daemon picks the repo |
-| Terrace | Posts a work order for that repo |
-| File | Posts a work order for that repo, with the file attached as context |
+| World | Sends the work to the citadel, which picks a host, and picks the repo too when the text names one or a keyword settles it |
+| Island | Sends the work to that host, and its daemon picks the repo |
+| Terrace | Starts the work in that repo |
+| File | Starts the work in that repo, with the file attached as context |
 | Agent | Sends a message to that agent |
 
 - The bar always shows the scope it's using and why. Where you are sets the scope: on an island, terrace, or file, that place is the scope even when the text names a different repo, and the Auto option shows what the text alone would pick so you can switch to it. At the world level, Auto takes the scope from the text when it names a host or repo or a keyword settles it, and otherwise says the citadel will pick the island.
 - Picking a scope in the bar moves the camera to it, the same way clicking in the world sets the scope.
 - The model, attempts, and budget chips default to Auto, one attempt, and the world's default cap, and each shows what Auto resolved to, or that the daemon will choose.
-- Each attempt runs on a different provider. A model the target host can't run, such as a local model on a host without a GPU, is swapped for one it can, and the preview names the swap.
-- Enter shows a one-line dispatch preview, and a second Enter launches the order.
-- The citadel chooses the host by routing rules. For an order scoped to the world, it chooses when the order is submitted, considers only hosts it can reach, and records its reason on the order. For an order scoped to a host, the daemon chooses the repo and model under the same rules, which it holds as a projection, and the order shows the daemon's reason too. The lead agent breaks the work into subagents itself.
-- The daemon finds the repo by searching its own repos, so no code leaves the host to make the choice. When nothing fits, it asks a person which repo to use instead of guessing, and that question leads the waiting list because the order can't start until someone answers it.
-- When the citadel can't reach the target host, the preview says the order will queue, and the order waits until the host is reachable again.
-- When Citadel can't accurately determine a target for the work order, it interactively prompts the user to select from among valid destinations.
+- Each attempt runs on a different provider, in a session of its own. A model the target host can't run, such as a local model on a host without a GPU, is swapped for one it can, and the preview names the swap. The terrace's panel lists the sessions of one request together, as its attempts, so they can be compared.
+- Enter shows a one-line dispatch preview, and a second Enter starts the work.
+- The citadel chooses the host by routing rules. For work scoped to the world, it chooses when the work is asked for, considers only hosts it can reach, and records its reason, which the preview and the session's panel show. For work scoped to a host, the daemon chooses the repo and model under the same rules, which it holds as a projection, and records its reason too. The lead agent breaks the work into subagents itself.
+- The daemon finds the repo by searching its own repos, so no code leaves the host to make the choice. When nothing fits, it asks a person which repo to use instead of guessing, and that question leads the waiting list because the work can't start until someone answers it.
+- When the citadel can't reach the target host, the preview says the work will wait, and it starts when the host is reachable again. Until then the island's panel lists it as waiting for the host.
+- When the citadel can't determine a target, it asks the person to pick one from the destinations that fit.
 
 Labels and name tags are real buttons, so every level is reachable by keyboard. Reduced-motion settings turn off flight animation, bobbing, and camera glides. The light theme renders a day sky and the dark theme renders dusk.
 
@@ -153,9 +152,9 @@ A person puts work into the world by starting a session on a terrace, steers it 
 
 1. **Bring a host into the world.** The owner copies the install command from "Add a host" in the citadel's Settings and runs it on the workstation. The command names the world's owner key with `--world`, which the daemon pins, so it joins this world and no other. The workstation island rises into the sky, tethered to the citadel.
 2. **Register the repo.** From the island's panel or the local CLI (`skylands repo register ...`), the person registers `~/code/storefront`. The daemon handles `RegisterRepo` and records `RepoRegistered` and `TerrainSnapshotted`, and a roped terrace appears with a building for every tracked file.
-3. **Post a work order.** With the storefront terrace open, the person types the task into the command bar: _add multi-currency support to pricing_. The bar shows the scope it's assuming, **storefront on workstation**, and chips for Auto model, one attempt, and a $5 cap. Enter shows the dispatch preview, Claude Opus on storefront at workstation, and a second Enter launches it. The citadel handles `SubmitWorkOrder`: it records `WorkOrderSubmitted`, sends `StartSession` to the workstation's daemon, and records `WorkOrderDispatched`. The daemon creates a worktree, launches the agent over ACP, and records `SessionStarted`, `PromptSent`, and `AgentSpawned`. A spark runs down the tether, a flag in storefront's rope color plants on the terrace, and an orange airship lifts off from the flag and lands on the first file it reads.
+3. **Start the work.** With the storefront terrace open, the person types the task into the command bar: _add multi-currency support to pricing_. The bar shows the scope it's assuming, **storefront on workstation**, and chips for Auto model, one attempt, and a $5 cap. Enter shows the dispatch preview, Claude Opus on storefront at workstation, and a second Enter starts it. Behind the bar, the citadel handles `SubmitWorkOrder`: it records `WorkOrderSubmitted`, sends `StartSession` to the workstation's daemon, and records `WorkOrderDispatched`. The daemon creates a worktree, launches the agent over ACP, and records `SessionStarted`, `PromptSent`, and `AgentSpawned`. A spark runs down the tether, and an orange airship lifts off from the terrace and lands on the first file it reads.
 4. **Watch the work spread.** Opus reads the pricing crate (a user repo), so those buildings light blue, then lands on `engine.rs` and lights it amber while it edits. It spawns two subagents to survey the catalog and payments crates, and they fly out on leash lines. Its plan fills in on the agent panel, and sandbags gather under it as its context grows.
-5. **Race two models.** From the same terrace, the person posts a second work order for stock reservations in the cart and sets the attempts chip to two. The preview shows Codex and Claude Sonnet, one session each. The dispatcher starts both sessions in separate worktrees, and both airships work the cart crate side by side under one flag.
+5. **Race two models.** From the same terrace, the person asks for stock reservations in the cart and sets the attempts chip to two. The preview shows Codex and Claude Sonnet, one session each. The dispatcher starts both sessions in separate worktrees, both airships work the cart crate side by side, and the terrace's panel lists the two sessions as attempts at the same request.
 6. **Handle an overlap.** Codex lands on `search.rs` while one of Opus's subagents is already there. The building turns red with a "2 sessions" tag and the terrace feed logs the overlap, so the person pauses the subagent until Codex moves on. The daemon handles PauseAgent and records AgentPaused. The user can ignore this warning if they're ok with the overlap happening in different git worktrees (hoping for resolution/marge later).
 7. **Answer a request from a phone.** Opus asks to run `cargo test -p storefront-pricing`, and no rule covers it. The daemon records `PermissionRequested`, Opus hovers over the tests building with a yellow beam, the citadel's beacon lights, and the person's phone gets a notification naming Opus and storefront. They open the inbox, read the exact command, and approve, which the phone signs with its approver key. The citadel relays `ApproveToolCall`, the daemon verifies the signature and records `PermissionGranted`, and the airship lands and runs the tests.
 8. **Turn the decision into a rule.** From the same request, the person chooses to always allow `cargo test` in storefront. The citadel handles `AddRule` and records `RuleAdded`, every daemon projects it, and the next test run proceeds without asking.
@@ -249,7 +248,7 @@ Sessions are event-sourced, and each daemon is the single writer of the session 
 
 What an agent reports through its adapter enters the session aggregate as a Record command. The aggregate validates it against the session's state and produces the matching event, so every event in a session stream came from that stream's single writer.
 
-While handling SubmitWorkOrder, the citadel records WorkOrderSubmitted. For an order scoped to a repo, it sends StartSession to that repo's daemon. For an order scoped to a host, it sends PlaceWorkOrder, and the daemon's placement processor chooses the repo and model, records WorkOrderPlaced with its reason, and sends StartSession to its own session aggregate. The citadel records WorkOrderDispatched when the daemon replies. Every session event carries its work order's id, so the orders board and each terrace's flags are projections across the sessions an order started.
+While handling SubmitWorkOrder, the citadel records WorkOrderSubmitted. For an order scoped to a repo, it sends StartSession to that repo's daemon. For an order scoped to a host, it sends PlaceWorkOrder, and the daemon's placement processor chooses the repo and model, records WorkOrderPlaced with its reason, and sends StartSession to its own session aggregate. The citadel records WorkOrderDispatched when the daemon replies. Every session event carries its work order's id, so the citadel can tell which sessions one request started, such as the attempts the terrace's panel lists together.
 
 ### Projections
 
@@ -483,7 +482,7 @@ The 3D client is a browser application built on three.js and served by the citad
 
 Two prototypes show the design so far.
 
-- [3D world prototype](https://claude.ai/artifact/UTjwRfHitMTRxWszMtGsw1): the castle citadel, islands, terraces with roped borders, airships that land and carry ballast, approvals, five-level drill-down, unreachable hosts, and work order dispatch.
+- [3D world prototype](https://claude.ai/artifact/UTjwRfHitMTRxWszMtGsw1): the castle citadel, islands, terraces with roped borders, airships that land and carry ballast, approvals, five-level drill-down, unreachable hosts, and work order dispatch, with flags for work orders that this design has since dropped.
 - [2D design canvas](https://claude.ai/artifact/UvX38Kf5zToXcQFE8iSuER): the first flat island view, with the unit panel, timeline replay, and context fog.
 
 Open items:
