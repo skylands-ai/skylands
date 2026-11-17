@@ -132,12 +132,18 @@ type PushSubscription struct {
 // ApproversSubjectPrefix is where a world's approver registry is stored,
 // each record on a subject of its own: ".approver.KEY" for an entry the
 // owner key signs, ".voucher.CLAIM" for a voucher, ".vouched.CLAIM" for
-// the entry that used it, so each voucher works once, ".revoked.KEY", and
-// ".renamed.KEY.ID" for each rename.
+// the entry that used it, so each voucher works once, ".revoked.KEY.ID"
+// for each revocation, and ".renamed.KEY.ID" for each rename. Revocations
+// stored before they had ids are on ".revoked.KEY".
 const ApproversSubjectPrefix = "v1.world.approvers"
 
 // ApproverSubject is the subject of one approver registry record.
 func ApproverSubject(kind, key string) string { return ApproversSubjectPrefix + "." + kind + "." + key }
+
+// RevocationSubject is the subject of one revocation of the approver key:
+// id tells it apart from the key's other revocations, so one that doesn't
+// count can't keep one that does from being stored.
+func RevocationSubject(key, id string) string { return ApproverSubject("revoked", key) + "." + id }
 
 // RenameSubject is the subject of one rename of the approver key: id
 // tells it apart from the key's other renames.

@@ -13,6 +13,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/nats-io/nkeys"
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
@@ -171,6 +172,14 @@ func TestSettingUpAWorld(t *testing.T) {
 // URL and the token from the setup link it offers.
 func startCitadel(t *testing.T) (base, token string) {
 	t.Helper()
+	base, token, _ = startCitadelNATS(t)
+	return base, token
+}
+
+// startCitadelNATS is startCitadel, and also says where its NATS server
+// is, for tests that write to the world's streams themselves.
+func startCitadelNATS(t *testing.T) (base, token, natsURL string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	t.Cleanup(cancel)
 	srv, err := natsembed.Start(ctx, natsembed.Config{Name: "hub", ClientAddr: "127.0.0.1:0", StoreDir: t.TempDir(), Domain: "world"})
@@ -194,11 +203,11 @@ func startCitadel(t *testing.T) (base, token string) {
 	base = "http://" + addr
 	select {
 	case l := <-links:
-		return base, strings.TrimPrefix(l, base+"/setup#")
+		return base, strings.TrimPrefix(l, base+"/setup#"), srv.ClientURL()
 	case <-time.After(15 * time.Second):
 		t.Fatal("the citadel never offered a setup link")
 	}
-	return "", ""
+	return "", "", ""
 }
 
 func postJSON(t *testing.T, url string, body any) (int, string) {
@@ -433,6 +442,110 @@ func TestApproversThroughTheCitadel(t *testing.T) {
 	var snap web.Message
 	if err != nil || json.Unmarshal(data, &snap) != nil || snap.Type != "snapshot" || len(snap.Approvers) != 3 {
 		t.Errorf("snapshot = %s, %v; want three approvers", data, err)
+	}
+}
+
+// TestChangingOnlyWhatItEnrolled: an approver added by a link can revoke
+// or rename only itself and the approvers added through it, and a
+// revocation already stored that doesn't count doesn't keep one that does
+// from being stored.
+func TestChangingOnlyWhatItEnrolled(t *testing.T) {
+	base, token, natsURL := startCitadelNATS(t)
+	owner, err := nkeys.CreateOperator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerPub, _ := owner.PublicKey()
+	laptop, laptopPub := userKey(t)
+	world, _ := approval.Sign(owner, v1.WorldRecord{Type: "world", Name: "w", Owner: ownerPub, Created: approval.Now()})
+	first, _ := approval.Sign(owner, v1.ApproverEntry{Type: "approver", World: ownerPub, Key: laptopPub, Name: "laptop", Created: approval.Now()})
+	if code, out := postJSON(t, base+"/api/world/setup", setupRequest{Token: token, World: world, Approver: first}); code != http.StatusOK {
+		t.Fatalf("setup = %d %s", code, out)
+	}
+	_, deskPub := userKey(t)
+	deskEntry, _ := approval.Sign(owner, v1.ApproverEntry{Type: "approver", World: ownerPub, Key: deskPub, Name: "desk", Created: approval.Now()})
+	if code, out := postJSON(t, base+"/api/world/approvers", map[string]any{"approver": deskEntry}); code != http.StatusOK {
+		t.Fatalf("recovery = %d %s", code, out)
+	}
+	asLaptop := signIn(t, base, laptop)
+	// The laptop adds a phone, and the phone adds a tablet.
+	enroll := func(by *http.Client, byKey nkeys.KeyPair, name string) (nkeys.KeyPair, string) {
+		t.Helper()
+		claim, claimPub := userKey(t)
+		voucher, _ := approval.Sign(byKey, v1.Voucher{Type: "voucher", World: ownerPub, Claim: claimPub, Created: approval.Now()})
+		if code, out := postWith(t, by, base+"/api/world/vouchers", map[string]any{"voucher": voucher}, nil); code != http.StatusOK {
+			t.Fatalf("voucher = %d %s", code, out)
+		}
+		kp, pub := userKey(t)
+		entry, _ := approval.Sign(claim, v1.ApproverEntry{Type: "approver", World: ownerPub, Key: pub, Name: name, Created: approval.Now(), Voucher: claimPub})
+		if code, out := postJSON(t, base+"/api/world/approvers", map[string]any{"approver": entry}); code != http.StatusOK {
+			t.Fatalf("enrolling %s = %d %s", name, code, out)
+		}
+		return kp, pub
+	}
+	phone, _ := enroll(asLaptop, laptop, "phone")
+	asPhone := signIn(t, base, phone)
+	_, tabletPub := enroll(asPhone, phone, "tablet")
+
+	revoke := func(as *http.Client, by nkeys.KeyPair, key string) (int, string) {
+		t.Helper()
+		rv, _ := approval.Sign(by, v1.Revocation{Type: "revocation", World: ownerPub, Key: key, Created: approval.Now()})
+		return postWith(t, as, base+"/api/world/revocations", map[string]any{"revocation": rv}, nil)
+	}
+	rename := func(as *http.Client, by nkeys.KeyPair, key, name string) (int, string) {
+		t.Helper()
+		rn, _ := approval.Sign(by, v1.Rename{Type: "rename", World: ownerPub, Key: key, Name: name, Created: approval.Now()})
+		return postWith(t, as, base+"/api/world/renames", map[string]any{"rename": rn}, nil)
+	}
+	for what, code := range map[string]int{
+		"the phone revoking the laptop that added it": func() int { c, _ := revoke(asPhone, phone, laptopPub); return c }(),
+		"the phone revoking the desk":                 func() int { c, _ := revoke(asPhone, phone, deskPub); return c }(),
+		"the phone renaming the laptop":               func() int { c, _ := rename(asPhone, phone, laptopPub, "mine"); return c }(),
+	} {
+		if code != http.StatusForbidden {
+			t.Errorf("%s = %d, want 403", what, code)
+		}
+	}
+	if code, out := rename(asPhone, phone, tabletPub, "kid's tablet"); code != http.StatusOK {
+		t.Errorf("the phone renaming the tablet it added = %d %s", code, out)
+	}
+
+	// A revocation of the desk by the phone, stored as a citadel did before
+	// this rule, doesn't count, and doesn't keep the laptop's from counting.
+	nc, err := nats.Connect(natsURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale, _ := approval.Sign(phone, v1.Revocation{Type: "revocation", World: ownerPub, Key: deskPub, Created: approval.Now()})
+	if _, err := approval.Append(context.Background(), js, v1.ApproverSubject("revoked", deskPub), stale); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := revoke(asLaptop, laptop, deskPub); code != http.StatusOK {
+		t.Fatalf("the laptop revoking the desk = %d %s", code, out)
+	}
+	resp, err := http.Get(base + "/api/world/approvers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var body struct{ Approvers []web.ApproverInfo }
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	for _, a := range body.Approvers {
+		switch a.Key {
+		case deskPub:
+			if a.Valid || a.RevokedBy != laptopPub {
+				t.Errorf("the desk = %+v, want it revoked by the laptop", a)
+			}
+		case tabletPub:
+			if a.Name != "kid's tablet" {
+				t.Errorf("the tablet is named %q", a.Name)
+			}
+		}
 	}
 }
 

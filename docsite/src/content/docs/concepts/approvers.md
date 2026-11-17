@@ -9,6 +9,15 @@ Approvers are added with a short-lived invite link, the way streaming apps add a
 
 In the current version of Skylands, devices that aren't approvers can't see or interact with _any_ data in a world.
 
+## Who Can Revoke an Approver
+
+- The browser that set up the world, and any browser added with the recovery file, can revoke any approver.
+- An approver added with an invite link can revoke itself and its descendants. It can't revoke the approver that invited it, or any other approver.
+
+Revoking an approver also revokes its descendants. A revocation can't be undone: to bring a device back, add it again.
+
+The same rules decide who can rename an approver.
+
 ## The CLI on a Host
 
 `skylands request approve`, `deny`, and `answer`, and `skylands rule add` and `remove`, sign what you decide on the host the way a browser does in the world. Make the host's CLI an approver first, with an invite link:

@@ -301,6 +301,16 @@ export function signTerminalInput(s: State, x: Session, terminal: string, attach
   return { signature: signDecision(typingKey.kp, d) }
 }
 
+/**
+ * Whether this browser can revoke or rename key: itself and the approvers
+ * added through it, or any approver if the owner key added this browser.
+ */
+export function mayChange(s: State, key: string): boolean {
+  const me = myApprover(s)
+  if (!me?.valid) return false
+  return me.key === key || me.by === 'owner' || (me.through ?? []).includes(key)
+}
+
 /** Whether this browser can sign for the world it shows. */
 export function canSign(s: State): boolean {
   return !!myApprover(s)?.valid
