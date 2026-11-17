@@ -96,10 +96,22 @@ func TestSettingUpAWorld(t *testing.T) {
 	if resp, err := noRedirect.Get(base + "/"); err != nil || resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/setup" {
 		t.Fatalf("GET / before setup = %v, %v; want a redirect to /setup", resp, err)
 	}
-	// A page asked for through another loopback name goes to the canonical one.
+	// A page asked for through another loopback name is served there: the
+	// page moves to the citadel's own address, which the world names,
+	// since a proxy may send the citadel a Host that isn't the browser's.
 	localhost := strings.Replace(base, "127.0.0.1", "localhost", 1)
-	if resp, err := noRedirect.Get(localhost + "/setup"); err != nil || resp.StatusCode != http.StatusTemporaryRedirect || resp.Header.Get("Location") != base+"/setup" {
-		t.Fatalf("GET localhost /setup = %v, %v; want a redirect to %s/setup", resp, err, base)
+	if resp, err := noRedirect.Get(localhost + "/setup"); err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET localhost /setup = %v, %v; want the setup page", resp, err)
+	}
+	if resp, err := http.Get(localhost + "/api/world"); err != nil {
+		t.Fatal(err)
+	} else {
+		var w web.WorldInfo
+		_ = json.NewDecoder(resp.Body).Decode(&w)
+		_ = resp.Body.Close()
+		if w.Canonical != base {
+			t.Errorf("the world names %q as the citadel's address, want %s", w.Canonical, base)
+		}
 	}
 
 	post := func(path string, body []byte) (int, string) {

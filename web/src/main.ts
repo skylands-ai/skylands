@@ -19,6 +19,7 @@ import { type PruneOptions, pruneVersion } from './panels/prune'
 import { renderTerracePanel } from './panels/terrace'
 import { renderWorldPanel } from './panels/world'
 import { renderSettings, type SettingsActions } from './settings'
+import { moveToCitadel } from './address'
 import { agentLabel, citadelLabelStatus, clockText, durationText, islandCounts, islandStatus, isStale, secondsSince } from './status'
 import { islandList, isWaiting, level, pendingCount, pendingItems, reposOn, sessionsOn, Store, waitingCount, type State } from './store'
 import { growLive, lapsedText, renderInbox, type InboxActions } from './inbox'
@@ -59,6 +60,10 @@ const settingsEl = byId<HTMLElement>('settings')
 const inboxCount = byId<HTMLElement>('inboxCount')
 const appEl = byId<HTMLElement>('app')
 const phoneEl = byId<HTMLElement>('phone')
+
+// A page at another loopback name for the citadel moves to its own
+// address, where this browser keeps its key, before it signs in.
+if (await moveToCitadel()) await new Promise<never>(() => {})
 
 const store = new Store()
 const approverActs = approverActions(store)

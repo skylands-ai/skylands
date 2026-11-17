@@ -53,6 +53,22 @@ export function snapshotPatch(m: Message, shown: boolean): Partial<State> {
   return { ...patch, islands, repos, sessions }
 }
 
+/**
+ * A ticket that opens the WebSocket whatever address a port forwarder or
+ * proxy sends the citadel, or '' if the citadel gives none, when the
+ * socket's origin has to match instead.
+ */
+async function socketTicket(): Promise<string> {
+  try {
+    const resp = await fetch('/ws/ticket', { cache: 'no-store' })
+    if (!resp.ok) return ''
+    const t = ((await resp.json()) as { ticket?: unknown }).ticket
+    return typeof t === 'string' ? t : ''
+  } catch {
+    return ''
+  }
+}
+
 // The browser stays on one citadel through this socket. When it drops, keep
 // trying with a growing delay so a citadel restart heals on its own.
 export function connectToCitadel(store: Store, onLive: (host: string, id: string, piece: Live) => void, terms?: TerminalListener): Link {
@@ -99,7 +115,8 @@ export function connectToCitadel(store: Store, onLive: (host: string, id: string
     if (r === 'no-key' || r === 'refused') return signedOut()
     if (r === 'unavailable') return retry()
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
-    ws = new WebSocket(`${scheme}://${location.host}/ws`)
+    const ticket = await socketTicket()
+    ws = new WebSocket(`${scheme}://${location.host}/ws${ticket ? `?ticket=${encodeURIComponent(ticket)}` : ''}`)
     // The link counts as connected once the citadel's snapshot says where
     // it stands, which it sends first.
     ws.addEventListener('open', () => {

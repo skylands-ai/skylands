@@ -22,6 +22,7 @@ import {
   type RecoveryFile,
   type Signed,
 } from './approver'
+import { loopbackMove } from './address'
 import { byId, el } from './dom'
 import { signIn } from './signin'
 import type { ApproverInfo, VoucherInfo, WorldInfo } from './protocol'
@@ -123,6 +124,13 @@ async function render(): Promise<void> {
   } catch (err) {
     show(el('h1', { text: 'Skylands' }), errorBox(`Can’t reach the citadel: ${(err as Error).message}`))
     setTimeout(() => void render(), 3000)
+    return
+  }
+  // At another loopback name for the citadel, the page moves to its own
+  // address, where this browser keeps its key, keeping the link's code.
+  const to = loopbackMove(w.canonical, new URL(location.href))
+  if (to) {
+    location.replace(to)
     return
   }
   if (!w.checked) {

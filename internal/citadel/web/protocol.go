@@ -146,6 +146,11 @@ type WorldInfo struct {
 	// URL is the address people open this citadel at, when it was given
 	// one with --url, which an invite link can name.
 	URL string `json:"url,omitempty"`
+	// Canonical is the address the citadel calls its own: its --url, or
+	// the address it listens at. A page at another loopback name for it,
+	// such as localhost for 127.0.0.1, moves there, where the browser
+	// keeps its approver key.
+	Canonical string `json:"canonical,omitempty"`
 	// PushKey is the world's VAPID public key, which a browser subscribes
 	// to push notifications with, while this citadel sends them.
 	PushKey string `json:"pushKey,omitempty"`

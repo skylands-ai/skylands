@@ -158,44 +158,51 @@ func TestViaHTTPS(t *testing.T) {
 	}
 }
 
-// TestSameOriginSaysWhatDiffers: a refusal names the page's origin and the
-// address the request reached, and the citadel logs both with the headers
-// a proxy adds.
-func TestSameOriginSaysWhatDiffers(t *testing.T) {
+// TestSameOrigin: the browser's Sec-Fetch-Site decides whether a page from
+// another origin sent a request, whatever Host it reached the citadel at.
+// Without it, Origin is held against Host, and a refusal names what
+// differs. The citadel logs each refusal with the headers a proxy adds.
+func TestSameOrigin(t *testing.T) {
 	var logged bytes.Buffer
 	defer slog.SetDefault(slog.Default())
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
 
 	h := sameOrigin(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	for _, tc := range []struct {
-		method, origin, host, forwarded string
-		status                          int
-		says                            string
+		method, site, origin, host, forwarded string
+		status                                int
+		says                                  string
 	}{
-		{http.MethodPost, "http://127.0.0.1:8080", "127.0.0.1:8080", "", http.StatusNoContent, ""},
-		{http.MethodPost, "", "127.0.0.1:8080", "", http.StatusNoContent, ""},
-		{http.MethodGet, "http://elsewhere.example", "127.0.0.1:8080", "", http.StatusNoContent, ""},
-		// A forwarded port, whose forwarder sends the citadel's own address.
-		{http.MethodPost, "http://localhost:8081", "127.0.0.1:8080", "", http.StatusForbidden, "a page at http://localhost:8081 sent this, but it reached the citadel at 127.0.0.1:8080"},
-		{http.MethodPost, "null", "127.0.0.1:8080", "", http.StatusForbidden, "Origin: null"},
-		{http.MethodPost, "http://[bad", "127.0.0.1:8080", "", http.StatusForbidden, "an Origin the citadel can't read"},
-		{http.MethodPost, "https://box.example.ts.net", "127.0.0.1:8080", "box.example.ts.net", http.StatusForbidden, "changes the Host header from box.example.ts.net to 127.0.0.1:8080"},
+		{http.MethodPost, "", "http://127.0.0.1:8080", "127.0.0.1:8080", "", http.StatusNoContent, ""},
+		{http.MethodPost, "", "", "127.0.0.1:8080", "", http.StatusNoContent, ""},
+		{http.MethodGet, "cross-site", "http://elsewhere.example", "127.0.0.1:8080", "", http.StatusNoContent, ""},
+		// A forwarded port, whose forwarder sends the citadel's own
+		// address: the browser says the page is the request's own.
+		{http.MethodPost, "same-origin", "http://localhost:8081", "127.0.0.1:8080", "", http.StatusNoContent, ""},
+		{http.MethodPost, "none", "", "127.0.0.1:8080", "", http.StatusNoContent, ""},
+		// Another port on 127.0.0.1 is the same site, but not the citadel's page.
+		{http.MethodPost, "same-site", "http://127.0.0.1:3000", "127.0.0.1:8080", "", http.StatusForbidden, "a page from another origin, http://127.0.0.1:3000, can't do that here"},
+		{http.MethodPost, "cross-site", "https://elsewhere.example", "127.0.0.1:8080", "", http.StatusForbidden, "a page from another origin, https://elsewhere.example, can't do that here"},
+		// Browsers that don't send Sec-Fetch-Site.
+		{http.MethodPost, "", "http://localhost:8081", "127.0.0.1:8080", "", http.StatusForbidden, "a page at http://localhost:8081 sent this, but it reached the citadel at 127.0.0.1:8080"},
+		{http.MethodPost, "", "null", "127.0.0.1:8080", "", http.StatusForbidden, "Origin: null"},
+		{http.MethodPost, "", "http://[bad", "127.0.0.1:8080", "", http.StatusForbidden, "an Origin the citadel can't read"},
+		{http.MethodPost, "", "https://box.example.ts.net", "127.0.0.1:8080", "box.example.ts.net", http.StatusForbidden, "changes the Host header from box.example.ts.net to 127.0.0.1:8080"},
 	} {
 		r := httptest.NewRequest(tc.method, "/api/world/setup", strings.NewReader("{}"))
 		r.Host = tc.host
-		if tc.origin != "" {
-			r.Header.Set("Origin", tc.origin)
-		}
-		if tc.forwarded != "" {
-			r.Header.Set("X-Forwarded-Host", tc.forwarded)
+		for k, v := range map[string]string{"Sec-Fetch-Site": tc.site, "Origin": tc.origin, "X-Forwarded-Host": tc.forwarded} {
+			if v != "" {
+				r.Header.Set(k, v)
+			}
 		}
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		if w.Code != tc.status || !strings.Contains(w.Body.String(), tc.says) {
-			t.Errorf("%s from %q at %s = %d %s, want %d saying %q", tc.method, tc.origin, tc.host, w.Code, w.Body.String(), tc.status, tc.says)
+			t.Errorf("%s (%q) from %q at %s = %d %s, want %d saying %q", tc.method, tc.site, tc.origin, tc.host, w.Code, w.Body.String(), tc.status, tc.says)
 		}
 	}
-	for _, want := range []string{"origin=http://localhost:8081 host=127.0.0.1:8080", "x-forwarded-host=box.example.ts.net"} {
+	for _, want := range []string{"origin=http://127.0.0.1:3000 host=127.0.0.1:8080 remote=192.0.2.1:1234 sec-fetch-site=same-site", "origin=http://localhost:8081 host=127.0.0.1:8080", "x-forwarded-host=box.example.ts.net"} {
 		if !strings.Contains(logged.String(), want) {
 			t.Errorf("the log doesn't say %q:\n%s", want, logged.String())
 		}
