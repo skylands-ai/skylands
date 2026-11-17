@@ -105,7 +105,7 @@ The world has five zoom levels, and every click goes one level deeper. The 3D sc
 | Agent | Follows one airship as it flies | Model, role, session, current action, any pending request, context, and plan |
 | File | One building up close | The path, who is on it, any overlap warning, and recent activity on that file |
 
-Settings is a view of its own beside the world and the inbox, for what isn't a place in the world. Its World pages hold the islands as a table, with the command that adds a host; the approvers; and the NATS server. Its This browser pages hold this browser's notifications and installing the citadel as an app.
+Settings is a view of its own beside the world and the inbox, for what isn't a place in the world. Its World pages hold the islands as a table, with the command that adds a host; the approvers as a graph of who added whom, each approver's details, renaming, and revoking in a panel beside it; and the NATS server. Its This browser pages hold this browser's notifications and installing the citadel as an app.
 
 ### Controls
 

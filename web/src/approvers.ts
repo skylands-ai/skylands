@@ -6,8 +6,12 @@ import type { ApproverInfo, Carried, Permission, Question, Repo, Rule, Session, 
 import { api } from './signin'
 import type { State, Store } from './store'
 
-/** What the Approvers section can do: show an "Add an approver" link, rename an approver, and revoke one once confirmed. */
+/** What the Approvers section can do: show an "Add an approver" link, show an approver's details, rename an approver, and revoke one once confirmed. */
 export interface ApproverActions {
+  /** Shows an approver's details beside the graph, or closes them with null. */
+  select(key: string | null): void
+  /** Hides or shows the approvers added through key in the graph. */
+  fold(key: string, hidden: boolean): void
   invite(): void
   /** Makes the link open the world at another address; the claim stays the same. */
   inviteAt(address: string): void
@@ -92,6 +96,14 @@ export function approverActions(store: Store): ApproverActions {
     return { kp: keyFromSeed(s.me.seed), owner: s.world.owner }
   }
   return {
+    select(key) {
+      if (key === store.state.approverDetails) return
+      store.update({ approverDetails: key, revoking: null, renaming: null })
+    },
+    fold(key, hidden) {
+      const rest = store.state.foldedApprovers.filter((k) => k !== key)
+      store.update({ foldedApprovers: hidden ? [...rest, key] : rest })
+    },
     invite() {
       void (async () => {
         try {
@@ -128,7 +140,7 @@ export function approverActions(store: Store): ApproverActions {
       store.update({ invite: null })
     },
     askRevoke(key) {
-      store.update({ revoking: key, renaming: null, approverError: null })
+      store.update({ revoking: key ? { key, error: '' } : null, renaming: null })
     },
     revoke(key) {
       void (async () => {
@@ -136,15 +148,18 @@ export function approverActions(store: Store): ApproverActions {
           const { kp, owner } = signer()
           const revocation = sign(kp, { type: 'revocation', world: owner, key, created: now() })
           await post('/api/world/revocations', { revocation })
-          store.update({ revoking: null, approverError: null })
+          // It no longer approves, so its details close.
+          const shown = store.state.approverDetails
+          store.update({ revoking: null, approverDetails: shown === key ? null : shown })
         } catch (err) {
-          store.update({ approverError: `Couldn’t revoke: ${(err as Error).message}` })
+          const cur = store.state.revoking
+          if (cur?.key === key) store.update({ revoking: { ...cur, error: `Couldn’t revoke: ${(err as Error).message}` } })
         }
       })()
     },
     askRename(key) {
       const a = key ? store.state.approvers?.find((x) => x.key === key) : undefined
-      store.update({ renaming: a ? { key: a.key, text: a.name, error: '' } : null, revoking: null, approverError: null })
+      store.update({ renaming: a ? { key: a.key, text: a.name, error: '' } : null, revoking: null })
     },
     rename() {
       const r = store.state.renaming
@@ -299,6 +314,38 @@ export function signTerminalInput(s: State, x: Session, terminal: string, attach
   if (typingKey?.seed !== s.me.seed) typingKey = { seed: s.me.seed, kp: keyFromSeed(s.me.seed) }
   const d: Decision = { v: DECISION_VERSION, kind: 'terminal-input', world: s.world.owner, host: x.host, session: x.id, terminal, attach, seq, data: bytesHash(data) }
   return { signature: signDecision(typingKey.kp, d) }
+}
+
+/** An approver that approves, with the approvers that approve and were added by its links. */
+export interface ApproverNode {
+  approver: ApproverInfo
+  children: ApproverNode[]
+}
+
+/**
+ * The approvers that approve, as trees of who added whom: a root for each
+ * one the owner key added, at setup or with the recovery file, and under
+ * it the approvers its links added, in turn. Siblings keep the registry's
+ * order.
+ */
+export function approverTree(approvers: ApproverInfo[]): ApproverNode[] {
+  const valid = approvers.filter((a) => a.valid)
+  const nodes = new Map<string, ApproverNode>(valid.map((a) => [a.key, { approver: a, children: [] }]))
+  const roots: ApproverNode[] = []
+  for (const a of valid) {
+    const node = nodes.get(a.key)!
+    // An approver approves only while the one that added it does, so its
+    // parent is in the graph too; one whose parent isn't is drawn as a root.
+    const parent = a.by === 'owner' ? undefined : nodes.get(a.by)
+    if (parent) parent.children.push(node)
+    else roots.push(node)
+  }
+  return roots
+}
+
+/** How many approvers are under node in the graph, at any depth. */
+export function descendantCount(node: ApproverNode): number {
+  return node.children.reduce((n, c) => n + 1 + descendantCount(c), 0)
 }
 
 /**

@@ -1,7 +1,7 @@
 import { canSign, type ApproverActions } from './approvers'
 import { el, heldKeyboard } from './dom'
 import { notifySupport } from './notify'
-import { approversContent, notAnApprover } from './panels/approvers'
+import { approverDetails, approversContent, notAnApprover } from './panels/approvers'
 import { copyButton, factsBox, header, hint, note, placeIcon, section, timeNode } from './panels/parts'
 import type { Island, ServerInfo, WorldInfo } from './protocol'
 import { pushOrigin, pushSupport } from './push'
@@ -323,7 +323,8 @@ function pageContent(s: State, actions: SettingsActions): (Node | null)[] {
 function pageView(s: State, actions: SettingsActions): HTMLElement {
   const page = PAGES[s.settingsPage]
   return el('div', { class: 'settings-page' }, [
-    el('div', { class: 'settings-body' }, [header(page.title, page.about, s.settingsPage === 'nats' ? natsStatus(s) : null), ...pageContent(s, actions)]),
+    // The approver graph spreads sideways, so its page takes the width there is.
+    el('div', { class: s.settingsPage === 'approvers' ? 'settings-body wide' : 'settings-body' }, [header(page.title, page.about, s.settingsPage === 'nats' ? natsStatus(s) : null), ...pageContent(s, actions)]),
   ])
 }
 
@@ -338,7 +339,7 @@ function settingsDeps(s: State): unknown[] {
     case 'islands':
       return ['islands', ...marks, isStale(s), s.world, ...islandList(s)]
     case 'approvers':
-      return ['approvers', ...marks, s.world, s.approvers, s.me, s.persisted, s.invite, s.revoking, s.renaming, s.approverError, s.invite ? Date.now() > Date.parse(s.invite.expires) : false]
+      return ['approvers', ...marks, s.world, s.approvers, s.me, s.persisted, s.invite, s.approverDetails, s.foldedApprovers, s.revoking, s.renaming, s.approverError, s.invite ? Date.now() > Date.parse(s.invite.expires) : false]
     case 'nats':
       return ['nats', ...marks, s.server, s.link]
     case 'notifications':
@@ -352,9 +353,11 @@ let lastDeps: unknown[] | null = null
 
 /**
  * Draws Settings when what it shows has changed, and leaves it alone
- * otherwise. The list and the page keep where they were scrolled, and a
- * control with the keyboard keeps it, unless another page opened, which
- * starts at its top.
+ * otherwise. The list, the page, and an approver's details beside it keep
+ * where they were scrolled, and a control with the keyboard keeps it,
+ * unless another page opened, which starts at its top. When the control
+ * with the keyboard was in the details and isn't drawn again, the details
+ * take the keyboard.
  */
 export function renderSettings(root: HTMLElement, s: State, actions: SettingsActions): void {
   const deps = settingsDeps(s)
@@ -363,11 +366,17 @@ export function renderSettings(root: HTMLElement, s: State, actions: SettingsAct
   lastDeps = deps
   const navTop = root.querySelector<HTMLElement>(':scope > .settings-nav')?.scrollTop ?? 0
   const pageTop = turned ? 0 : (root.querySelector<HTMLElement>(':scope > .settings-page')?.scrollTop ?? 0)
+  const oldDetails = root.querySelector<HTMLElement>(':scope > .approver-details')
+  const detailsTop = oldDetails?.scrollTop ?? 0
+  const inDetails = !!oldDetails?.contains(document.activeElement)
   const keyboard = heldKeyboard(root)
   const nav = navList(s, actions)
   const page = pageView(s, actions)
-  root.replaceChildren(nav, page)
+  const details = s.settingsPage === 'approvers' ? approverDetails(s, actions.approvers) : null
+  root.replaceChildren(nav, page, ...(details ? [details] : []))
   nav.scrollTop = navTop
   page.scrollTop = pageTop
+  if (details) details.scrollTop = detailsTop
   keyboard?.()
+  if (inDetails && details && !details.contains(document.activeElement)) details.focus({ preventScroll: true })
 }

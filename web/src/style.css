@@ -382,23 +382,73 @@ button.row{ color:inherit; font:inherit; }
 .setup code, .addhost code{ font-family:"JetBrains Mono",monospace; font-size:12px; word-break:break-all; }
 .addhost pre{ margin:6px 0; padding:8px 10px; border-radius:8px; background:var(--surface-2); border:1px solid var(--line); white-space:pre-wrap; word-break:break-all; }
 
-/* The Approvers page of Settings. */
-.approvers{ display:flex; flex-direction:column; gap:6px; }
+/* The Approvers page of Settings: the approvers that approve as a graph
+   drawn top down, those the owner key added along the top and the ones
+   their links added under them, joined by lines. A graph wider than its
+   card scrolls sideways. Lines are 1px borders on each branch: a stem
+   down from a parent through its fold button, a bar across its children,
+   and a drop to each child. */
+.approver-graph{ overflow-x:auto; padding:2px 2px 6px; }
+.approver-graph ul{ display:flex; margin:0; padding:0; list-style:none; }
+.approver-graph .graph-roots{ width:max-content; margin:0 auto; gap:24px; }
+.approver-graph li{ position:relative; display:flex; flex-direction:column; align-items:center; }
+.approver-graph ul ul{ position:relative; padding-top:12px; }
+.approver-graph ul ul::before{ content:""; position:absolute; top:0; left:50%; height:12px; border-left:1px solid var(--chip-line); }
+.approver-graph ul ul > li{ padding:12px 6px 0; }
+.approver-graph ul ul > li::before, .approver-graph ul ul > li::after{ content:""; position:absolute; top:0; width:50%; height:12px; border-top:1px solid var(--chip-line); }
+.approver-graph ul ul > li::before{ right:50%; }
+.approver-graph ul ul > li::after{ left:50%; border-left:1px solid var(--chip-line); }
+.approver-graph ul ul > li:first-child::before, .approver-graph ul ul > li:last-child::after{ border-top:none; }
+.graph-stem{ position:relative; align-self:stretch; display:flex; justify-content:center; padding-top:10px; }
+.graph-stem::before{ content:""; position:absolute; top:0; bottom:0; left:50%; border-left:1px solid var(--chip-line); }
+.graph-fold{ position:relative; min-width:32px; height:24px; padding:0 8px; border-radius:999px; border:1px solid var(--chip-line); background:var(--surface); color:var(--muted); font-size:12px; font-weight:600; line-height:1; }
+.graph-fold:hover{ color:var(--text); border-color:var(--accent); }
+.graph-node{ display:flex; flex-direction:column; align-items:center; gap:3px; min-width:112px; max-width:200px; min-height:58px; justify-content:center; padding:8px 14px; border-radius:8px; border:1px solid var(--line); background:var(--surface-2); color:var(--text); text-align:center; }
+.graph-node:hover{ border-color:var(--accent); }
+.graph-node[aria-expanded="true"]{ border-color:var(--accent); background:var(--accent-bg); box-shadow:0 0 0 1px var(--accent); }
+.graph-node:focus-visible, .graph-fold:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+.graph-node .name{ max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
+.approver-graph .tags, .approver-details .tags{ display:flex; flex-wrap:wrap; gap:4px; }
 .install-app{ display:flex; flex-direction:column; align-items:flex-start; gap:6px; }
-.approver .grow > span:first-child{ overflow:hidden; text-overflow:ellipsis; }
-.me-tag{ align-self:flex-start; margin:2px 0; padding:0 6px; border-radius:999px; background:var(--accent-bg); color:var(--accent); font-size:11px; font-weight:600; }
-.device-tag{ align-self:flex-start; margin:2px 0; padding:0 6px; border-radius:999px; border:1px solid var(--line); color:var(--muted); font-size:11px; font-weight:600; }
-.approver .copy, .sec .facts .copy, .settings-card .facts .copy{ min-height:28px; padding:0 10px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); font-size:12px; font-weight:600; }
-.approver .copy:hover{ background:var(--surface); color:var(--text); }
-.confirming{ display:flex; flex-direction:column; gap:8px; padding:8px; border-radius:8px; border:1px solid var(--bad); }
-.confirming > .row{ padding:0; border:none; background:transparent; min-height:0; }
-.confirming .sub, .invite .sub{ margin:0; font-size:12px; color:var(--muted); }
-.confirming .actions, .invite .actions, .renaming .actions{ display:flex; gap:8px; flex-wrap:wrap; }
-.renaming{ display:flex; flex-direction:column; gap:8px; padding:8px; border-radius:8px; border:1px solid var(--accent); }
-.renaming > .row{ padding:0; border:none; background:transparent; min-height:0; }
-.renaming input{ flex:1 1 180px; min-width:0; min-height:36px; padding:0 8px; border-radius:6px; border:1px solid var(--line); background:var(--surface); color:var(--text); font:inherit; font-size:13px; }
+.me-tag{ padding:0 6px; border-radius:999px; background:var(--accent-bg); color:var(--accent); font-size:11px; font-weight:600; }
+.device-tag{ padding:0 6px; border-radius:999px; border:1px solid var(--line); color:var(--muted); font-size:11px; font-weight:600; }
+.graph-node[aria-expanded="true"] .me-tag{ background:var(--surface); }
+.sec .facts .copy, .settings-card .facts .copy{ min-height:28px; padding:0 10px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); font-size:12px; font-weight:600; }
+
+/* One approver's details, beside the Settings page, sliding in from the
+   right as it opens and out as it closes. On a narrow screen it covers
+   the page rather than pushing it over. */
+.settings{ position:relative; overflow:hidden; }
+.approver-details{ flex:0 0 360px; width:360px; overflow-y:auto; display:flex; flex-direction:column; gap:14px; padding:20px 18px 24px; background:var(--surface); border-left:1px solid var(--line); }
+.approver-details:focus{ outline:none; }
+.approver-details.entering{ animation:details-push-in 180ms ease-out; }
+.approver-details.leaving{ animation:details-push-out 160ms ease-in forwards; }
+@keyframes details-push-in{ from{ margin-right:-360px; } }
+@keyframes details-push-out{ to{ margin-right:-360px; } }
+@keyframes details-cover-in{ from{ transform:translateX(100%); } }
+@keyframes details-cover-out{ to{ transform:translateX(100%); } }
+.details-head{ display:flex; align-items:flex-start; gap:8px; }
+.details-head h3{ flex:1; min-width:0; margin:0; padding-top:4px; font-size:18px; line-height:1.25; overflow-wrap:anywhere; }
+.details-close{ flex:none; width:32px; height:32px; border-radius:8px; border:1px solid transparent; background:transparent; color:var(--muted); font-size:20px; line-height:1; }
+.details-close:hover{ background:var(--surface-2); color:var(--text); }
+.details-actions{ display:flex; gap:8px; flex-wrap:wrap; }
+.details-box{ display:flex; flex-direction:column; gap:10px; padding:10px; border-radius:8px; }
+.details-box p{ margin:0; font-size:13px; }
+.details-box.confirming{ border:1px solid var(--bad); }
+.details-box.renaming{ border:1px solid var(--accent); }
+.details-box input{ min-width:0; min-height:36px; padding:0 8px; border-radius:6px; border:1px solid var(--line); background:var(--surface-2); color:var(--text); font:inherit; font-size:13px; }
+@media (max-width: 860px){
+  .approver-details{ position:absolute; top:0; right:0; bottom:0; width:min(360px, 100%); box-shadow:-8px 0 24px rgba(0,0,0,0.18); }
+  .approver-details.entering{ animation-name:details-cover-in; }
+  .approver-details.leaving{ animation-name:details-cover-out; }
+}
+@media (prefers-reduced-motion: reduce){
+  .approver-details.entering, .approver-details.leaving{ animation:none; }
+}
 .btn.danger{ background:var(--bad); border-color:var(--bad); color:#fff; }
-.invite{ display:flex; flex-direction:column; gap:8px; padding:10px; border-radius:8px; background:var(--surface-2); border:1px solid var(--line); }
+.invite .sub{ margin:0; font-size:12px; color:var(--muted); }
+.invite .actions{ display:flex; gap:8px; flex-wrap:wrap; }
+.invite{ max-width:722px; display:flex; flex-direction:column; gap:8px; padding:10px; border-radius:8px; background:var(--surface-2); border:1px solid var(--line); }
 .invite p{ margin:0; }
 .invite .qr{ width:180px; height:180px; align-self:center; border-radius:6px; }
 .invite-address{ display:flex; flex-direction:column; gap:6px; }
@@ -426,6 +476,7 @@ button.row{ color:inherit; font:inherit; }
 .settings-count{ min-width:18px; padding:0 6px; border-radius:999px; background:var(--surface-2); border:1px solid var(--line); color:var(--muted); font-size:11px; font-weight:600; text-align:center; }
 .settings-page{ flex:1 1 auto; min-width:0; overflow-y:auto; padding:24px 32px 48px; }
 .settings-body{ max-width:760px; display:flex; flex-direction:column; gap:16px; }
+.settings-body.wide{ max-width:1180px; }
 .settings-card{ display:flex; flex-direction:column; gap:10px; padding:16px 18px; border-radius:12px; background:var(--surface); border:1px solid var(--line); }
 .settings-card h3{ margin:0; font-size:15px; font-weight:600; }
 .settings-card .facts{ max-width:560px; }

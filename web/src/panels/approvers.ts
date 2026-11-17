@@ -1,17 +1,18 @@
 import { citadelAddress, cliCommand } from '../address'
-import { mayChange, myApprover, myKey, type ApproverActions } from '../approvers'
-import { el } from '../dom'
+import { approverTree, descendantCount, mayChange, myApprover, myKey, type ApproverActions, type ApproverNode } from '../approvers'
+import { el, reduceMotion } from '../dom'
 import type { ApproverInfo, Rule } from '../protocol'
 import { qrCode } from '../qr'
 import { isOpen } from '../status'
-import type { Renaming, State } from '../store'
+import type { Renaming, Revoking, State } from '../store'
 import { copyButton, factsBox, hint, note, timeNode } from './parts'
 
 /**
  * What the Approvers page of Settings holds: every browser and host's CLI
- * that can approve what agents do in this world, a link that makes another
- * browser or CLI one, renaming, revocation, and whether this browser's
- * storage keeps its key. Every change is signed in this browser with its
+ * that can approve what agents do in this world, as a graph of who added
+ * whom, a link that makes another browser or CLI one, and whether this
+ * browser's storage keeps its key. Renaming and revoking are in each
+ * approver's details, beside the graph. Every change is signed in this browser with its
  * approver key, so only an approver can make one.
  */
 export function approversContent(s: State, actions: ApproverActions, keep: () => void): (Node | null)[] {
@@ -27,14 +28,7 @@ export function approversContent(s: State, actions: ApproverActions, keep: () =>
   const canAct = !!me?.valid
 
   const kids: (Node | null)[] = []
-  const valid = s.approvers.filter((a) => a.valid)
-  kids.push(
-    el(
-      'div',
-      { class: 'approvers' },
-      valid.map((a) => approverRow(a, s, actions, nameOf)),
-    ),
-  )
+  kids.push(approverGraph(approverTree(s.approvers), s, actions))
   if (s.approverError) kids.push(el('p', { class: 'approver-error', role: 'alert', text: s.approverError }))
 
   if (canAct) {
@@ -72,30 +66,189 @@ function approverName(s: State): (key: string | undefined) => string {
   return (key) => (key === 'owner' ? 'the owner key' : (byKey.get(key ?? '')?.name ?? 'an unknown approver'))
 }
 
-function approverRow(a: ApproverInfo, s: State, actions: ApproverActions, nameOf: (key: string | undefined) => string): HTMLElement {
-  const mine = a.key === myKey(s)
-  const can = mayChange(s, a.key)
-  const row = el('div', { class: 'row approver' }, [
-    el('div', { class: 'grow' }, [
-      el('span', { style: 'font-weight:600', text: a.name }),
-      mine ? el('span', { class: 'me-tag', text: 'this browser' }) : null,
-      a.device === 'cli' ? el('span', { class: 'device-tag', text: 'CLI', title: 'A host’s CLI, which signs what you decide on that host' }) : null,
-      el('span', { class: 'sub' }, ['Added ', timeNode(a.enrolled), a.by === 'owner' ? ' with the owner key' : ` by ${nameOf(a.by)}`]),
-    ]),
-    can && s.revoking !== a.key && s.renaming?.key !== a.key
-      ? el('div', { class: 'acts' }, [
-          el('button', { type: 'button', class: 'copy', text: 'Rename', 'aria-label': `Rename ${a.name}`, onclick: () => actions.askRename(a.key) }),
-          el('button', { type: 'button', class: 'copy', text: 'Revoke', 'aria-label': `Revoke ${a.name}`, onclick: () => actions.askRevoke(a.key) }),
-        ])
-      : null,
+/** The tags an approver carries: that it is this browser, and that it is a host's CLI. */
+function approverTags(a: ApproverInfo, mine: boolean): HTMLElement | null {
+  if (!mine && a.device !== 'cli') return null
+  return el('span', { class: 'tags' }, [
+    mine ? el('span', { class: 'me-tag', text: 'this browser' }) : null,
+    a.device === 'cli' ? el('span', { class: 'device-tag', text: 'CLI', title: 'A host’s CLI, which signs what you decide on that host' }) : null,
   ])
-  if (can && s.renaming?.key === a.key) return renameBox(a, row, s.renaming, actions)
-  if (!can || s.revoking !== a.key) return row
-  // What goes along with it, and whether this browser does.
+}
+
+/**
+ * The approvers that approve, drawn top down: those the owner key added
+ * along the top, and under each one, joined by lines, the approvers its
+ * links added. Each approver with descendants has a button that hides
+ * them or shows them again. An approver opens its details beside the
+ * graph, and opening it again closes them.
+ */
+function approverGraph(roots: ApproverNode[], s: State, actions: ApproverActions): HTMLElement {
+  const folded = new Set(s.foldedApprovers)
+  const me = myKey(s)
+  const branch = (n: ApproverNode): HTMLElement => {
+    const a = n.approver
+    const open = s.approverDetails === a.key
+    const kids: (Node | null)[] = [
+      el(
+        'button',
+        {
+          type: 'button',
+          class: 'graph-node',
+          'data-keep': `approver-${a.key}`,
+          'aria-expanded': String(open),
+          'aria-controls': open ? DETAILS_ID : null,
+          onclick: () => (open ? closeDetails(actions) : actions.select(a.key)),
+        },
+        [el('span', { class: 'name', title: a.name, text: a.name }), approverTags(a, a.key === me)],
+      ),
+    ]
+    if (n.children.length) {
+      const hidden = folded.has(a.key)
+      kids.push(
+        el('div', { class: 'graph-stem' }, [
+          el('button', {
+            type: 'button',
+            class: 'graph-fold',
+            'data-keep': `fold-${a.key}`,
+            'aria-expanded': String(!hidden),
+            'aria-label': `Approvers added through ${a.name}`,
+            text: hidden ? `+${descendantCount(n)}` : '−',
+            onclick: () => actions.fold(a.key, !hidden),
+          }),
+        ]),
+      )
+      if (!hidden) kids.push(el('ul', {}, n.children.map(branch)))
+    }
+    return el('li', {}, kids)
+  }
+  const graph = el('div', { class: 'approver-graph' }, [el('ul', { class: 'graph-roots', 'aria-label': 'Approvers' }, roots.map(branch))])
+  graph.addEventListener('keydown', escapeCloses(actions))
+  return graph
+}
+
+const DETAILS_ID = 'approver-details'
+
+/** The approver whose details were drawn last, so the panel slides in only as it opens. */
+let drawnDetails: string | null = null
+
+/**
+ * The panel beside the graph with the details of the approver opened in
+ * it, and renaming and revoking it where this browser may, or null when
+ * none is open.
+ */
+export function approverDetails(s: State, actions: ApproverActions): HTMLElement | null {
+  const a = s.world?.ready && s.approverDetails ? s.approvers?.find((x) => x.key === s.approverDetails && x.valid) : undefined
+  if (!a) {
+    drawnDetails = null
+    return null
+  }
+  const entering = drawnDetails === null
+  drawnDetails = a.key
+  const nameOf = approverName(s)
+  // The approvers above it, nearest first, for the keyboard to go back to
+  // when the graph hides it.
+  const byKey = new Map((s.approvers ?? []).map((x) => [x.key, x]))
+  const above: string[] = []
+  for (let up = byKey.get(a.by); up && !above.includes(up.key); up = byKey.get(up.by)) above.push(up.key)
+  const aside = el(
+    'aside',
+    {
+      id: DETAILS_ID,
+      class: `approver-details${entering ? ' entering' : ''}`,
+      'data-approver': a.key,
+      'data-above': above.join(' '),
+      'data-keep': DETAILS_ID,
+      tabindex: '-1',
+      'aria-labelledby': `${DETAILS_ID}-name`,
+    },
+    [
+      el('div', { class: 'details-head' }, [
+        el('h3', { id: `${DETAILS_ID}-name`, text: a.name }),
+        el('button', { type: 'button', class: 'details-close', 'aria-label': 'Close', text: '×', onclick: () => closeDetails(actions) }),
+      ]),
+      approverTags(a, a.key === myKey(s)),
+      factsBox([
+        ['Added', timeNode(a.enrolled)],
+        ['Added by', a.by === 'owner' ? 'The owner key' : nameOf(a.by)],
+      ]),
+      mayChange(s, a.key) ? detailActions(a, s, actions, nameOf) : null,
+    ],
+  )
+  aside.addEventListener('keydown', escapeCloses(actions))
+  if (entering) {
+    // The panel narrows the page as it opens, which can leave the approver
+    // it shows out of sight, so the graph scrolls it back once it's open.
+    const inSight = (): void => document.querySelector(`[data-keep="${CSS.escape(`approver-${a.key}`)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    queueMicrotask(() => {
+      aside.focus({ preventScroll: true })
+      if (reduceMotion) inSight()
+      else aside.addEventListener('animationend', inSight, { once: true })
+    })
+  }
+  return aside
+}
+
+/** Escape closes the details panel, and goes no further. */
+function escapeCloses(actions: ApproverActions): (e: KeyboardEvent) => void {
+  return (e) => {
+    if (e.key !== 'Escape' || !document.getElementById(DETAILS_ID)) return
+    e.stopPropagation()
+    closeDetails(actions)
+  }
+}
+
+/**
+ * Slides the details panel out and closes it, giving the keyboard back to
+ * its approver in the graph if the panel had it, or to the nearest one
+ * above it while the graph hides it. It closes only if the same
+ * approver's details still show by then.
+ */
+function closeDetails(actions: ApproverActions): void {
+  const aside = document.getElementById(DETAILS_ID)
+  if (!aside) return actions.select(null)
+  const key = aside.dataset.approver ?? ''
+  const back = [key, ...(aside.dataset.above ?? '').split(' ').filter(Boolean)]
+  const hadKeyboard = aside.contains(document.activeElement)
+  let done = false
+  const finish = (): void => {
+    if (done) return
+    done = true
+    if (document.getElementById(DETAILS_ID)?.dataset.approver !== key) return
+    actions.select(null)
+    if (!hadKeyboard) return
+    for (const k of back) {
+      const node = document.querySelector<HTMLElement>(`[data-keep="${CSS.escape(`approver-${k}`)}"]`)
+      if (node) return node.focus()
+    }
+  }
+  if (reduceMotion) return finish()
+  if (aside.classList.contains('leaving')) return
+  aside.classList.remove('entering')
+  aside.classList.add('leaving')
+  aside.addEventListener('animationend', finish, { once: true })
+  // Drawn again meanwhile, the panel loses its animation, so this closes it.
+  setTimeout(finish, 400)
+}
+
+/** Renaming and revoking an approver this browser may change, each asked for first. */
+function detailActions(a: ApproverInfo, s: State, actions: ApproverActions, nameOf: (key: string | undefined) => string): HTMLElement {
+  if (s.renaming?.key === a.key) return renameBox(a, s.renaming, actions)
+  if (s.revoking?.key === a.key) return revokeBox(a, s, s.revoking, actions, nameOf)
+  return el('div', { class: 'details-actions' }, [
+    el('button', { type: 'button', class: 'btn small', text: 'Rename', 'aria-label': `Rename ${a.name}`, 'data-keep': `rename-${a.key}`, onclick: () => actions.askRename(a.key) }),
+    el('button', { type: 'button', class: 'btn small', text: 'Revoke', 'aria-label': `Revoke ${a.name}`, 'data-keep': `revoke-${a.key}`, onclick: () => actions.askRevoke(a.key) }),
+  ])
+}
+
+/**
+ * What revoking an approver takes along, and whether this browser goes
+ * too, with the button that revokes it. Cancel has the keyboard first.
+ */
+function revokeBox(a: ApproverInfo, s: State, r: Revoking, actions: ApproverActions, nameOf: (key: string | undefined) => string): HTMLElement {
+  // Everyone added through it, directly or by an approver it added, at any depth.
   const through = a.through ?? []
   const me = myKey(s)
-  const loseMe = mine || (!!me && through.includes(me))
-  // Everyone added through it, directly or by an approver it added, at any depth.
+  const loseMe = a.key === me || (!!me && through.includes(me))
   const names = through.map((k) => (k === me ? 'this browser' : nameOf(k)))
   const left = (s.approvers ?? []).filter((x) => x.valid && x.key !== a.key && !through.includes(x.key)).length
   const ask = approvedInAdvance(s, new Set([a.key, ...through]))
@@ -107,25 +260,29 @@ function approverRow(a: ApproverInfo, s: State, actions: ApproverActions, nameOf
     loseMe ? 'This browser stops approving too, until it’s added again.' : '',
     left ? '' : 'No approver will be left: only your recovery file can add one after this.',
   ].filter(Boolean)
-  return el('div', { class: 'approver confirming' }, [
-    row,
-    el('p', { class: 'sub', text: `Revoke ${a.name}? It stops approving for good. ${lines.join(' ')}`.trim() }),
-    el('div', { class: 'actions' }, [
+  return el('div', { class: 'details-box confirming' }, [
+    el('p', { text: `Revoke ${a.name}? It stops approving for good. ${lines.join(' ')}`.trim() }),
+    el('div', { class: 'details-actions' }, [
       el('button', { type: 'button', class: 'btn small danger', text: `Revoke ${a.name}`, onclick: () => actions.revoke(a.key) }),
-      el('button', { type: 'button', class: 'btn small ghost', text: 'Cancel', onclick: () => actions.askRevoke(null) }),
+      el('button', { type: 'button', class: 'btn small ghost', text: 'Cancel', 'data-keep': `revoke-${a.key}`, onclick: () => actions.askRevoke(null) }),
     ]),
+    r.error ? el('p', { class: 'approver-error', role: 'alert', text: r.error }) : null,
   ])
 }
 
-/** The row of an approver being renamed, with the name being typed. */
-function renameBox(a: ApproverInfo, row: HTMLElement, r: Renaming, actions: ApproverActions): HTMLElement {
-  const input = el('input', { type: 'text', value: r.text, maxlength: '80', autocomplete: 'off', 'aria-label': `New name for ${a.name}`, 'data-keep': `rename-${a.key}` })
+/** The name being typed for an approver being renamed. */
+function renameBox(a: ApproverInfo, r: Renaming, actions: ApproverActions): HTMLElement {
+  const input = el('input', { type: 'text', value: r.text, maxlength: '80', autocomplete: 'off', 'aria-label': `New name for ${a.name}`, 'data-keep': `renaming-${a.key}` })
   input.addEventListener('input', () => {
     r.text = input.value
   })
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') actions.rename()
-    else if (e.key === 'Escape') actions.askRename(null)
+    else if (e.key === 'Escape') {
+      // Escape stops renaming, and leaves the panel open.
+      e.stopPropagation()
+      actions.askRename(null)
+    }
   })
   // Opening the box puts the keyboard in it with the name selected; drawn
   // again while typing, it already has the keyboard back.
@@ -134,12 +291,11 @@ function renameBox(a: ApproverInfo, row: HTMLElement, r: Renaming, actions: Appr
     input.focus()
     input.select()
   })
-  return el('div', { class: 'approver renaming' }, [
-    row,
-    el('div', { class: 'actions' }, [
-      input,
+  return el('div', { class: 'details-box renaming' }, [
+    input,
+    el('div', { class: 'details-actions' }, [
       el('button', { type: 'button', class: 'btn small', text: 'Save', disabled: r.saving ? '' : null, onclick: () => actions.rename() }),
-      el('button', { type: 'button', class: 'btn small ghost', text: 'Cancel', onclick: () => actions.askRename(null) }),
+      el('button', { type: 'button', class: 'btn small ghost', text: 'Cancel', 'data-keep': `rename-${a.key}`, onclick: () => actions.askRename(null) }),
     ]),
     r.error ? el('p', { class: 'approver-error', role: 'alert', text: r.error }) : null,
   ])

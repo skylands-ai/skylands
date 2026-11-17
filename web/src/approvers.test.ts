@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mayChange } from './approvers'
+import { approverTree, descendantCount, mayChange, type ApproverNode } from './approvers'
 import type { ApproverInfo } from './protocol'
 import type { State } from './store'
 
@@ -40,5 +40,28 @@ describe('mayChange', () => {
     const revoked = approvers.map((a) => (a.key === 'desk' ? { ...a, valid: false } : a))
     expect(mayChange(as('desk', revoked), 'desk')).toBe(false)
     expect(mayChange(as('stranger'), 'phone')).toBe(false)
+  })
+})
+
+describe('approverTree', () => {
+  const shape = (nodes: ApproverNode[]): unknown[] => nodes.map((n) => (n.children.length ? { [n.approver.key]: shape(n.children) } : n.approver.key))
+
+  it('puts the approvers the owner key added at the top, with those their links added under them', () => {
+    expect(shape(approverTree(approvers))).toEqual([{ laptop: [{ phone: ['tablet'] }, 'watch'] }, 'desk'])
+  })
+
+  it('leaves out the approvers that no longer approve', () => {
+    const list = approvers.map((a) => (a.key === 'phone' || a.key === 'tablet' ? { ...a, valid: false } : a))
+    expect(shape(approverTree(list))).toEqual([{ laptop: ['watch'] }, 'desk'])
+  })
+
+  it('draws an approver whose parent it doesn’t list as a root', () => {
+    expect(shape(approverTree([approver('phone', 'gone')]))).toEqual(['phone'])
+  })
+
+  it('counts the approvers under one at any depth', () => {
+    const [laptop, desk] = approverTree(approvers)
+    expect(descendantCount(laptop)).toBe(3)
+    expect(descendantCount(desk)).toBe(0)
   })
 })
