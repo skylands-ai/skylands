@@ -153,12 +153,12 @@ func TestApproverAddEnrollsThisCLI(t *testing.T) {
 	if err != nil || f.Name != "CLI on the test box" || f.Citadel != base {
 		t.Fatalf("loadApprover = %+v, %v", f, err)
 	}
-	if raw, _ := os.ReadFile(path); bytes.Contains(raw, []byte("SU")) {
-		t.Error("the key file holds a seed in the clear")
-	}
 	seed, err := f.Seed.Open(testPassphrase)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(path); bytes.Contains(raw, seed) {
+		t.Error("the key file holds its seed in the clear")
 	}
 	if kp, err := nkeys.FromSeed(seed); err != nil {
 		t.Fatal(err)
