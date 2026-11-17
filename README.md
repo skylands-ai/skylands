@@ -7,6 +7,13 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/skylands-ai/skylands/releases/latest"><img alt="Latest version" src="https://img.shields.io/github/v/release/skylands-ai/skylands?label=version"></a>
+  <a href="https://github.com/skylands-ai/skylands/actions/workflows/ci.yml?query=branch%3Amain"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/skylands-ai/skylands/ci.yml?branch=main&label=build"></a>
+  <a href="https://docs.skylands.ai"><img alt="Documentation" src="https://img.shields.io/badge/docs-docs.skylands.ai-2D5BC7"></a>
+  <a href="https://skylands.ai"><img alt="Website" src="https://img.shields.io/badge/website-skylands.ai-2D5BC7"></a>
+</p>
+
+<p align="center">
   <a href="https://skylands.ai">
     <img alt="A recording of Skylands: flying between islands and the repositories on them, switching the world to its sci-fi theme, sending Claude Code to work on a repository, and approving its edit from the conversation." src="docs/assets/hero.webp" width="800">
   </a>
