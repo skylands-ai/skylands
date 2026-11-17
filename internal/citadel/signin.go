@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -220,19 +222,42 @@ func sameOrigin(next http.Handler) http.Handler {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			if origin := r.Header.Get("Origin"); origin != "" {
 				if u, err := url.Parse(origin); err != nil || !strings.EqualFold(u.Host, r.Host) {
-					why := "a page from another origin can't do that here"
-					// A proxy that sends its own Host, rather than the
-					// browser's, makes every page look like another origin.
-					if err == nil && strings.EqualFold(u.Host, r.Header.Get("X-Forwarded-Host")) {
-						why = "the proxy in front of the citadel changes the Host header from " + u.Host + " to " + r.Host + "; have it pass the browser's Host through, as tailscale serve does"
-					}
-					writeError(w, http.StatusForbidden, why)
+					refuseOrigin(w, r, origin)
 					return
 				}
 			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// refuseOrigin answers a request whose Origin names another host than its
+// Host header, saying both, and logs it with the headers a proxy adds, so
+// whoever runs the citadel can tell what changed which.
+func refuseOrigin(w http.ResponseWriter, r *http.Request, origin string) {
+	attrs := []any{"method", r.Method, "path", r.URL.Path, "origin", origin, "host", r.Host, "remote", r.RemoteAddr}
+	for _, h := range []string{"X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-For", "Forwarded"} {
+		if v := r.Header.Get(h); v != "" {
+			attrs = append(attrs, strings.ToLower(h), v)
+		}
+	}
+	slog.Warn("citadel: refused a request whose Origin isn't the citadel's address", attrs...)
+
+	u, err := url.Parse(origin)
+	var why string
+	switch {
+	case origin == "null":
+		why = "the browser sent this with Origin: null, so the citadel can't tell its own page sent it"
+	case err != nil || u.Host == "":
+		why = fmt.Sprintf("the browser sent this with an Origin the citadel can't read: %q", origin)
+	case strings.EqualFold(u.Host, r.Header.Get("X-Forwarded-Host")):
+		// A proxy that sends its own Host, rather than the browser's,
+		// makes every page look like another origin.
+		why = "the proxy in front of the citadel changes the Host header from " + u.Host + " to " + r.Host + "; have it pass the browser's Host through, as tailscale serve does"
+	default:
+		why = "a page at " + origin + " sent this, but it reached the citadel at " + r.Host
+	}
+	writeError(w, http.StatusForbidden, why)
 }
 
 // viaHTTPS says whether the browser reached the citadel over HTTPS: the
