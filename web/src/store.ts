@@ -46,6 +46,12 @@ export interface Renaming {
   saving?: boolean
 }
 
+/** An approver whose revocation waits for a confirmation, and why the last try failed. */
+export interface Revoking {
+  key: string
+  error: string
+}
+
 /** What the page shows under its header: the world, the inbox, or Settings. */
 export type View = 'world' | 'inbox' | 'settings'
 
@@ -78,11 +84,15 @@ export interface State extends Nav {
   persisted: boolean | null
   /** The "Add an approver" link this browser is showing, if any. */
   invite: Invite | null
+  /** The approver whose details show beside the approver graph, if any. */
+  approverDetails: string | null
+  /** The approvers whose descendants the approver graph hides. */
+  foldedApprovers: string[]
   /** The approver whose revocation is waiting for a confirmation, if any. */
-  revoking: string | null
+  revoking: Revoking | null
   /** The approver being renamed, if any. */
   renaming: Renaming | null
-  /** The last thing that went wrong adding or revoking an approver. */
+  /** The last thing that went wrong making an "Add an approver" link. */
   approverError: string | null
   /** Every island the citadel knows, by host. */
   islands: Record<string, Island>
@@ -187,7 +197,7 @@ type Listener = (s: State) => void
 
 /** One place for everything the page renders from. Every change notifies every listener. */
 export class Store {
-  state: State = { link: 'connecting', loading: null, server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, revoking: null, renaming: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), settingsPage: loadSettingsPage(), inbox: null, inboxFilter: loadFilter(), convoMode: {}, worldTheme: loadWorldTheme(), themes: [], themeProblem: null, notify: loadNotify(), push: false, pushError: null, phone: false, route: {}, install: 'no' }
+  state: State = { link: 'connecting', loading: null, server: null, world: null, approvers: null, me: undefined, persisted: null, invite: null, approverDetails: null, foldedApprovers: [], revoking: null, renaming: null, approverError: null, islands: {}, repos: {}, sessions: {}, selected: 'cit', terrace: null, file: null, agent: null, lastContact: null, viewed: loadViewed(), view: loadView(), settingsPage: loadSettingsPage(), inbox: null, inboxFilter: loadFilter(), convoMode: {}, worldTheme: loadWorldTheme(), themes: [], themeProblem: null, notify: loadNotify(), push: false, pushError: null, phone: false, route: {}, install: 'no' }
   private listeners: Listener[] = []
 
   subscribe(fn: Listener): void {
