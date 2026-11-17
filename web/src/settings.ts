@@ -29,7 +29,7 @@ export interface SettingsActions {
 /** Each page's title, and the line under it. */
 const PAGES: Record<SettingsPage, { title: string; about: string }> = {
   islands: { title: 'Islands', about: 'The hosts in this world. A row flies to its island in the world.' },
-  approvers: { title: 'Approvers', about: 'Browsers that can approve what agents do in this world.' },
+  approvers: { title: 'Approvers', about: 'Devices that can approve what agents do in this world.' },
   nats: { title: 'NATS', about: 'The NATS server this citadel is connected to, as the server describes itself. Every tether ends at it.' },
   notifications: { title: 'Notifications', about: 'Each browser that opens the citadel has its own switch. This one is this browser’s.' },
   app: { title: 'App', about: 'Skylands as an app of its own, in browsers that make one.' },
