@@ -93,6 +93,15 @@ type citadel struct {
 	// projections have taken in.
 	following map[string]bool
 	applied   map[string]uint64
+	// logged is each host's reachability and daemon as the log last gave
+	// them.
+	logged map[string]hostLog
+}
+
+// hostLog is what the citadel logs about a host when it changes.
+type hostLog struct {
+	reachable bool
+	daemon    projections.Daemon
 }
 
 // Run connects to the world and serves until ctx is cancelled. It keeps
@@ -108,7 +117,7 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.PollWindow <= 0 {
 		cfg.PollWindow = time.Second
 	}
-	c := &citadel{cfg: cfg, ctx: ctx, following: map[string]bool{}, applied: map[string]uint64{}}
+	c := &citadel{cfg: cfg, ctx: ctx, following: map[string]bool{}, applied: map[string]uint64{}, logged: map[string]hostLog{}}
 	if on, why := pushOn(cfg, c.publicURL()); on {
 		c.push = newPusher(c)
 	} else {
@@ -258,16 +267,34 @@ func (c *citadel) onDisconnect(nc *nats.Conn, err error) {
 
 // onIsland runs whenever a host's state changes.
 func (c *citadel) onIsland(isl projections.Island) {
+	if c.relog(isl) {
+		if isl.Reachable {
+			slog.Info("citadel: island reachable", "host", isl.Host, "daemon", isl.Daemon.Version, "os", isl.Daemon.OS+"/"+isl.Daemon.Arch)
+		} else {
+			slog.Info("citadel: island unreachable", "host", isl.Host, "lastSeen", isl.LastSeen.Format(time.RFC3339))
+		}
+	}
 	if isl.Reachable {
-		slog.Info("citadel: island reachable", "host", isl.Host, "daemon", isl.Daemon.Version, "os", isl.Daemon.OS+"/"+isl.Daemon.Arch)
 		c.followHost(isl.Host)
-	} else {
-		slog.Info("citadel: island unreachable", "host", isl.Host, "lastSeen", isl.LastSeen.Format(time.RFC3339))
 	}
 	if c.catch.holds(isl.Host) {
 		return
 	}
 	c.web.Broadcast(web.Message{Type: "island", Island: &isl})
+}
+
+// relog is true when the island's reachability or daemon differs from what
+// the log last gave for its host, and notes the island as logged. A change
+// to only the host's agents is not worth a line.
+func (c *citadel) relog(isl projections.Island) bool {
+	now := hostLog{reachable: isl.Reachable, daemon: isl.Daemon}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if was, ok := c.logged[isl.Host]; ok && was == now {
+		return false
+	}
+	c.logged[isl.Host] = now
+	return true
 }
 
 // onRepo runs whenever a repository is registered or its terrain changes.

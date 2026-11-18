@@ -12,6 +12,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	v1 "github.com/skylands-ai/skylands/api/v1"
 	"github.com/skylands-ai/skylands/internal/citadel/projections"
 	"github.com/skylands-ai/skylands/internal/citadel/web"
 	"github.com/skylands-ai/skylands/internal/daemon"
@@ -203,6 +204,29 @@ func waitChecked(t *testing.T, base string) {
 			t.Fatal("the citadel never looked for the world")
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func TestRelogOnlyWhenReachabilityOrDaemonChanges(t *testing.T) {
+	c := &citadel{logged: map[string]hostLog{}}
+	d := projections.Daemon{ID: "d1", Version: "v1"}
+	steps := []struct {
+		why  string
+		isl  projections.Island
+		want bool
+	}{
+		{"first sight", projections.Island{Host: "ws", Reachable: true, Daemon: d}, true},
+		{"agents changed", projections.Island{Host: "ws", Reachable: true, Daemon: d, Agents: []v1.AgentAvailability{{Name: "claude"}}}, false},
+		{"another host", projections.Island{Host: "laptop", Reachable: true, Daemon: d}, true},
+		{"daemon restarted", projections.Island{Host: "ws", Reachable: true, Daemon: projections.Daemon{ID: "d2", Version: "v1"}}, true},
+		{"went unreachable", projections.Island{Host: "ws", Daemon: projections.Daemon{ID: "d2", Version: "v1"}}, true},
+		{"agents changed while unreachable", projections.Island{Host: "ws", Daemon: projections.Daemon{ID: "d2", Version: "v1"}, Agents: []v1.AgentAvailability{}}, false},
+		{"back", projections.Island{Host: "ws", Reachable: true, Daemon: projections.Daemon{ID: "d2", Version: "v1"}}, true},
+	}
+	for _, s := range steps {
+		if got := c.relog(s.isl); got != s.want {
+			t.Errorf("%s: relog = %v, want %v", s.why, got, s.want)
+		}
 	}
 }
 
