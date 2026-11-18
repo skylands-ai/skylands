@@ -328,6 +328,28 @@
         "approver": "UASVQ5GGLE7MCRC3RD6ZWNTBKVQT2T4MM72OTFAASHYZJBB5VZWFJQNI",
         "sig": "xjUotk-icXMB8Bj5h_4-0Zarp7C1GU3mnbzkFTFQ9f9GtQ3hSFqYxG3kGRAikCeXsUgZzt6iNYP_ssFZDajSBw"
       }
+    },
+    {
+      "decision": {
+        "v": 1,
+        "kind": "start",
+        "world": "ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O",
+        "host": "workstation",
+        "session": "Ses5ion-éh",
+        "repo": "R3po",
+        "agent": "claude",
+        "mode": "",
+        "model": "",
+        "inCheckout": false,
+        "prompt": "d01c36416e28a279bd4259200376cdee7e6d2c06521a0b36993695399fd1f25f",
+        "issue": "https://github.com/example/storefront/issues/12"
+      },
+      "canonical": "{\"agent\":\"claude\",\"host\":\"workstation\",\"inCheckout\":false,\"issue\":\"https://github.com/example/storefront/issues/12\",\"kind\":\"start\",\"mode\":\"\",\"model\":\"\",\"prompt\":\"d01c36416e28a279bd4259200376cdee7e6d2c06521a0b36993695399fd1f25f\",\"repo\":\"R3po\",\"session\":\"Ses5ion-éh\",\"v\":1,\"world\":\"ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O\"}",
+      "digest": "5332d0162c12666a2a75ae30aa636318af231f0eaa20860bd833045cb7565a02",
+      "signature": {
+        "approver": "UASVQ5GGLE7MCRC3RD6ZWNTBKVQT2T4MM72OTFAASHYZJBB5VZWFJQNI",
+        "sig": "H6ispwYwh_JhYms5QdbVyA4vURU7uVYKm7udI9vb28NlNyhQVZl9FUbD1QRGd4m0RrjoZUmMJHLWFPEG0MaKCA"
+      }
     }
   ],
   "form": {

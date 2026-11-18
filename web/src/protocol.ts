@@ -237,6 +237,16 @@ export interface Repo {
   registeredApprover?: string
   registeredAt: string
   snapshottedAt: string
+  /** Its git remotes, as its island last recorded them, which issue links match. */
+  remotes?: RepoRemote[]
+}
+
+/** One of a repository's git remotes: its URL without credentials, and the host and path of the repository it points to, lowercase. */
+export interface RepoRemote {
+  name: string
+  url: string
+  host?: string
+  path?: string
 }
 
 export interface PlanEntry {
@@ -344,6 +354,8 @@ export interface Session {
   branch: string
   base?: string
   inCheckout?: boolean
+  /** The link of the issue the session was started from. */
+  issue?: string
   /** The latest commit made through Skylands, and how many there were. */
   commit?: string
   commits?: number

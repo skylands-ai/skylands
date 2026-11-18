@@ -484,6 +484,24 @@ specifies. No events, streams, or aggregates are needed for it.
   its new place. Checked in headless Chrome with one to six terraces, an
   airship working while its island grew, and the sci-fi theme. Which
   terraces show when an island holds too many is later.
+- Work starts from an issue's link (#143). The daemon records each
+  repository's git remotes, without credentials, as RepoRemotesChanged,
+  at registration, at start, and when a check every five minutes finds
+  them changed. A link in the command bar, in GitHub's form on any
+  GitHub host, places the work by remote ahead of its words
+  (`internal/issuelink`), from the world, an island, or a terrace. The
+  island reads the issue with its own gh through a new `issue` fetch,
+  only for a repository its checkout's remotes point to, and the New
+  form opens with the prompt written from it for the person to read,
+  change, and sign. The `start` decision names the issue (in the shared
+  vector), the daemon refuses one its repository's remotes don't point
+  to, SessionStarted records it, and a pull request body written for the
+  session ends with `Closes owner/name#12`. An issue whose repository no
+  island has opens a dialog that clones it onto an island, as #142 adds
+  repositories, and goes on once its terrace appears. Checked in headless
+  Chrome against this repository's own issue, read by a real gh, and a
+  clone of a public repository from its issue's link. Other kinds of
+  issue link, such as GitLab's, are later.
 
 ## After the MVP
 

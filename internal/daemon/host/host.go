@@ -54,6 +54,8 @@ type Repo struct {
 	RegisteredApprover string
 	RegisteredAt       time.Time
 	SnapshottedAt      time.Time
+	// Remotes are its git remotes as last recorded, by name.
+	Remotes []v1.RepoRemote
 }
 
 // Clone is a clone a browser asked for, as the host's stream records it.
@@ -239,9 +241,56 @@ func (h *Host) register(ctx context.Context, commandID string, snap terrain.Snap
 		h.apply(ev)
 	}
 	slog.Info("host: repo registered", "host", h.name, "repo", snap.Name, "path", snap.Path, "files", snap.TotalFiles, "by", added.By, "url", added.URL)
+	if remotes, err := terrain.Remotes(ctx, snap.Path); err != nil {
+		slog.Warn("host: read a repository's remotes", "repo", snap.Name, "err", err)
+	} else if err := h.recordRemotes(ctx, id, remotes); err != nil {
+		slog.Warn("host: record a repository's remotes", "repo", snap.Name, "err", err)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return *h.repos[id], nil
+}
+
+// CheckRemotes reads every repository's git remotes and records those
+// that changed since they were last recorded, as RepoRemotesChanged. The
+// daemon checks when it starts and then now and then, so a repository
+// registered before remotes were recorded, or whose remotes changed,
+// matches issue links by the remotes it has.
+func (h *Host) CheckRemotes(ctx context.Context) {
+	for _, r := range h.Repos() {
+		remotes, err := terrain.Remotes(ctx, r.Path)
+		if err != nil {
+			slog.Debug("host: read a repository's remotes", "repo", r.Name, "err", err)
+			continue
+		}
+		h.cmdMu.Lock()
+		err = h.recordRemotes(ctx, r.ID, remotes)
+		h.cmdMu.Unlock()
+		if err != nil {
+			slog.Warn("host: record a repository's remotes", "repo", r.Name, "err", err)
+		}
+	}
+}
+
+// recordRemotes records RepoRemotesChanged for the repository when
+// remotes differ from what was last recorded. The caller holds cmdMu.
+func (h *Host) recordRemotes(ctx context.Context, repoID string, remotes []v1.RepoRemote) error {
+	h.mu.Lock()
+	r, ok := h.repos[repoID]
+	same := ok && (len(r.Remotes) == 0 && len(remotes) == 0 || reflect.DeepEqual(r.Remotes, remotes))
+	h.mu.Unlock()
+	if !ok || same {
+		return nil
+	}
+	ev, err := v1.NewEvent(v1.EventRepoRemotesChanged, "", v1.RepoRemotesChanged{RepoID: repoID, Remotes: remotes})
+	if err != nil {
+		return err
+	}
+	if _, err := h.store.Append(ctx, v1.IslandEventSubject(h.name, ev.Type), ev); err != nil {
+		return err
+	}
+	h.apply(ev)
+	return nil
 }
 
 // AddRepo handles AddRepo from a browser through the citadel. It must
@@ -611,6 +660,14 @@ func (h *Host) apply(ev v1.Event) {
 			if c, ok := h.clones[ev.CommandID]; ok {
 				c.Registered = true
 			}
+		}
+	case v1.EventRepoRemotesChanged:
+		var d v1.RepoRemotesChanged
+		if ev.Decode(&d) != nil {
+			return
+		}
+		if r, ok := h.repos[d.RepoID]; ok {
+			r.Remotes = d.Remotes
 		}
 	case v1.EventRepoCloneStarted:
 		var d v1.RepoCloneStarted

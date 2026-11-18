@@ -113,6 +113,8 @@ export interface StartDecision {
   prompt: string
   /** attachmentsHash of what the prompt carries besides its text, and absent when it carries nothing else. */
   attachments?: string
+  /** The link of the issue the session starts from; absent for one started from words alone. */
+  issue?: string
 }
 
 /** Another prompt to a session, at the session's revision, which the prompt moves on. */

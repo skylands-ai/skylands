@@ -22,6 +22,7 @@ import (
 	"github.com/skylands-ai/skylands/internal/approval"
 	"github.com/skylands-ai/skylands/internal/daemon/agents"
 	"github.com/skylands-ai/skylands/internal/describe"
+	"github.com/skylands-ai/skylands/internal/issuelink"
 )
 
 // Changes reports where a session's changes stand on disk.
@@ -153,7 +154,8 @@ func (m *Manager) Merge(ctx context.Context, cmd v1.MergeChanges) (Session, erro
 // OpenPullRequest handles OpenPullRequest: the session's branch is pushed
 // to the repository's origin and a pull request is opened from it with gh,
 // which must be installed and signed in on the host. A blank title or body
-// is written from the branch's commits and diff, as written describes.
+// is written from the branch's commits and diff, as written describes, and
+// a body written for a session started from an issue closes the issue.
 func (m *Manager) OpenPullRequest(ctx context.Context, cmd v1.OpenPullRequest) (Session, error) {
 	title, body := strings.TrimSpace(cmd.Title), strings.TrimSpace(cmd.Body)
 	if title == "" || body == "" {
@@ -166,7 +168,7 @@ func (m *Manager) OpenPullRequest(ctx context.Context, cmd v1.OpenPullRequest) (
 			title = wroteTitle
 		}
 		if body == "" {
-			body = wroteBody
+			body = closesIssue(wroteBody, s.Issue)
 		}
 	}
 	m.cmdMu.Lock()
@@ -224,6 +226,21 @@ func (m *Manager) OpenPullRequest(ctx context.Context, cmd v1.OpenPullRequest) (
 	slog.Info("session: pull request opened", "session", s.ID, "url", url)
 	out, _ := m.Get(s.ID)
 	return out, nil
+}
+
+// closesIssue ends a pull request's body, written from the changes, with
+// GitHub's keyword that closes the issue the session was started from,
+// named by owner and repository, so it closes whichever repository the
+// pull request is opened in. The body says nothing else of the issue.
+func closesIssue(body, issue string) string {
+	l, ok := issuelink.Parse(issue)
+	if !ok {
+		return body
+	}
+	if strings.TrimSpace(body) == "" {
+		return "Closes " + l.Ref()
+	}
+	return strings.TrimRight(body, "\n") + "\n\nCloses " + l.Ref()
 }
 
 // A commit message, or a pull request's title or body, that a person left

@@ -154,6 +154,16 @@ Picking a repo for work is ranking a short list of labeled candidates: an island
 6. **A close call between repos on one island goes to that island's agent.** Its daemon asks, in a side session as it asks for titles and commit messages, giving the close repos' short descriptions: name, modules, top-level entries, the start of the README, and what matched. The agent answers with a pick or with "unsure". It costs a few tokens, recorded on the session the work starts, for `dispatch`.
 7. **A close call across islands, an "unsure", a weak lone match, or nothing fitting goes to the person,** in the inbox's New form, with the prompt filled in and the repos that fit best listed first. Neither island's agent sees the other island's repo descriptions.
 
+### Work from an issue
+
+A link to an issue, such as `https://github.com/org/storefront/issues/12`, places the work ahead of anything its words would match, on any island and from a terrace too. Links are read in GitHub's form, on github.com or a GitHub Enterprise host.
+
+- **A repo's remotes name it.** The daemon records each repo's git remotes, as RepoRemotesChanged, when the repo is registered, when the daemon starts, and when a check every five minutes finds them changed. A remote keeps its URL without a password, and an https one without its user name, which can be a token, with the host and owner/name of the repository it points to.
+- **The citadel matches the link** against the remotes it has recorded, without asking any island or scoring. One repo the issue is in, in scope and reachable, takes the work. Several, as a checkout of a fork and of its upstream on two islands, go to the person to choose, as do those on islands that can't be reached. With none in scope, the bar says where the issue's repo is. With none on any island, it offers to clone it: the person picks an island, and can change the clone URL and directory, and the clone is added as any repository is from an island's panel. Once its terrace appears, the work goes on.
+- **The island reads the issue** with its own `gh`, through an `issue` fetch for a repo, and reads only an issue in a repository the checkout's remotes point to as git has them then. The citadel keeps nothing of it.
+- **Nothing reaches the agent on its own.** Anyone who can open an issue writes its text, so it reaches the agent only in the prompt the person reads and signs: the New form opens with the repo chosen and the prompt written from what the person typed besides the link, or "Resolve this issue.", then the issue's name, title, link, and body, all of which the person can change. Comments aren't included.
+- **The start names the issue.** Its signature covers the link, and the daemon refuses an issue its repo's recorded remotes don't point to. SessionStarted records it, and a pull request whose body is written for the session ends with `Closes owner/name#12`, which GitHub reads across repositories too. Nothing else of the issue goes in.
+
 Every past session is a labeled example: its prompt, and the repo it ran in. `skylands repo match --replay` replays a host's sessions through the ranker, each without its own title, and reports how often the work would have gone to its repo, which is how the thresholds above are checked.
 
 Labels and name tags are real buttons, so every level is reachable by keyboard. Reduced-motion settings turn off flight animation, bobbing, and camera glides. The light theme renders a day sky and the dark theme renders dusk.
@@ -204,7 +214,7 @@ The subject namespace is the public API, versioned by its first token. Events ar
 | `v1.island.<host>.session.<session>.cmd.<type>` | Commands to a session aggregate | Request-reply only |
 | `v1.island.<host>.evt.<type>` | Host events, such as terrain snapshots and adapter availability | Captured on the host, then mirrored into the world's JetStream domain |
 | `v1.island.<host>.cmd.<type>` | Commands to the host aggregate, such as AddRepo | Request-reply only |
-| `v1.island.<host>.fetch.<kind>` | On-demand reads, such as a diff, a file's contents, or which repo a prompt fits | Request-reply only |
+| `v1.island.<host>.fetch.<kind>` | On-demand reads, such as a diff, a file's contents, which repo a prompt fits, or an issue | Request-reply only |
 | `v1.island.<host>.session.<session>.live` | A session's transcript as it is written, for whoever reads the conversation | Plain NATS, captured by no stream |
 | `v1.island.<host>.session.<session>.term.<terminal>.{in,size,out}` | A terminal's signed input, its size, and what its shell writes | Plain NATS, captured by no stream |
 | `v1.world.<aggregate>.<id>.evt.<type>` | Events from citadel-owned aggregates, one subject per aggregate instance | Captured in the world's JetStream domain; rule and user events are mirrored into every daemon's domain |
@@ -254,7 +264,7 @@ Sessions are event-sourced, and each daemon is the single writer of the session 
 | Aggregate | Lives in | Handles commands | Produces events |
 | --- | --- | --- | --- |
 | Session | Daemon | StartSession, SendPrompt, RecordToolCall, RecordToolResult, RecordPlan, RecordUsage, RecordTokens, RecordCompaction, RecordPermissionRequest, ApproveToolCall, DenyToolCall, RetryAgent, PauseAgent, ResumeAgent, StopAgent, ForkSession, ExpirePendingRequests, OpenTerminal, CloseTerminal | SessionStarted, PromptSent, AgentSpawned, SessionTitled, ToolCallStarted, ToolCallCompleted, TurnEnded, PlanUpdated, UsageReported, TokensUsed, ContextCompacted, PermissionRequested, PermissionGranted, PermissionDenied, PermissionExpired, AgentFailed, AgentPaused, AgentResumed, SessionForked, SessionEnded, TerminalOpened, TerminalClosed |
-| Host | Daemon | RegisterRepo, AddRepo, SnapshotTerrain, RecordFileChanges, RecordAdapterAvailability | RepoRegistered, RepoCloneStarted, RepoCloneFailed, TerrainSnapshotted, FilesChanged, AdapterAvailabilityChanged |
+| Host | Daemon | RegisterRepo, AddRepo, SnapshotTerrain, RecordFileChanges, RecordAdapterAvailability | RepoRegistered, RepoRemotesChanged, RepoCloneStarted, RepoCloneFailed, TerrainSnapshotted, FilesChanged, AdapterAvailabilityChanged |
 | Rules | Citadel | AddRule, RemoveRule | RuleAdded, RuleRemoved |
 | Users | Citadel | EnrollUser, EnrollApproverKey, RevokeUser | UserEnrolled, ApproverKeyEnrolled, UserRevoked |
 | Budget | Citadel | SetBudget | BudgetSet |
@@ -418,7 +428,7 @@ Rules settle most tool calls on the host, so only what no rule covers reaches a 
   - `trust` adds `session`, `trusted`, and `revision`.
   - `session-rules` and `repo-rules` add `session` or `repo`, `rules` (the SHA-256 of the whole list as the daemon keeps it), and `revision`.
   - `repo-add` adds `id` (an id the browser picks, which the daemon refuses once it has seen it), `path` (as sent: relative to the clone root, or absolute), and `url` (what to clone, none for a path).
-  - `start` adds `session` (an id the browser picks, which the daemon refuses once it has seen it), `repo`, `agent`, `mode`, `model`, `inCheckout`, and `prompt` (the SHA-256 of the prompt's text).
+  - `start` adds `session` (an id the browser picks, which the daemon refuses once it has seen it), `repo`, `agent`, `mode`, `model`, `inCheckout`, `prompt` (the SHA-256 of the prompt's text), and `issue` (the link of the issue the session starts from, none for a start from words alone).
   - `prompt` adds `session`, `revision`, and `prompt`.
   - `change` adds `session`, `revision`, `action` ("commit", "merge", or "pull-request"), and `text` (the SHA-256 of a commit's message, or of a pull request's title and body as canonical JSON, none for a merge). A prompt's and a change's `revision` counts the session's prompts, commits, merges, and pull requests, which each moves on, so none can be sent twice.
   - `terminal` adds `session` and `terminal` (an id the browser picks, which the daemon refuses once it has seen it).
@@ -479,7 +489,7 @@ The daemon decides what leaves the host. Session and host events carry metadata 
 - Event streams on each host are capped by size. When an offline host reaches the cap, the daemon stops starting new sessions rather than dropping events that haven't synced.
 - Push notifications carry no tool input, file contents, or commands.
 - Work asked for at the world sends the prompt's text to every host the citadel can reach, to be scored against that host's repos. Daemons are trusted participants in the world, but this is the one way a prompt reaches a host that doesn't run it. It reaches an agent only on a host breaking a close call between its own repos, and what comes back is each candidate's name, confidence, and reasons.
-- A commit message or a pull request's title and body that a person leaves blank is written from the changes alone. The session's agent writes it in a side session that sees only the diff, and the branch's commit messages for a pull request. Without an agent, git's account of the files and commits is used. Neither the prompt nor the conversation's title reaches a repository or a pull request, since a pull request can be public.
+- A commit message or a pull request's title and body that a person leaves blank is written from the changes alone. The session's agent writes it in a side session that sees only the diff, and the branch's commit messages for a pull request. Without an agent, git's account of the files and commits is used. Neither the prompt nor the conversation's title reaches a repository or a pull request, since a pull request can be public. A pull request's body written for a session started from an issue ends with `Closes owner/name#12`, and says nothing else of it.
 
 ## Agents and adapters
 

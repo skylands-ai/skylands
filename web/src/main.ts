@@ -15,6 +15,7 @@ import { renderAgentPanel, type AgentActions } from './panels/agent'
 import { renderFilePanel } from './panels/file'
 import { refreshTimes } from './panels/parts'
 import { renderIslandPanel } from './panels/island'
+import { CloneDialog } from './clonedialog'
 import { addRepoVersion } from './panels/addrepo'
 import { type PruneOptions, pruneVersion } from './panels/prune'
 import { renderTerracePanel } from './panels/terrace'
@@ -79,9 +80,12 @@ void fetch('/api/world')
   .catch(() => {})
 // A session started from the inbox's New form opens there.
 const newSession = new NewSessionForm((id) => openConversation(id))
+// An issue's repository no island has is cloned onto one first.
+const cloneDialog = new CloneDialog((host, path, url) => requestAdd(host, path, url))
 // Work the command bar can't place goes to the person in the same form.
 const bar = new CommandBar({
   choose: (c) => newSession.open(store.state, c),
+  clone: (ask) => cloneDialog.open(store.state, ask),
   land: (host, repo) => nav.land(host, repo),
 })
 const cache = new FetchCache(() => store.touch())
@@ -284,20 +288,26 @@ function setRepoRules(host: string, repoId: string, rules: Rule[]): Promise<stri
  * empty. A clone goes on in the background, and shows on the island.
  */
 async function addRepo(host: string, path: string, url: string): Promise<string> {
+  const out = await requestAdd(host, path, url)
+  return 'error' in out ? out.error : ''
+}
+
+/** Asks an island to add a repository, signed under an id this browser picks, and resolves with the id, or why it couldn't. */
+async function requestAdd(host: string, path: string, url: string): Promise<{ id: string } | { error: string }> {
   const id = newSessionId()
   const signature = signRepoAdd(store.state, host, id, path, url)
-  if (typeof signature === 'string') return signature
+  if (typeof signature === 'string') return { error: signature }
   try {
     const resp = await api(`/api/islands/${encodeURIComponent(host)}/repos`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, path, url, signature }),
     })
-    if (resp.ok) return ''
+    if (resp.ok) return { id }
     const out = (await resp.json().catch(() => ({}))) as { error?: string }
-    return out.error ?? `The citadel answered ${resp.status}.`
+    return { error: out.error ?? `The citadel answered ${resp.status}.` }
   } catch (err) {
-    return `Could not reach the citadel: ${(err as Error).message}`
+    return { error: `Could not reach the citadel: ${(err as Error).message}` }
   }
 }
 
@@ -693,6 +703,7 @@ fitScreen()
 
 store.subscribe((s0) => {
   newSession.update(s0)
+  cloneDialog.update(s0)
   terminals.update(s0.sessions)
   renderPhoneLayout(s0)
   renderVeil(s0)

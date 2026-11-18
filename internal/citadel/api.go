@@ -16,6 +16,7 @@ import (
 	"github.com/nats-io/nuid"
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
+	"github.com/skylands-ai/skylands/internal/issuelink"
 )
 
 // startSessionRequest is the body of POST /api/sessions.
@@ -36,6 +37,8 @@ type startSessionRequest struct {
 	// InCheckout runs the agent in the registered checkout itself rather
 	// than a worktree of its own.
 	InCheckout bool `json:"inCheckout"`
+	// Issue is the link of the issue the session starts from, as signed.
+	Issue string `json:"issue"`
 }
 
 // api is the citadel's HTTP API for browsers: the commands the world view
@@ -95,6 +98,7 @@ func (c *citadel) api() http.Handler {
 	signedIn("GET /api/sessions/{host}/{id}/requests/{rid}/input", c.fetchFromHost(v1.FetchRequestInput))
 	signedIn("GET /api/sessions/{host}/{id}/files", c.fetchFiles(false))
 	signedIn("GET /api/repos/{host}/{id}/files", c.fetchFiles(true))
+	signedIn("GET /api/repos/{host}/{id}/issue", c.fetchIssue)
 	signedIn("GET /api/sessions/{host}/{id}/attachments/{hash}", c.fetchAttachment)
 	signedIn("POST /api/islands/{host}/images", c.uploadImage)
 	return sameOrigin(mux)
@@ -381,6 +385,19 @@ func (c *citadel) fetchFromHost(kind string) http.HandlerFunc {
 	}
 }
 
+// fetchIssue relays the read of an issue, at the url query parameter, by
+// the island that holds the repository, with its own gh. The island reads
+// only an issue in a repository the repository's remotes point to.
+func (c *citadel) fetchIssue(w http.ResponseWriter, r *http.Request) {
+	host, id, url := r.PathValue("host"), r.PathValue("id"), r.URL.Query().Get("url")
+	if _, ok := issuelink.Parse(url); !ok {
+		writeError(w, http.StatusBadRequest, "an issue's link is required")
+		return
+	}
+	data, err := c.requestWithin(r.Context(), v1.IslandFetchSubject(host, v1.FetchIssue), v1.IssueRequest{RepoID: id, URL: url}, v1.IssueTimeout)
+	writeFetched(w, host, data, err)
+}
+
 // writeFetched writes what a host answered a fetch with, or why it
 // didn't.
 func writeFetched(w http.ResponseWriter, host string, result json.RawMessage, err error) {
@@ -559,7 +576,7 @@ func (c *citadel) startSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cmd := v1.StartSession{Signature: req.Signature, ID: nuid.Next(), SessionID: sessionID, RepoID: req.RepoID, Agent: req.Agent, Model: strings.TrimSpace(req.Model), Mode: strings.TrimSpace(req.Mode), Prompt: req.Prompt,
-		Mentions: req.Mentions, Images: req.Images, InCheckout: req.InCheckout}
+		Mentions: req.Mentions, Images: req.Images, InCheckout: req.InCheckout, Issue: req.Issue}
 	result, err := c.sendCommand(r.Context(), v1.SessionCommandSubject(req.Host, sessionID, v1.CommandStartSession), cmd)
 	switch {
 	case errors.Is(err, nats.ErrNoResponders), errors.Is(err, nats.ErrTimeout):

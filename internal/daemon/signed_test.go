@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -705,6 +706,66 @@ func (w *signedWorld) lastHostEvent(eventType string) v1.Event {
 		}
 		if time.Now().After(deadline) {
 			w.t.Fatalf("no %s in the island's stream: %v", eventType, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// TestStartFromAnIssueIsSigned starts a session from an issue only when
+// the start's signature names the issue and the issue is in a repository
+// the session's repository's remotes point to, and records it.
+func TestStartFromAnIssueIsSigned(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	w, _ := startSignedWorld(t, ctx)
+	dir := gitRepo(t, "main.go")
+	if out, err := exec.Command("git", "-C", dir, "remote", "add", "origin", "https://github.com/org/storefront.git").CombinedOutput(); err != nil {
+		t.Fatalf("git remote add: %v\n%s", err, out)
+	}
+	repo, err := w.cli.RegisterRepo(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const issue = "https://github.com/org/storefront/issues/12"
+	start := func(id, issue, signed string) v1.Reply {
+		cmd := v1.StartSession{ID: "start-" + id, SessionID: id, RepoID: repo.ID, Agent: "fake", Prompt: "Resolve this issue.", Issue: issue}
+		cmd.Signature = w.sign(w.starter, approval.Start{V: approval.DecisionVersion, Kind: approval.KindStart, World: w.ownerPub, Host: "ws", Session: id, Repo: repo.ID, Agent: "fake", Prompt: approval.TextHash(cmd.Prompt), Issue: signed})
+		return w.command(id, v1.CommandStartSession, cmd)
+	}
+	if r := start("Unsigned1ssue", issue, ""); !strings.Contains(r.Error, approval.ErrBadSignature.Error()) {
+		t.Errorf("a start whose signature doesn't name its issue = %+v", r)
+	}
+	if r := start("Elsewh3re", "https://github.com/org/other/issues/12", "https://github.com/org/other/issues/12"); !strings.Contains(r.Error, "isn't in a repository") {
+		t.Errorf("a start from an issue in another repository = %+v", r)
+	}
+	if r := start("Fr0missue", issue, issue); r.Error != "" {
+		t.Fatalf("StartSession: %s", r.Error)
+	}
+	ev := w.lastSessionEvent("Fr0missue", v1.EventSessionStarted)
+	var started v1.SessionStarted
+	if err := ev.Decode(&started); err != nil || started.Issue != issue {
+		t.Errorf("SessionStarted = %+v, %v", started, err)
+	}
+}
+
+// lastSessionEvent is the last event of the given type a session recorded
+// in the island's stream, in the leaf's own domain.
+func (w *signedWorld) lastSessionEvent(session, eventType string) v1.Event {
+	w.t.Helper()
+	js, err := jetstream.NewWithDomain(w.nc, "ws")
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	var last v1.Event
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		s, err := js.Stream(w.ctx, v1.IslandStreamName("ws"))
+		if err == nil {
+			if m, err := s.GetLastMsgForSubject(w.ctx, v1.SessionEventSubject("ws", session, eventType)); err == nil && json.Unmarshal(m.Data, &last) == nil {
+				return last
+			}
+		}
+		if time.Now().After(deadline) {
+			w.t.Fatalf("no %s for %s in the island's stream: %v", eventType, session, err)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

@@ -201,6 +201,9 @@ func Run(ctx context.Context, cfg Config) error {
 	agg.AllowAdding(ctx, cloneRoot, func(ctx context.Context, url, dir, partial string) error {
 		return clone.Into(ctx, url, dir, partial, agents.WatchFrom(ctx))
 	})
+	// A repository's remotes match it to issue links, so they are read
+	// now and then, as well as when it is registered.
+	go watchRemotes(ctx, agg, remotesEvery)
 	// Clones end with ctx, which Run may return before.
 	defer func() {
 		stop()
@@ -547,6 +550,23 @@ func (c *commands) handleIsland(ctx context.Context, msg *nats.Msg) {
 		c.replyResult(msg, out)
 	default:
 		c.reply(msg, v1.Reply{Error: "unknown command " + commandType})
+	}
+}
+
+// remotesEvery is how often the daemon reads its repositories' remotes
+// again, after it does when it starts.
+const remotesEvery = 5 * time.Minute
+
+// watchRemotes records each repository's remotes that changed, now and
+// then every every, until ctx ends.
+func watchRemotes(ctx context.Context, agg *host.Host, every time.Duration) {
+	for {
+		agg.CheckRemotes(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(every):
+		}
 	}
 }
 

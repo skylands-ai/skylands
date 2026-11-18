@@ -13,6 +13,7 @@ import (
 	v1 "github.com/skylands-ai/skylands/api/v1"
 	"github.com/skylands-ai/skylands/internal/citadel/projections"
 	"github.com/skylands-ai/skylands/internal/dispatch"
+	"github.com/skylands-ai/skylands/internal/issuelink"
 	"github.com/skylands-ai/skylands/internal/natsembed"
 )
 
@@ -223,5 +224,67 @@ func TestDispatchToAnIslandWithOneRepositoryGoesThere(t *testing.T) {
 	res := w.place(t, "restore something", "attic")
 	if res.Do != dispatch.AskPerson || !slices.Equal(res.LeftOut, []leftOut{{Host: "attic", Why: leftUnreachable}}) {
 		t.Errorf("at the unreachable attic: verdict = %+v, left out %+v", res.Verdict, res.LeftOut)
+	}
+}
+
+func TestDispatchPlacesAnIssueLinkByRemoteWithoutAskingAnyIsland(t *testing.T) {
+	w := newDispatchWorld(t)
+	remotes := func(host, repo string, urls ...string) {
+		var list []v1.RepoRemote
+		for i, u := range urls {
+			list = append(list, issuelink.Remote([]string{"origin", "upstream"}[i], u))
+		}
+		ev, _ := v1.NewEvent(v1.EventRepoRemotesChanged, "", v1.RepoRemotesChanged{RepoID: repo, Remotes: list})
+		w.c.terrain.Apply(host, ev)
+	}
+	remotes("ws", "sf", "https://github.com/org/storefront.git")
+	remotes("laptop", "sf2", "git@github.com:me/storefront.git", "https://github.com/Org/StoreFront")
+	remotes("attic", "old", "git@github.com:org/archive.git")
+	// Words that would match elsewhere don't count once a link places it.
+	w.answers["laptop"] = []v1.MatchCandidate{{RepoID: "docs", Name: "docs-site", Confidence: 0.9}}
+	ids := func(cs []dispatch.Candidate) []string {
+		out := []string{}
+		for _, c := range cs {
+			out = append(out, c.Host+"/"+c.RepoID)
+		}
+		return out
+	}
+
+	res := w.place(t, "fix the docs https://github.com/org/storefront/issues/12#issuecomment-1", "")
+	if res.Do != dispatch.AskPerson || res.Why != dispatch.WhyIssue || !slices.Equal(ids(res.Among), []string{"laptop/sf2", "ws/sf"}) && !slices.Equal(ids(res.Among), []string{"ws/sf", "laptop/sf2"}) {
+		t.Errorf("at the world, the issue in two repositories = %+v", res.Verdict)
+	}
+	if res.Issue == nil || res.Issue.URL != "https://github.com/org/storefront/issues/12" || res.Issue.Ref != "org/storefront#12" || res.Issue.CloneURL != "https://github.com/org/storefront.git" || res.Issue.Number != 12 {
+		t.Errorf("issue = %+v", res.Issue)
+	}
+	if asked := w.wasAsked(); len(asked) != 0 {
+		t.Errorf("asked %v", asked)
+	}
+
+	res = w.place(t, "https://github.com/org/storefront/issues/12", "ws")
+	if res.Do != dispatch.Start || res.Target == nil || res.Target.RepoID != "sf" || res.Target.Reasons[0] != "its remote origin is github.com/org/storefront, where the issue is" {
+		t.Errorf("at ws = %+v", res.Verdict)
+	}
+	if len(res.IssueRepos) != 2 {
+		t.Errorf("issue repos = %v, want both, in scope or not", ids(res.IssueRepos))
+	}
+
+	// Only on an island that can't be reached: a person chooses, knowing.
+	res = w.place(t, "https://github.com/org/archive/issues/3", "")
+	if res.Do != dispatch.AskPerson || !slices.Equal(ids(res.Among), []string{"attic/old"}) || len(res.LeftOut) != 1 || res.LeftOut[0] != (leftOut{Host: "attic", Why: leftUnreachable}) {
+		t.Errorf("only on attic = %+v, left out %+v", res.Verdict, res.LeftOut)
+	}
+	// Elsewhere than the island it was asked at: none in scope, and where it is.
+	res = w.place(t, "https://github.com/org/archive/issues/3", "ws")
+	if res.Do != dispatch.AskPerson || len(res.Among) != 0 || !slices.Equal(ids(res.IssueRepos), []string{"attic/old"}) {
+		t.Errorf("at ws, an issue on attic = %+v, issue repos %v", res.Verdict, ids(res.IssueRepos))
+	}
+	// On no island at all.
+	res = w.place(t, "https://github.com/org/brand-new/issues/1", "")
+	if res.Do != dispatch.AskPerson || len(res.Among) != 0 || res.IssueRepos == nil || len(res.IssueRepos) != 0 || res.Ranked == nil {
+		t.Errorf("on no island = %+v, issue repos %v", res.Verdict, res.IssueRepos)
+	}
+	if asked := w.wasAsked(); len(asked) != 0 {
+		t.Errorf("asked %v", asked)
 	}
 }

@@ -39,6 +39,9 @@ type Repo struct {
 	RegisteredApprover string    `json:"registeredApprover,omitempty"`
 	RegisteredAt       time.Time `json:"registeredAt"`
 	SnapshottedAt      time.Time `json:"snapshottedAt"`
+	// Remotes are its git remotes, as its island last recorded them,
+	// which issue links are matched against.
+	Remotes []v1.RepoRemote `json:"remotes,omitempty"`
 }
 
 // Terrain is the projection of every host's repositories, built from host
@@ -86,6 +89,14 @@ func (t *Terrain) Apply(host string, ev v1.Event) {
 				}
 				r.RulesBy, r.RulesApprover, r.RulesLapsed = d.By, d.Approver, false
 				r.RulesRevision++
+				changed = r
+			}
+		}
+	case v1.EventRepoRemotesChanged:
+		var d v1.RepoRemotesChanged
+		if ev.Decode(&d) == nil {
+			if r, ok := repos[d.RepoID]; ok {
+				r.Remotes = d.Remotes
 				changed = r
 			}
 		}

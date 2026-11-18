@@ -58,6 +58,7 @@ export function renderAgentPanel(
   ]
   if (s.commits) facts.push(['Commits', `${s.commits}, last ${s.commit?.slice(0, 7) ?? ''}`])
   if (s.mergedInto) facts.push(['Merged', `into ${s.mergedInto} as ${s.mergedCommit?.slice(0, 7) ?? ''}`])
+  if (s.issue) facts.push(['Issue', el('a', { href: s.issue, target: '_blank', rel: 'noopener', text: s.issue.replace(/^https:\/\/[^/]+\/([^/]+\/[^/]+)\/issues\//, '$1#') })])
   if (s.pullRequest) facts.push(['Pull request', el('a', { href: s.pullRequest, target: '_blank', rel: 'noopener', text: s.pullRequest.replace(/^https?:\/\//, '') })])
   if (s.worktreeRemoved) facts.push(['Worktree', 'removed'])
   if (s.resumes && s.resumed) {

@@ -283,9 +283,24 @@ function attachmentsOf(carried: Carried | undefined): { attachments?: string } {
 }
 
 /** This browser's signature over starting a session, as the daemon will check it, covering what its prompt carries. */
-export function signStart(s: State, start: { host: string; session: string; repo: string; agent: string; mode: string; model: string; inCheckout: boolean; prompt: string } & Partial<Carried>) {
+export function signStart(s: State, start: { host: string; session: string; repo: string; agent: string; mode: string; model: string; inCheckout: boolean; prompt: string; issue?: string } & Partial<Carried>) {
   const carried = { mentions: start.mentions ?? [], images: start.images ?? [] }
-  return signOnceWorld(s, (world) => ({ v: DECISION_VERSION, kind: 'start', world, host: start.host, session: start.session, repo: start.repo, agent: start.agent, mode: start.mode, model: start.model, inCheckout: start.inCheckout, prompt: textHash(start.prompt), ...attachmentsOf(carried) }))
+  return signOnceWorld(s, (world) => ({
+    v: DECISION_VERSION,
+    kind: 'start',
+    world,
+    host: start.host,
+    session: start.session,
+    repo: start.repo,
+    agent: start.agent,
+    mode: start.mode,
+    model: start.model,
+    inCheckout: start.inCheckout,
+    prompt: textHash(start.prompt),
+    ...attachmentsOf(carried),
+    // A start from an issue names it; one from words alone signs as it always has.
+    ...(start.issue ? { issue: start.issue } : {}),
+  }))
 }
 
 /** This browser's signature over another prompt to a session, at the revision it names, covering what it carries. */
