@@ -33,6 +33,7 @@ type devworldOptions struct {
 	leafListen string
 	host       string
 	socketPath string
+	cloneRoot  string
 	url        string
 	noPush     bool
 }
@@ -80,6 +81,7 @@ func devworldUpFlags(f *pflag.FlagSet, o *devworldOptions) {
 	f.StringVar(&o.leafListen, "leaf-listen", "127.0.0.1:7422", "address the embedded NATS server accepts daemon leaf nodes on")
 	f.StringVar(&o.host, "host", daemon.DefaultHost(), "name of this machine's island")
 	f.StringVar(&o.socketPath, "socket", defaultSocketPath(), "Unix socket the daemon listens on for the local CLI")
+	cloneRootFlag(f, &o.cloneRoot)
 }
 
 func newDevworldInstallCmd() *cobra.Command {
@@ -88,7 +90,8 @@ func newDevworldInstallCmd() *cobra.Command {
 		role:        "devworld",
 		description: "Skylands one-machine world: NATS, a citadel, and a daemon",
 		flags:       func(f *pflag.FlagSet) { devworldUpFlags(f, &o) },
-		pathFlags:   []string{"data-dir", "socket"},
+		pathFlags:   []string{"data-dir", "socket", "clone-root"},
+		always:      map[string]func() (string, error){"clone-root": cloneRootHere(&o.cloneRoot)},
 		socket:      func() string { return o.socketPath },
 	})
 }
@@ -140,7 +143,7 @@ func runDevworld(ctx context.Context, o devworldOptions, stderr io.Writer, stop 
 		// devworld's daemon runs in the same process as the citadel and the
 		// NATS server, so it pins the owner key of the first world it finds.
 		errc <- daemon.Run(ctx, daemon.Config{
-			Host: o.host, NATSURL: srv.LeafURL(), DataDir: o.dataDir, SocketPath: o.socketPath, Version: versionString(),
+			Host: o.host, NATSURL: srv.LeafURL(), DataDir: o.dataDir, SocketPath: o.socketPath, CloneRoot: o.cloneRoot, Version: versionString(),
 			TrustFirstWorld: true,
 			WorldDomain:     daemon.DefaultWorldDomain,
 			SetupURL:        func() string { return setupLink.Load().(string) },

@@ -44,31 +44,74 @@ const CELL = 0.95
 /** The height of a terrace's plaza, which its buildings stand on. */
 export const PLAZA_TOP = 0.35
 
+/** The room between two terraces' slots, which their boundary posts stand in. */
+const TERRACE_GAP = 1
+
+/** How far a terrace's boundary posts stand out from its plaza, in any theme, and a little more. */
+const POSTS = 0.3
+
 /**
- * Lays out an island's terraces: one in the middle, or a ring of them, each
- * sized by how many files it shows and clamped to fit the island.
+ * The share of an island's radius a terrace's corners may reach. An
+ * island's edge wobbles in and out by up to about a sixth of its radius,
+ * and a terrace's corner can be where it dips.
  */
-export function layoutTerraces(R: number, repos: Repo[]): TerraceSpec[] {
-  const n = repos.length
-  const maxSide = n === 1 ? R * 1.15 : R * 0.8
-  const maxCells = Math.floor((maxSide - 0.5) / CELL)
-  return repos.map((repo, k) => {
-    const files = [...repo.files].sort((a, b) => b.size - a.size).slice(0, Math.min(MAX_BUILDINGS, maxCells * maxCells))
+const EDGE = 0.8
+
+/** The side of a terrace's slot on its island: a plaza of the most buildings a terrace shows, 8 by 8. */
+const SLOT = Math.sqrt(MAX_BUILDINGS) * CELL + 0.5
+
+/** An island's terraces, laid out, and the radius its top needs to hold them. */
+export interface IslandLayout {
+  /** The island's own radius, or more when its terraces need more. */
+  R: number
+  terraces: TerraceSpec[]
+}
+
+/**
+ * Lays out an island's terraces: one in the middle, or rows of them, as
+ * square as they go. Each terrace has a slot of the same size, room for 8
+ * by 8 buildings, with its plaza, sized by how many files it shows, in the
+ * middle of it. The island grows to hold every slot: the layout's R is R,
+ * or more when the slots' corners would reach past the island's edge, so
+ * how big an island is depends on how many terraces it holds and nothing
+ * else.
+ */
+export function layoutIsland(R: number, repos: Repo[]): IslandLayout {
+  if (!repos.length) return { R, terraces: [] }
+  const slots = bestRows(repos.length)
+  const terraces = repos.map((repo, k): TerraceSpec => {
+    const files = [...repo.files].sort((a, b) => b.size - a.size).slice(0, MAX_BUILDINGS)
     // A square grid, so 64 files make 8 by 8.
-    const cols = Math.max(1, Math.min(maxCells, Math.ceil(Math.sqrt(files.length))))
-    const rows = Math.max(1, Math.min(maxCells, Math.ceil(files.length / cols)))
-    const sx = cols * CELL + 0.5
-    const sz = rows * CELL + 0.5
-    let x = 0
-    let z = 0
-    if (n > 1) {
-      const a = (k / n) * Math.PI * 2 + 0.6
-      const d = R * 0.42
-      x = Math.cos(a) * d
-      z = Math.sin(a) * d
-    }
-    return { id: repo.id, name: repo.name, x, z, sx, sz, cols, rows, files: files.slice(0, cols * rows), total: repo.totalFiles }
+    const cols = Math.max(1, Math.ceil(Math.sqrt(files.length)))
+    const rows = Math.max(1, Math.ceil(files.length / cols))
+    const [x, z] = slots.centers[k]
+    return { id: repo.id, name: repo.name, x, z, sx: cols * CELL + 0.5, sz: rows * CELL + 0.5, cols, rows, files: files.slice(0, cols * rows), total: repo.totalFiles }
   })
+  return { R: Math.max(R, slots.reach / EDGE), terraces }
+}
+
+/**
+ * The centers of n slots in rows, each row centered and the rows centered
+ * about the island's middle, and how far their corners reach, with room
+ * for posts. Of every way to put them in rows, it is the one the smallest
+ * island holds, and of those the widest, since the island is seen from
+ * the side.
+ */
+function bestRows(n: number): { centers: [number, number][]; reach: number } {
+  const pitch = SLOT + TERRACE_GAP
+  let best: { centers: [number, number][]; reach: number } | null = null
+  for (let across = n; across >= 1; across--) {
+    const rows = Math.ceil(n / across)
+    const centers: [number, number][] = []
+    for (let k = 0; k < n; k++) {
+      const row = Math.floor(k / across)
+      const inRow = Math.min(across, n - row * across)
+      centers.push([((k % across) - (inRow - 1) / 2) * pitch, (row - (rows - 1) / 2) * pitch])
+    }
+    const reach = Math.max(...centers.map(([x, z]) => Math.hypot(Math.abs(x) + SLOT / 2 + POSTS, Math.abs(z) + SLOT / 2 + POSTS)))
+    if (!best || reach < best.reach - 1e-9) best = { centers, reach }
+  }
+  return best as { centers: [number, number][]; reach: number }
 }
 
 /** Where one file's building stands, from its terrace's center, and how tall it is. */

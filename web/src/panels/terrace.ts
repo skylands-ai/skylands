@@ -7,7 +7,7 @@ import { sumTokens } from '../store'
 import { agentGlyph, backButton, factsBox, header, hint, note, section, timeNode, tokensNode } from './parts'
 import { type PruneOptions, pruneSection } from './prune'
 
-/** The terrace-level panel: one repository on one host. */
+/** The terrace-level panel: one repository on one host. addedBy names who added it, when that was recorded. */
 export function renderTerracePanel(
   panel: HTMLElement,
   repo: Repo,
@@ -20,6 +20,7 @@ export function renderTerracePanel(
   canSign: boolean,
   lapsed: string | undefined,
   prune: PruneOptions,
+  addedBy: string | undefined,
 ): void {
   panel.textContent = ''
   const down = stale || !island.reachable
@@ -40,12 +41,14 @@ export function renderTerracePanel(
   if (sessions.length) panel.appendChild(section('Agents', agentRows(sessions, waiting)))
   const facts: [string, string | Node][] = [
     ['Path', repo.path],
+    ...(repo.url ? [['Cloned from', repo.url] as [string, string]] : []),
     ['Commit', shortCommit(repo.commit)],
     ['Tracked files', String(repo.totalFiles)],
     // What every session on this repository has cost, open or finished.
     ['Tokens used', tokensNode(sumTokens(sessions))],
   ]
   facts.push(['Registered', timeNode(repo.registeredAt)])
+  if (addedBy) facts.push(['Added by', addedBy])
   panel.appendChild(factsBox(facts))
   if (!repo.files.length) panel.appendChild(note('This repository has no tracked files yet.'))
   panel.appendChild(

@@ -38,6 +38,8 @@ type signedWorld struct {
 	// starter is an approver that signs the sessions' starts, and is never
 	// revoked.
 	starter nkeys.KeyPair
+	// root is the daemon's clone root.
+	root string
 }
 
 func (w *signedWorld) approver(name string) (nkeys.KeyPair, string) {
@@ -57,6 +59,20 @@ func (w *signedWorld) command(session, typ string, body any) v1.Reply {
 	w.t.Helper()
 	data, _ := json.Marshal(body)
 	msg, err := w.nc.Request(v1.SessionCommandSubject("ws", session, typ), data, 10*time.Second)
+	if err != nil {
+		w.t.Fatalf("%s: %v", typ, err)
+	}
+	var r v1.Reply
+	_ = json.Unmarshal(msg.Data, &r)
+	return r
+}
+
+// islandCommand sends a command for the host itself as the citadel does,
+// and returns the daemon's reply.
+func (w *signedWorld) islandCommand(typ string, body any) v1.Reply {
+	w.t.Helper()
+	data, _ := json.Marshal(body)
+	msg, err := w.nc.Request(v1.IslandCommandSubject("ws", typ), data, 10*time.Second)
 	if err != nil {
 		w.t.Fatalf("%s: %v", typ, err)
 	}
@@ -113,14 +129,14 @@ func startSignedWorld(t *testing.T, ctx context.Context) (*signedWorld, socket.R
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
-	w := &signedWorld{t: t, ctx: ctx, nc: nc, js: js, cli: socket.Dial(filepath.Join(sockDir, "d.sock")), owner: owner, ownerPub: ownerPub}
+	w := &signedWorld{t: t, ctx: ctx, nc: nc, js: js, cli: socket.Dial(filepath.Join(sockDir, "d.sock")), owner: owner, ownerPub: ownerPub, root: t.TempDir()}
 
 	fakeCmd, fakeEnv := fakeagent.TestCommand()
 	runCtx, stop := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() {
 		done <- Run(runCtx, Config{
-			Host: "ws", NATSURL: hub.LeafURL(), DataDir: t.TempDir(), SocketPath: filepath.Join(sockDir, "d.sock"), World: ownerPub, WorldDomain: "world",
+			Host: "ws", NATSURL: hub.LeafURL(), DataDir: t.TempDir(), SocketPath: filepath.Join(sockDir, "d.sock"), CloneRoot: w.root, World: ownerPub, WorldDomain: "world",
 			Adapters: agents.Registry{"fake": {Name: "fake", Provider: "local", Command: fakeCmd, Env: fakeEnv}},
 		})
 	}()
@@ -615,5 +631,81 @@ func TestHostDecisionsMustBeSigned(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("the rules the revoked CLI set never lapsed: %+v", w.repoRules(repo.ID))
 		}
+	}
+}
+
+// TestAddRepoThroughTheCitadelMustBeSigned adds a repository inside the
+// clone root only for an approver's signature over the addition, and
+// keeps who signed it.
+func TestAddRepoThroughTheCitadelMustBeSigned(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	w, _ := startSignedWorld(t, ctx)
+	if err := os.Rename(gitRepo(t, "main.go"), filepath.Join(w.root, "shop")); err != nil {
+		t.Fatal(err)
+	}
+	d := approval.RepoAdd{V: approval.DecisionVersion, Kind: approval.KindRepoAdd, World: w.ownerPub, Host: "ws", ID: "Add1d3ntity", Path: "shop"}
+	if r := w.islandCommand(v1.CommandAddRepo, v1.AddRepo{ID: d.ID, Path: d.Path}); r.Error != approval.ErrUnsigned.Error() {
+		t.Errorf("unsigned AddRepo = %+v", r)
+	}
+	revoked, revokedPub := w.approver("gone")
+	w.revoke(revokedPub)
+	if r := w.islandCommand(v1.CommandAddRepo, v1.AddRepo{ID: d.ID, Path: d.Path, Signature: w.sign(revoked, d)}); !strings.Contains(r.Error, "no longer approves") {
+		t.Errorf("AddRepo by a revoked approver = %+v", r)
+	}
+
+	r := w.islandCommand(v1.CommandAddRepo, v1.AddRepo{ID: d.ID, Path: d.Path, Signature: w.sign(w.starter, d)})
+	if r.Error != "" {
+		t.Fatalf("AddRepo: %s", r.Error)
+	}
+	var out v1.AddRepoResult
+	if err := json.Unmarshal(r.Result, &out); err != nil || out.RepoID == "" || out.Name != "shop" {
+		t.Fatalf("result = %s, %v", r.Result, err)
+	}
+	st, err := w.cli.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.CloneRoot != w.root {
+		t.Errorf("status names the clone root %q, want %q", st.CloneRoot, w.root)
+	}
+	found := false
+	for _, repo := range st.Repos {
+		found = found || repo.ID == out.RepoID
+	}
+	if !found {
+		t.Errorf("status lists %+v, not %s", st.Repos, out.RepoID)
+	}
+
+	starterPub, _ := w.starter.PublicKey()
+	var registered v1.RepoRegistered
+	ev := w.lastHostEvent(v1.EventRepoRegistered)
+	if err := ev.Decode(&registered); err != nil || registered.RepoID != out.RepoID || registered.By != "citadel" || registered.Approver != starterPub || registered.Signature == "" || ev.CommandID != d.ID {
+		t.Errorf("RepoRegistered = %+v, command %s, %v", registered, ev.CommandID, err)
+	}
+}
+
+// lastHostEvent is the last host event of the given type in the island's
+// stream, in the leaf's own domain.
+func (w *signedWorld) lastHostEvent(eventType string) v1.Event {
+	w.t.Helper()
+	js, err := jetstream.NewWithDomain(w.nc, "ws")
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	var last v1.Event
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		msg, err := js.Stream(w.ctx, v1.IslandStreamName("ws"))
+		if err == nil {
+			if m, err := msg.GetLastMsgForSubject(w.ctx, v1.IslandEventSubject("ws", eventType)); err == nil {
+				if json.Unmarshal(m.Data, &last) == nil {
+					return last
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			w.t.Fatalf("no %s in the island's stream: %v", eventType, err)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }

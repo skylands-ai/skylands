@@ -103,6 +103,9 @@ func decode(t *testing.T, raw json.RawMessage) Decision {
 	case KindRepoRules:
 		var x RepoRules
 		err, d = json.Unmarshal(raw, &x), x
+	case KindRepoAdd:
+		var x RepoAdd
+		err, d = json.Unmarshal(raw, &x), x
 	case KindTerminal:
 		var x Terminal
 		err, d = json.Unmarshal(raw, &x), x
@@ -143,7 +146,7 @@ func TestDecisionVector(t *testing.T) {
 			t.Errorf("%s: the vector's signature doesn't verify: %v", kind, err)
 		}
 	}
-	for _, k := range []string{KindToolCall, KindAnswer, KindTrust, KindSessionRules, KindRepoRules, KindStart, KindPrompt, KindChange, KindTerminal, KindTerminalIn} {
+	for _, k := range []string{KindToolCall, KindAnswer, KindTrust, KindSessionRules, KindRepoRules, KindRepoAdd, KindStart, KindPrompt, KindChange, KindTerminal, KindTerminalIn} {
 		if !kinds[k] {
 			t.Errorf("the vector has no %s decision", k)
 		}
@@ -223,6 +226,15 @@ func TestVerifyDecisionRefuses(t *testing.T) {
 			changed = x
 		case RepoRules:
 			x.Rules = x.Rules[:63] + "0"
+			changed = x
+		case RepoAdd:
+			// A path signed for registering isn't a clone's, nor the
+			// reverse, and a clone's URL can't change on the way.
+			if x.URL == "" {
+				x.URL = "https://example.com/r.git"
+			} else {
+				x.URL = "git@github.com:example/other.git"
+			}
 			changed = x
 		case Start:
 			// A start with attachments is refused without them, which is

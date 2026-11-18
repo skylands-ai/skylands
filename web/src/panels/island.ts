@@ -1,6 +1,7 @@
 import { el } from '../dom'
 import type { AgentAvailability, Island, Repo, Session } from '../protocol'
 import { agentLabel, clockText, islandStatus, isOpen } from '../status'
+import { type AddRepoOptions, addRepoSection, cloneRow } from './addrepo'
 import { agentGlyph, factsBox, header, note, section, timeNode } from './parts'
 
 /**
@@ -42,7 +43,11 @@ function agentRow(a: AgentAvailability): HTMLElement {
   ])
 }
 
-/** The island-level panel: one host, as the citadel last saw it. */
+/**
+ * The island-level panel: one host, as the citadel last saw it. adding is
+ * how this browser adds a repository to it, or null when it can't: the
+ * island is out of reach, or this browser doesn't approve.
+ */
 export function renderIslandPanel(
   panel: HTMLElement,
   i: Island,
@@ -51,6 +56,7 @@ export function renderIslandPanel(
   lastContact: number | null,
   sessions: Session[],
   land: (terrace: string) => void,
+  adding: AddRepoOptions | null,
 ): void {
   panel.textContent = ''
   const d = i.daemon
@@ -93,11 +99,11 @@ export function renderIslandPanel(
     )
   }
   panel.appendChild(agentsSection(i, !stale && i.reachable))
-  if (repos.length) {
+  const clones = (i.clones ?? []).map(cloneRow)
+  if (repos.length || clones.length) {
     panel.appendChild(
-      section(
-        'Terraces',
-        repos.map((r) => {
+      section('Terraces', [
+        ...repos.map((r) => {
           const n = r.totalFiles
           const agents = sessions.filter((s) => s.repoId === r.id && isOpen(s)).length
           const detail = `${n} tracked ${n === 1 ? 'file' : 'files'}, ${agents ? `${agents} ${agents === 1 ? 'agent' : 'agents'} working` : 'no agents'}`
@@ -109,13 +115,15 @@ export function renderIslandPanel(
             el('button', { type: 'button', class: 'btn small', text: 'Fly in', onclick: () => land(r.id) }),
           ])
         }),
-      ),
+        ...clones,
+      ]),
     )
   } else {
     panel.appendChild(
       section('Terraces', [
-        el('p', { class: 'note', text: `No repositories registered on this host yet. On it, run: skylands repo register <path>` }),
+        el('p', { class: 'note', text: adding ? 'No repositories registered on this host yet.' : `No repositories registered on this host yet. On it, run: skylands repo register <path>` }),
       ]),
     )
   }
+  if (adding) panel.appendChild(addRepoSection(adding))
 }

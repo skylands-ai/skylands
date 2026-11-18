@@ -26,6 +26,7 @@ const (
 	KindTrust        = "trust"
 	KindSessionRules = "session-rules"
 	KindRepoRules    = "repo-rules"
+	KindRepoAdd      = "repo-add"
 	KindStart        = "start"
 	KindPrompt       = "prompt"
 	KindChange       = "change"
@@ -134,6 +135,24 @@ type RepoRules struct {
 }
 
 func (d RepoRules) header() (int, string, string) { return d.V, d.Kind, KindRepoRules }
+
+// RepoAdd registers a repository on the host, or clones one onto it and
+// registers the clone. The browser picks the id, so a signed addition adds
+// one repository.
+type RepoAdd struct {
+	V     int    `json:"v"`
+	Kind  string `json:"kind"`
+	World string `json:"world"`
+	Host  string `json:"host"`
+	ID    string `json:"id"`
+	// Path is the repository's directory, or where a clone goes, as the
+	// command names it: relative to the daemon's clone root, or absolute.
+	Path string `json:"path"`
+	// URL is what to clone, and "" to register Path as it is.
+	URL string `json:"url"`
+}
+
+func (d RepoAdd) header() (int, string, string) { return d.V, d.Kind, KindRepoAdd }
 
 // Start starts a session with its first prompt. The browser picks the
 // session's id, so a signed start starts one session only.

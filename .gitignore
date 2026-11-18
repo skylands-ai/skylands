@@ -44,3 +44,5 @@ go.work.sum
 web/node_modules/
 web/dist/*
 !web/dist/.gitkeep
+
+nocarrier/

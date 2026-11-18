@@ -456,6 +456,34 @@ specifies. No events, streams, or aggregates are needed for it.
   world: opening, typing, Ctrl-C, a 20 KB paste in signed pieces,
   switching back and forth, a second terminal, closing, ending the
   session, a restart, and unsigned and forged input refused.
+- Adding a repository from the browser is done (#142). The island's panel
+  takes a path on the host or a clone URL, signed as a `repo-add`
+  decision (in the shared vector) under an id the browser picks, and sent
+  as AddRepo on the island's own command subject. Both must be inside the
+  daemon's clone root (`--clone-root`, `$SKYLANDS_CLONE_ROOT`, or its
+  working directory, which `daemon install` writes into the service), with
+  links followed, and a path's repository top level inside it too; the
+  host's CLI still registers any path. A clone takes https, ssh, or
+  `user@host:path`, with every other git transport turned off and no
+  terminal to prompt on, runs in the background into a hidden directory
+  moved into place when complete, and ends in RepoRegistered, which keeps
+  the URL and who signed it, or RepoCloneFailed; a restart fails a clone
+  it cut off and removes what it fetched. The island's panel lists clones
+  running and failed. Checked in headless Chrome against a set-up world
+  and a local https git server: a path, a clone, a missing repository, an
+  http URL, a path outside the root, and a restart. Removing a
+  repository is later.
+- Islands grow to hold their terraces (#88). Each terrace has a slot
+  of the same size, room for 8 by 8 buildings, and an island's slots
+  stand in rows, as square as they go; the island's radius grows until
+  every slot's corners, with room for its posts, are inside the dips of
+  its edge, so a terrace is never cut down to fit and the size depends
+  only on the count. A grown island is drawn again at its size, keeping
+  its airships, and floats out by as much as it grew, then further while
+  it would touch an island spaced before it, in host order, gliding to
+  its new place. Checked in headless Chrome with one to six terraces, an
+  airship working while its island grew, and the sci-fi theme. Which
+  terraces show when an island holds too many is later.
 
 ## After the MVP
 

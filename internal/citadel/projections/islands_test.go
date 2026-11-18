@@ -153,3 +153,62 @@ func TestIslandsCarryTheAgentsTheirHostCanLaunch(t *testing.T) {
 		t.Errorf("changes = %+v, want none", changes)
 	}
 }
+
+func TestIslandsCarryTheClonesAskedOfThem(t *testing.T) {
+	var changes []Island
+	p := NewIslands(func(i Island) { changes = append(changes, i) })
+	p.Observe([]Reply{{ID: "a", Version: "1.0.0", Metadata: map[string]string{"host": "ws", "clone_root": "/home/me/code"}}}, time.Now())
+	if isl, _ := p.Get("ws"); isl.Daemon.CloneRoot != "/home/me/code" {
+		t.Errorf("CloneRoot = %q", isl.Daemon.CloneRoot)
+	}
+	event := func(typ, command string, data any) v1.Event {
+		ev, err := v1.NewEvent(typ, command, data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ev
+	}
+	clones := func() []Clone {
+		isl, _ := p.Get("ws")
+		return isl.Clones
+	}
+
+	p.Apply("ws", event(v1.EventRepoCloneStarted, "A1", v1.RepoCloneStarted{URL: "https://x/shop.git", Path: "/home/me/code/shop", Approver: "UA"}))
+	p.Apply("ws", event(v1.EventRepoCloneStarted, "A2", v1.RepoCloneStarted{URL: "https://x/blog.git", Path: "/home/me/code/blog"}))
+	if c := clones(); len(c) != 2 || c[0].ID != "A1" || c[0].Approver != "UA" || c[0].Started.IsZero() || c[1].ID != "A2" || c[0].Error != "" {
+		t.Fatalf("clones = %+v", c)
+	}
+	held := clones()
+
+	p.Apply("ws", event(v1.EventRepoCloneFailed, "A1", v1.RepoCloneFailed{URL: "https://x/shop.git", Path: "/home/me/code/shop", Error: "git clone: no"}))
+	if c := clones(); len(c) != 2 || c[0].Error != "git clone: no" {
+		t.Errorf("after a failure, clones = %+v", c)
+	}
+	// What was handed out before stays as it was.
+	if held[0].Error != "" {
+		t.Errorf("a copy handed out changed: %+v", held)
+	}
+	// Another clone into the same directory replaces the failed one.
+	p.Apply("ws", event(v1.EventRepoCloneStarted, "A3", v1.RepoCloneStarted{URL: "https://x/shop2.git", Path: "/home/me/code/shop"}))
+	if c := clones(); len(c) != 2 || c[0].ID != "A2" || c[1].ID != "A3" || c[1].Error != "" {
+		t.Errorf("after a retry, clones = %+v", c)
+	}
+	// A clone registered is a terrace, and leaves the list.
+	changes = nil
+	p.Apply("ws", event(v1.EventRepoRegistered, "A2", v1.RepoRegistered{RepoID: "r", Path: "/home/me/code/blog"}))
+	if c := clones(); len(c) != 1 || c[0].ID != "A3" || len(changes) != 1 {
+		t.Errorf("after a registration, clones = %+v, changes %d", c, len(changes))
+	}
+	// A repository registered on the host, or for no clone, changes nothing.
+	changes = nil
+	p.Apply("ws", event(v1.EventRepoRegistered, "", v1.RepoRegistered{RepoID: "s"}))
+	p.Apply("ws", event(v1.EventRepoRegistered, "cmd-9", v1.RepoRegistered{RepoID: "t"}))
+	p.Apply("ws", event(v1.EventRepoCloneFailed, "nope", v1.RepoCloneFailed{Error: "x"}))
+	if len(changes) != 0 {
+		t.Errorf("changes = %+v, want none", changes)
+	}
+	p.Apply("ws", event(v1.EventRepoRegistered, "A3", v1.RepoRegistered{RepoID: "u"}))
+	if c := clones(); c != nil {
+		t.Errorf("clones = %+v, want none", c)
+	}
+}

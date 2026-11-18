@@ -19,7 +19,15 @@ import (
 
 func gitRepo(t *testing.T, files ...string) string {
 	t.Helper()
-	dir := t.TempDir()
+	return gitRepoAt(t, t.TempDir(), files...)
+}
+
+// gitRepoAt makes a repository at dir with one commit of files.
+func gitRepoAt(t *testing.T, dir string, files ...string) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	run := func(args ...string) {
 		t.Helper()
 		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)

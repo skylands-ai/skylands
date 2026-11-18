@@ -15,6 +15,7 @@ import { renderAgentPanel, type AgentActions } from './panels/agent'
 import { renderFilePanel } from './panels/file'
 import { refreshTimes } from './panels/parts'
 import { renderIslandPanel } from './panels/island'
+import { addRepoVersion } from './panels/addrepo'
 import { type PruneOptions, pruneVersion } from './panels/prune'
 import { renderTerracePanel } from './panels/terrace'
 import { renderWorldPanel } from './panels/world'
@@ -22,7 +23,7 @@ import { renderSettings, type SettingsActions } from './settings'
 import { moveToCitadel } from './address'
 import { agentLabel, citadelLabelStatus, clockText, durationText, islandCounts, islandStatus, isStale, secondsSince } from './status'
 import { islandList, isWaiting, level, pendingCount, pendingItems, reposOn, sessionsOn, Store, waitingCount, type State } from './store'
-import { growLive, lapsedText, renderInbox, type InboxActions } from './inbox'
+import { approverName, growLive, lapsedText, renderInbox, type InboxActions } from './inbox'
 import { LiveText } from './live'
 import { NewSessionForm } from './newsession'
 import { refreshOpenChips } from './toolchip'
@@ -33,7 +34,7 @@ import type { AgentCommand, Rule } from './protocol'
 import type { World } from './world/world'
 import { connectToCitadel } from './ws'
 import { api } from './signin'
-import { approverActions, canSign, keepThisBrowser, loadThisBrowser, signAnswer, signChange, signFor, signPrompt, signRepoRules, signSessionRules, signTerminal, signTerminalInput, signTrust } from './approvers'
+import { approverActions, canSign, keepThisBrowser, loadThisBrowser, newSessionId, signAnswer, signChange, signFor, signPrompt, signRepoAdd, signRepoRules, signSessionRules, signTerminal, signTerminalInput, signTrust } from './approvers'
 import { terminalInSight, Terminals } from './terminal'
 import { pullRequestHash, textHash } from './decision'
 import { browserNotices, Notifier, notifySupport, waitingItems } from './notify'
@@ -277,6 +278,29 @@ function setRepoRules(host: string, repoId: string, rules: Rule[]): Promise<stri
   return repoCommand(host, repoId, 'rules', signed)
 }
 
+/**
+ * Adds a repository to an island, by a path on the host or a clone URL,
+ * signed under an id this browser picks, and returns an error message, or
+ * empty. A clone goes on in the background, and shows on the island.
+ */
+async function addRepo(host: string, path: string, url: string): Promise<string> {
+  const id = newSessionId()
+  const signature = signRepoAdd(store.state, host, id, path, url)
+  if (typeof signature === 'string') return signature
+  try {
+    const resp = await api(`/api/islands/${encodeURIComponent(host)}/repos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, path, url, signature }),
+    })
+    if (resp.ok) return ''
+    const out = (await resp.json().catch(() => ({}))) as { error?: string }
+    return out.error ?? `The citadel answered ${resp.status}.`
+  } catch (err) {
+    return `Could not reach the citadel: ${(err as Error).message}`
+  }
+}
+
 /** Posts a command for one repository to the citadel and returns an error message, or empty. */
 async function repoCommand(host: string, id: string, action: string, body: unknown): Promise<string> {
   try {
@@ -382,7 +406,7 @@ function panelDeps(s: State, stale: boolean): unknown[] {
     case 'terrace':
       return ['terrace', repo, island, stale, s.viewed, s.approvers, s.me, s.world, pruneVersion(), ...(repo ? sessionsOn(s, repo.id) : [])]
     case 'island':
-      return ['island', island, stale, stale ? s.lastContact : 0, ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
+      return ['island', island, stale, stale ? s.lastContact : 0, s.approvers, s.me, s.world, addRepoVersion(), ...(island ? reposOn(s, island.host) : []), ...Object.values(s.sessions).filter((x) => x.host === island?.host)]
     default: {
       const { reachable, total } = islandCounts(s)
       return ['world', s.server, s.world, s.link, s.loading, s.worldTheme, s.themes, s.themeProblem, waitingCount(s), reachable, total]
@@ -451,6 +475,7 @@ function renderPanelContent(s: State, stale: boolean): void {
           canSign(s),
           lapsedText(s, repo.rulesApprover, repo.rulesBy),
           pruneOptions(s, `${island.host}/${repo.id}`, stale || !island.reachable),
+          repo.registeredApprover ? approverName(s, repo.registeredApprover) : repo.registeredBy === 'local' ? 'The host' : undefined,
         )
         return
       }
@@ -458,7 +483,8 @@ function renderPanelContent(s: State, stale: boolean): void {
     case 'island':
       if (island) {
         const sessions = Object.values(s.sessions).filter((x) => x.host === island.host)
-        renderIslandPanel(panelEl, island, reposOn(s, island.host), stale, s.lastContact, sessions, (terrace) => nav.land(island.host, terrace))
+        const adding = !stale && island.reachable && canSign(s) ? { host: island.host, root: island.daemon.cloneRoot, add: (path: string, url: string) => addRepo(island.host, path, url), redraw: () => store.touch() } : null
+        renderIslandPanel(panelEl, island, reposOn(s, island.host), stale, s.lastContact, sessions, (terrace) => nav.land(island.host, terrace), adding)
         return
       }
       break

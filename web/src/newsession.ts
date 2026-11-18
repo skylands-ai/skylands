@@ -183,7 +183,7 @@ export class NewSessionForm {
   /** Why a session can't start from the form as it is, or empty. */
   private blocked(s: State, repo: Repo | undefined, island: Island | undefined): string {
     if (isStale(s)) return 'The citadel is unreachable, so nothing can start.'
-    if (!repo) return 'No repository is registered yet. On an island, skylands repo register adds one.'
+    if (!repo) return 'No repository is registered yet. Add one from an island’s panel.'
     if (!island?.reachable) return `${repo.host} is unreachable, so the session can’t start yet.`
     if (!this.chips.hasAgents()) return `${repo.host} can’t run any agent yet. On it, skylands preflight says why.`
     return ''

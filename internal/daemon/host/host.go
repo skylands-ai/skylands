@@ -1,7 +1,7 @@
-// Package host is the Host aggregate on a daemon. It handles RegisterRepo
-// and the terrain commands, records their events in the host's stream, and
-// is rebuilt from that stream at startup. The daemon is the only writer of
-// the stream, so this aggregate serializes its commands.
+// Package host is the Host aggregate on a daemon. It handles RegisterRepo,
+// AddRepo, and the terrain commands, records their events in the host's
+// stream, and is rebuilt from that stream at startup. The daemon is the
+// only writer of the stream, so this aggregate serializes its commands.
 package host
 
 import (
@@ -11,13 +11,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"reflect"
+	"regexp"
 	"sort"
 	"sync"
 	"time"
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
 	"github.com/skylands-ai/skylands/internal/approval"
+	"github.com/skylands-ai/skylands/internal/daemon/clone"
 	"github.com/skylands-ai/skylands/internal/daemon/terrain"
 	"github.com/skylands-ai/skylands/internal/es"
 	"github.com/skylands-ai/skylands/internal/rules"
@@ -43,15 +46,42 @@ type Repo struct {
 	RulesSignature string
 	RulesRevision  int
 	RulesLapsed    bool
-	RegisteredAt   time.Time
-	SnapshottedAt  time.Time
+	// URL is what the daemon cloned the repository from, and empty for one
+	// that was on the host already. RegisteredBy and RegisteredApprover
+	// are who added it, as RepoRegistered records it.
+	URL                string
+	RegisteredBy       string
+	RegisteredApprover string
+	RegisteredAt       time.Time
+	SnapshottedAt      time.Time
 }
+
+// Clone is a clone a browser asked for, as the host's stream records it.
+type Clone struct {
+	// ID is the id of the AddRepo that asked for it.
+	ID       string
+	URL      string
+	Path     string
+	Approver string
+	Started  time.Time
+	// Error is why the clone failed, and Registered that it is a terrace
+	// now. Neither is set while git is cloning.
+	Error      string
+	Registered bool
+}
+
+// Cloner clones url into dir by way of partial, as clone.Into does.
+type Cloner func(ctx context.Context, url, dir, partial string) error
 
 var (
 	// ErrAlreadyRegistered means the repository is already a terrace.
 	ErrAlreadyRegistered = errors.New("repository is already registered")
 	ErrUnknownRepo       = errors.New("no such repository on this host")
 )
+
+// addIDPattern is the id a browser picks for an AddRepo, which names the
+// directory a clone works in until it is done.
+var addIDPattern = regexp.MustCompile(`^[A-Za-z0-9]{8,64}$`)
 
 // Host is the aggregate for one island.
 type Host struct {
@@ -72,6 +102,32 @@ type Host struct {
 	// RequireSignatures sets them.
 	world  func() string
 	verify func(ctx context.Context, d approval.Decision, s v1.DecisionSignature) error
+
+	// clones are every clone the stream records, by the id of the AddRepo
+	// that asked for it.
+	clones map[string]*Clone
+	// root, cloneCtx, and cloner are as AllowAdding sets them, and cloning
+	// counts the clones running.
+	root     string
+	cloneCtx context.Context
+	cloner   Cloner
+	cloning  sync.WaitGroup
+}
+
+// AllowAdding lets browsers add repositories to the host: root is the
+// directory each one must be inside, the clone root, and clones run in the
+// background under ctx, each by clone.
+func (h *Host) AllowAdding(ctx context.Context, root string, clone Cloner) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.root, h.cloneCtx, h.cloner = root, ctx, clone
+}
+
+// Root is the clone root, or "" before AllowAdding.
+func (h *Host) Root() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.root
 }
 
 // RequireSignatures makes a change to a repository's rules, through the
@@ -98,7 +154,7 @@ func (h *Host) signer() (string, func(ctx context.Context, d approval.Decision, 
 
 // Load rebuilds the aggregate from the host's stream.
 func Load(ctx context.Context, store *es.Store, name string) (*Host, error) {
-	h := &Host{name: name, store: store, repos: map[string]*Repo{}, byPath: map[string]string{}, handled: map[string]string{}}
+	h := &Host{name: name, store: store, repos: map[string]*Repo{}, byPath: map[string]string{}, handled: map[string]string{}, clones: map[string]*Clone{}}
 	err := store.Replay(ctx, v1.IslandStreamName(name), []string{v1.IslandEventFilter(name)}, func(seq uint64, ev v1.Event) error {
 		h.apply(ev)
 		return nil
@@ -132,10 +188,10 @@ func (h *Host) Repos() []Repo {
 	return out
 }
 
-// RegisterRepo handles the command: it validates the path, snapshots the
-// repository, and records RepoRegistered and TerrainSnapshotted. A command
-// id already in the history gets its original repo back and produces no new
-// events.
+// RegisterRepo handles the command from the host's CLI: it validates the
+// path, snapshots the repository, and records RepoRegistered, by "local",
+// and TerrainSnapshotted. A command id already in the history gets its
+// original repo back and produces no new events.
 func (h *Host) RegisterRepo(ctx context.Context, cmd v1.RegisterRepo) (Repo, error) {
 	h.cmdMu.Lock()
 	defer h.cmdMu.Unlock()
@@ -152,6 +208,12 @@ func (h *Host) RegisterRepo(ctx context.Context, cmd v1.RegisterRepo) (Repo, err
 	if err != nil {
 		return Repo{}, err
 	}
+	return h.register(ctx, cmd.ID, snap, v1.RepoRegistered{By: "local"})
+}
+
+// register records RepoRegistered, with who added the repository as added
+// names them, and TerrainSnapshotted for snap. The caller holds cmdMu.
+func (h *Host) register(ctx context.Context, commandID string, snap terrain.Snapshot, added v1.RepoRegistered) (Repo, error) {
 	h.mu.Lock()
 	if id, ok := h.byPath[snap.Path]; ok {
 		r := *h.repos[id]
@@ -161,11 +223,12 @@ func (h *Host) RegisterRepo(ctx context.Context, cmd v1.RegisterRepo) (Repo, err
 	h.mu.Unlock()
 
 	id := repoID(h.name, snap.Path)
-	registered, err := v1.NewEvent(v1.EventRepoRegistered, cmd.ID, v1.RepoRegistered{RepoID: id, Name: snap.Name, Path: snap.Path})
+	added.RepoID, added.Name, added.Path = id, snap.Name, snap.Path
+	registered, err := v1.NewEvent(v1.EventRepoRegistered, commandID, added)
 	if err != nil {
 		return Repo{}, err
 	}
-	snapshotted, err := v1.NewEvent(v1.EventTerrainSnapshotted, cmd.ID, v1.TerrainSnapshotted{RepoID: id, Commit: snap.Commit, TotalFiles: snap.TotalFiles, Files: snap.Files})
+	snapshotted, err := v1.NewEvent(v1.EventTerrainSnapshotted, commandID, v1.TerrainSnapshotted{RepoID: id, Commit: snap.Commit, TotalFiles: snap.TotalFiles, Files: snap.Files})
 	if err != nil {
 		return Repo{}, err
 	}
@@ -175,11 +238,210 @@ func (h *Host) RegisterRepo(ctx context.Context, cmd v1.RegisterRepo) (Repo, err
 		}
 		h.apply(ev)
 	}
-	slog.Info("host: repo registered", "host", h.name, "repo", snap.Name, "path", snap.Path, "files", snap.TotalFiles)
+	slog.Info("host: repo registered", "host", h.name, "repo", snap.Name, "path", snap.Path, "files", snap.TotalFiles, "by", added.By, "url", added.URL)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return *h.repos[id], nil
 }
+
+// AddRepo handles AddRepo from a browser through the citadel. It must
+// carry an approver's signature over it, and its path must be inside the
+// clone root. A path is registered as RegisterRepo registers one, by
+// "citadel", once the repository's top level is found inside the root too.
+// A URL is cloned in the background: AddRepo records RepoCloneStarted and
+// returns, and the clone ends in RepoRegistered or RepoCloneFailed. A
+// command id already in the history gets its original outcome back and
+// produces no new events.
+func (h *Host) AddRepo(ctx context.Context, cmd v1.AddRepo) (v1.AddRepoResult, error) {
+	h.cmdMu.Lock()
+	defer h.cmdMu.Unlock()
+	if out, err, ok := h.added(cmd.ID); ok {
+		return out, err
+	}
+	if !addIDPattern.MatchString(cmd.ID) {
+		return v1.AddRepoResult{}, errors.New("an addition's id is 8 to 64 letters and digits")
+	}
+	h.mu.Lock()
+	root, cloneCtx, cloner := h.root, h.cloneCtx, h.cloner
+	h.mu.Unlock()
+	if root == "" || cloner == nil {
+		return v1.AddRepoResult{}, errors.New("this daemon doesn't add repositories from a browser")
+	}
+	world, verify := h.signer()
+	if world == "" {
+		return v1.AddRepoResult{}, errors.New("this island's world isn't set up yet")
+	}
+	if cmd.Signature == nil {
+		return v1.AddRepoResult{}, approval.ErrUnsigned
+	}
+	d := approval.RepoAdd{V: approval.DecisionVersion, Kind: approval.KindRepoAdd, World: world, Host: h.name, ID: cmd.ID, Path: cmd.Path, URL: cmd.URL}
+	if err := verify(ctx, d, *cmd.Signature); err != nil {
+		slog.Warn("host: an addition's signature was refused", "path", cmd.Path, "url", cmd.URL, "approver", cmd.Signature.Approver, "err", err)
+		return v1.AddRepoResult{}, err
+	}
+	added := v1.RepoRegistered{By: "citadel", Approver: cmd.Signature.Approver, Signature: cmd.Signature.Sig}
+
+	if cmd.URL == "" {
+		path, err := clone.Within(root, cmd.Path)
+		if err != nil {
+			return v1.AddRepoResult{}, err
+		}
+		snap, err := terrain.Take(ctx, path)
+		if err != nil {
+			return v1.AddRepoResult{}, err
+		}
+		// A directory inside the root may belong to a repository that
+		// isn't: agents would work in all of it.
+		if realRoot, err := clone.Within(root, root); err != nil || !clone.Inside(realRoot, snap.Path) {
+			return v1.AddRepoResult{}, fmt.Errorf("%s is in the repository at %s, which is %w", path, snap.Path, clone.ErrOutside)
+		}
+		r, err := h.register(ctx, cmd.ID, snap, added)
+		if err != nil {
+			return v1.AddRepoResult{}, err
+		}
+		return v1.AddRepoResult{RepoID: r.ID, Name: r.Name, Path: r.Path}, nil
+	}
+
+	if err := clone.CheckURL(cmd.URL); err != nil {
+		return v1.AddRepoResult{}, err
+	}
+	dir, err := clone.Within(root, cmd.Path)
+	if err != nil {
+		return v1.AddRepoResult{}, err
+	}
+	if _, err := os.Lstat(dir); err == nil {
+		return v1.AddRepoResult{}, fmt.Errorf("%s already exists", dir)
+	}
+	h.mu.Lock()
+	for _, c := range h.clones {
+		if c.Path == dir && c.Error == "" && !c.Registered {
+			h.mu.Unlock()
+			return v1.AddRepoResult{}, fmt.Errorf("a clone into %s is already running", dir)
+		}
+	}
+	h.mu.Unlock()
+	ev, err := v1.NewEvent(v1.EventRepoCloneStarted, cmd.ID, v1.RepoCloneStarted{URL: cmd.URL, Path: dir, By: added.By, Approver: added.Approver, Signature: added.Signature})
+	if err != nil {
+		return v1.AddRepoResult{}, err
+	}
+	if _, err := h.store.Append(ctx, v1.IslandEventSubject(h.name, ev.Type), ev); err != nil {
+		return v1.AddRepoResult{}, err
+	}
+	h.apply(ev)
+	slog.Info("host: cloning", "host", h.name, "url", cmd.URL, "path", dir)
+	h.cloning.Add(1)
+	go h.runClone(cloneCtx, cmd.ID, cmd.URL, dir, added, cloner)
+	return v1.AddRepoResult{Path: dir, Cloning: true}, nil
+}
+
+// added is the outcome of the AddRepo with this id, if the history has it.
+func (h *Host) added(id string) (v1.AddRepoResult, error, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if id == "" {
+		return v1.AddRepoResult{}, nil, false
+	}
+	if repoID, ok := h.handled[id]; ok {
+		r := h.repos[repoID]
+		return v1.AddRepoResult{RepoID: r.ID, Name: r.Name, Path: r.Path}, nil, true
+	}
+	if c, ok := h.clones[id]; ok {
+		if c.Error != "" {
+			return v1.AddRepoResult{Path: c.Path}, errors.New(c.Error), true
+		}
+		return v1.AddRepoResult{Path: c.Path, Cloning: true}, nil, true
+	}
+	return v1.AddRepoResult{}, nil, false
+}
+
+// runClone clones url into dir and registers the clone, or records why it
+// failed. A clone cut off because the daemon is stopping is left for
+// FailInterruptedClones when it starts again.
+func (h *Host) runClone(ctx context.Context, id, url, dir string, added v1.RepoRegistered, cloner Cloner) {
+	defer h.cloning.Done()
+	err := cloner(ctx, url, dir, clone.Partial(dir, id))
+	if ctx.Err() != nil {
+		return
+	}
+	h.cmdMu.Lock()
+	defer h.cmdMu.Unlock()
+	if err == nil {
+		var snap terrain.Snapshot
+		if snap, err = terrain.Take(ctx, dir); err == nil {
+			added.URL = url
+			if _, err = h.register(ctx, id, snap, added); err == nil {
+				return
+			}
+		}
+		// The clone is the daemon's own, made a moment ago where nothing
+		// was, so nothing is lost removing it.
+		_ = os.RemoveAll(dir)
+	}
+	slog.Warn("host: a clone failed", "host", h.name, "url", url, "path", dir, "err", err)
+	h.failClone(ctx, id, url, dir, err.Error())
+}
+
+// failClone records RepoCloneFailed. The caller holds cmdMu.
+func (h *Host) failClone(ctx context.Context, id, url, dir, why string) {
+	ev, err := v1.NewEvent(v1.EventRepoCloneFailed, id, v1.RepoCloneFailed{URL: url, Path: dir, Error: why})
+	if err == nil {
+		_, err = h.store.Append(ctx, v1.IslandEventSubject(h.name, ev.Type), ev)
+	}
+	if err != nil {
+		slog.Warn("host: record a failed clone", "url", url, "err", err)
+		return
+	}
+	h.apply(ev)
+}
+
+// FailInterruptedClones records RepoCloneFailed for each clone the stream
+// says started and never ended, as a daemon that stopped mid-clone leaves
+// them, and removes what each had fetched. The daemon calls it as it
+// starts, before it takes commands.
+func (h *Host) FailInterruptedClones(ctx context.Context) {
+	h.cmdMu.Lock()
+	defer h.cmdMu.Unlock()
+	h.mu.Lock()
+	var open []Clone
+	for _, c := range h.clones {
+		if c.Error == "" && !c.Registered {
+			open = append(open, *c)
+		}
+	}
+	h.mu.Unlock()
+	for _, c := range open {
+		_ = os.RemoveAll(clone.Partial(c.Path, c.ID))
+		h.failClone(ctx, c.ID, c.URL, c.Path, "the daemon stopped before the clone was done")
+	}
+}
+
+// Cloning reports whether a clone is running.
+func (h *Host) Cloning() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, c := range h.clones {
+		if c.Error == "" && !c.Registered {
+			return true
+		}
+	}
+	return false
+}
+
+// Clones lists every clone the stream records, oldest first.
+func (h *Host) Clones() []Clone {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]Clone, 0, len(h.clones))
+	for _, c := range h.clones {
+		out = append(out, *c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Started.Before(out[j].Started) })
+	return out
+}
+
+// Wait waits for the clones running to end, once the context AllowAdding
+// was given is done.
+func (h *Host) Wait() { h.cloning.Wait() }
 
 // SetRules handles SetRepoRules: the repository's rules become the given
 // list, which sessions started on it from now on copy. A command id
@@ -342,10 +604,27 @@ func (h *Host) apply(ev v1.Event) {
 		if ev.Decode(&d) != nil {
 			return
 		}
-		h.repos[d.RepoID] = &Repo{ID: d.RepoID, Name: d.Name, Path: d.Path, RegisteredAt: ev.Time}
+		h.repos[d.RepoID] = &Repo{ID: d.RepoID, Name: d.Name, Path: d.Path, URL: d.URL, RegisteredBy: d.By, RegisteredApprover: d.Approver, RegisteredAt: ev.Time}
 		h.byPath[d.Path] = d.RepoID
 		if ev.CommandID != "" {
 			h.handled[ev.CommandID] = d.RepoID
+			if c, ok := h.clones[ev.CommandID]; ok {
+				c.Registered = true
+			}
+		}
+	case v1.EventRepoCloneStarted:
+		var d v1.RepoCloneStarted
+		if ev.Decode(&d) != nil || ev.CommandID == "" {
+			return
+		}
+		h.clones[ev.CommandID] = &Clone{ID: ev.CommandID, URL: d.URL, Path: d.Path, Approver: d.Approver, Started: ev.Time}
+	case v1.EventRepoCloneFailed:
+		var d v1.RepoCloneFailed
+		if ev.Decode(&d) != nil {
+			return
+		}
+		if c, ok := h.clones[ev.CommandID]; ok {
+			c.Error = d.Error
 		}
 	case v1.EventTerrainSnapshotted:
 		var d v1.TerrainSnapshotted
