@@ -253,6 +253,11 @@ export function signRepoRules(s: State, r: Repo, rules: Rule[]): { rules: Rule[]
   return { rules: list, revision, signature: signAs(s, (world) => ({ v: DECISION_VERSION, kind: 'repo-rules', world, host: r.host, repo: r.id, rules: rulesHash(list), revision })) }
 }
 
+/** This browser's signature over adding a repository to an island: path as sent, and url, "" for a path, under an id it picked. */
+export function signRepoAdd(s: State, host: string, id: string, path: string, url: string): DecisionSignature | string {
+  return signAs(s, (world) => ({ v: DECISION_VERSION, kind: 'repo-add', world, host, id, path, url }))
+}
+
 /**
  * A command's signature, or why this browser can't sign. Before the world
  * exists there's no approver and nothing is signed, and the citadel takes

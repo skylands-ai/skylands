@@ -35,6 +35,15 @@ func SessionCommandSubject(host, session, commandType string) string {
 	return "v1.island." + host + ".session." + session + ".cmd." + commandType
 }
 
+// IslandCommandSubject is where one command for the host itself, such as
+// AddRepo, is sent by request-reply.
+func IslandCommandSubject(host, commandType string) string {
+	return "v1.island." + host + ".cmd." + commandType
+}
+
+// IslandCommandFilter matches every command for host itself.
+func IslandCommandFilter(host string) string { return "v1.island." + host + ".cmd.*" }
+
 // RepoCommandSubject is where one command for a repository on host, such
 // as SetRepoRules, is sent by request-reply.
 func RepoCommandSubject(host, repo, commandType string) string {

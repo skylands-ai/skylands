@@ -19,7 +19,7 @@ const kp = () => fromSeed(new TextEncoder().encode(v.seed))
 
 describe('signDecision', () => {
   it('reproduces every Go decision byte for byte', () => {
-    expect(new Set(v.decisions.map((d) => d.decision.kind))).toEqual(new Set(['toolcall', 'answer', 'trust', 'session-rules', 'repo-rules', 'start', 'prompt', 'change', 'terminal', 'terminal-input']))
+    expect(new Set(v.decisions.map((d) => d.decision.kind))).toEqual(new Set(['toolcall', 'answer', 'trust', 'session-rules', 'repo-rules', 'repo-add', 'start', 'prompt', 'change', 'terminal', 'terminal-input']))
     for (const d of v.decisions) {
       expect(canonicalize(d.decision)).toBe(d.canonical)
       expect(bytesToHex(decisionDigest(d.decision))).toBe(d.digest)

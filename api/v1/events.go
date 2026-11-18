@@ -46,11 +46,74 @@ const (
 )
 
 // RepoRegistered records that a repository on the host is now a terrace.
+// By is "local" for the host's CLI and "citadel" for a browser through a
+// citadel, whose approver key and signature over the AddRepo it sent are
+// kept with it. A repository registered before By was recorded has none.
 type RepoRegistered struct {
 	RepoID string `json:"repoId"`
 	Name   string `json:"name"`
 	// Path is the repository's top-level directory on the host.
 	Path string `json:"path"`
+	// URL is what the daemon cloned the repository from, and empty for a
+	// repository that was on the host already.
+	URL       string `json:"url,omitempty"`
+	By        string `json:"by,omitempty"`
+	Approver  string `json:"approver,omitempty"`
+	Signature string `json:"signature,omitempty"`
+}
+
+// CommandAddRepo is sent to a host by request-reply.
+const CommandAddRepo = "AddRepo"
+
+// AddRepo asks a host, from a browser, to register the repository at
+// Path, or to clone one from URL into Path and register the clone. Path
+// is relative to the daemon's clone root, or absolute inside it, and the
+// daemon refuses one outside it. URL is https or ssh. ID is chosen by the
+// browser and named by the approver's signature, which the command must
+// carry, so a signed AddRepo adds one repository: a repeated ID gets the
+// original outcome.
+type AddRepo struct {
+	ID        string             `json:"id"`
+	Path      string             `json:"path"`
+	URL       string             `json:"url,omitempty"`
+	Signature *DecisionSignature `json:"signature,omitempty"`
+}
+
+// AddRepoResult is the result of an AddRepo command: the repository
+// registered, or, for a clone, Cloning and where the clone goes. The clone
+// ends in RepoRegistered or RepoCloneFailed, carrying the command's id.
+type AddRepoResult struct {
+	RepoID  string `json:"repoId,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Path    string `json:"path"`
+	Cloning bool   `json:"cloning,omitempty"`
+}
+
+// Clone event types, produced by the Host aggregate. Each carries the id
+// of the AddRepo that asked for the clone as its command id.
+const (
+	EventRepoCloneStarted = "RepoCloneStarted"
+	EventRepoCloneFailed  = "RepoCloneFailed"
+)
+
+// RepoCloneStarted records that the daemon is cloning a repository from
+// URL into Path, for the approver whose signature it keeps. By is as in
+// RepoRegistered.
+type RepoCloneStarted struct {
+	URL       string `json:"url"`
+	Path      string `json:"path"`
+	By        string `json:"by,omitempty"`
+	Approver  string `json:"approver,omitempty"`
+	Signature string `json:"signature,omitempty"`
+}
+
+// RepoCloneFailed records that a clone ended without a repository, and
+// why: what git said, or that the daemon stopped before the clone was
+// done. Nothing is left in Path.
+type RepoCloneFailed struct {
+	URL   string `json:"url"`
+	Path  string `json:"path"`
+	Error string `json:"error"`
 }
 
 // MaxBuildings is the most files a TerrainSnapshotted event carries, and so

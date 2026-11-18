@@ -75,6 +75,8 @@ func TestWriteDecisionVector(t *testing.T) {
 		Prompt{V: DecisionVersion, Kind: KindPrompt, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Revision: 7, Prompt: TextHash("And this one"), Attachments: attachmentsHash},
 		Terminal{V: DecisionVersion, Kind: KindTerminal, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Terminal: "T3rm1nal"},
 		TerminalInput{V: DecisionVersion, Kind: KindTerminalIn, World: ownerPub, Host: "workstation", Session: "Ses5ion-éh", Terminal: "T3rm1nal", Attach: "Att4ch3d", Seq: 7, Data: BytesHash([]byte("go test ./...\r\x03é"))},
+		RepoAdd{V: DecisionVersion, Kind: KindRepoAdd, World: ownerPub, Host: "workstation", ID: "Add1d3ntity", Path: "store front/é\U0001F600"},
+		RepoAdd{V: DecisionVersion, Kind: KindRepoAdd, World: ownerPub, Host: "workstation", ID: "Add2d3ntity", Path: "storefront", URL: "git@github.com:example/storefront.git"},
 	}
 	var out []vectorDecision
 	for _, d := range decisions {

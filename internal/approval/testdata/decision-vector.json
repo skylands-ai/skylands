@@ -294,6 +294,40 @@
         "approver": "UASVQ5GGLE7MCRC3RD6ZWNTBKVQT2T4MM72OTFAASHYZJBB5VZWFJQNI",
         "sig": "AobWhSADYuGDc3moc22S7C8BdXt4iOhGnUe-Kt3zq4D14Q3dsW3slyAuFogQvlnmiIB_Kr0dOrsd2-sUEPKXDg"
       }
+    },
+    {
+      "decision": {
+        "v": 1,
+        "kind": "repo-add",
+        "world": "ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O",
+        "host": "workstation",
+        "id": "Add1d3ntity",
+        "path": "store front/é😀",
+        "url": ""
+      },
+      "canonical": "{\"host\":\"workstation\",\"id\":\"Add1d3ntity\",\"kind\":\"repo-add\",\"path\":\"store front/é😀\",\"url\":\"\",\"v\":1,\"world\":\"ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O\"}",
+      "digest": "cf3df7a143af6aa7b168b68ca88977d8aec7c8cf41844f4cc7215aed0baaadaa",
+      "signature": {
+        "approver": "UASVQ5GGLE7MCRC3RD6ZWNTBKVQT2T4MM72OTFAASHYZJBB5VZWFJQNI",
+        "sig": "WbagOdsAfdjEEG-YOjUyv2BDVUdHz0NiY5ARv14Cl7BBA57za7BcBQJ4GkuqgHGRLhmUP6rWmm58PGsnOj81AQ"
+      }
+    },
+    {
+      "decision": {
+        "v": 1,
+        "kind": "repo-add",
+        "world": "ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O",
+        "host": "workstation",
+        "id": "Add2d3ntity",
+        "path": "storefront",
+        "url": "git@github.com:example/storefront.git"
+      },
+      "canonical": "{\"host\":\"workstation\",\"id\":\"Add2d3ntity\",\"kind\":\"repo-add\",\"path\":\"storefront\",\"url\":\"git@github.com:example/storefront.git\",\"v\":1,\"world\":\"ODI3SD2AXZKYITZCULXVZS423WD53OXVF3CK7FOT4GWOL4HD24CN3F4O\"}",
+      "digest": "0c037384b39617a7883e862e6bbe92ef8cd567e798394814b6e52bf94b005625",
+      "signature": {
+        "approver": "UASVQ5GGLE7MCRC3RD6ZWNTBKVQT2T4MM72OTFAASHYZJBB5VZWFJQNI",
+        "sig": "xjUotk-icXMB8Bj5h_4-0Zarp7C1GU3mnbzkFTFQ9f9GtQ3hSFqYxG3kGRAikCeXsUgZzt6iNYP_ssFZDajSBw"
+      }
     }
   ],
   "form": {

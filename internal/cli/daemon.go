@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -53,10 +54,14 @@ func daemonUpFlags(f *pflag.FlagSet, cfg *daemon.Config) {
 	f.StringVar(&cfg.NATSURL, "nats-url", "nats-leaf://127.0.0.1:7422", "URL of the world's NATS leaf node listener")
 	f.StringVar(&cfg.CredsFile, "creds", "", "path to the daemon's NATS credentials file")
 	f.StringVar(&cfg.DataDir, "data-dir", defaultDataDir(), "directory for the leaf node's JetStream store and agent worktrees")
+	cloneRootFlag(f, &cfg.CloneRoot)
 	f.StringVar(&cfg.SocketPath, "socket", defaultSocketPath(), "Unix socket to listen on for the local CLI")
 	f.StringVar(&cfg.World, "world", "", `owner key of the world to join, from "Add a host" on the citadel`)
 	f.StringVar(&cfg.WorldDomain, "world-domain", daemon.DefaultWorldDomain, "JetStream domain of the world's NATS server, where its approvers are")
 }
+
+// cloneRootEnv names the clone root when --clone-root doesn't.
+const cloneRootEnv = "SKYLANDS_CLONE_ROOT"
 
 func newDaemonInstallCmd() *cobra.Command {
 	var cfg daemon.Config
@@ -64,9 +69,28 @@ func newDaemonInstallCmd() *cobra.Command {
 		role:        "daemon",
 		description: "Skylands daemon, which makes this machine an island",
 		flags:       func(f *pflag.FlagSet) { daemonUpFlags(f, &cfg) },
-		pathFlags:   []string{"creds", "data-dir", "socket"},
+		pathFlags:   []string{"creds", "data-dir", "socket", "clone-root"},
+		always:      map[string]func() (string, error){"clone-root": cloneRootHere(&cfg.CloneRoot)},
 		socket:      func() string { return cfg.SocketPath },
 	})
+}
+
+// cloneRootFlag registers --clone-root, which "daemon up" and "devworld
+// up" take.
+func cloneRootFlag(f *pflag.FlagSet, root *string) {
+	f.StringVar(root, "clone-root", os.Getenv(cloneRootEnv), "directory a browser adds repositories in, by path or clone URL; $"+cloneRootEnv+", or the working directory")
+}
+
+// cloneRootHere is the clone root "up" would use in this shell: root as
+// the flags set it, or the working directory. A service doesn't start in
+// this directory, so install gives it this one.
+func cloneRootHere(root *string) func() (string, error) {
+	return func() (string, error) {
+		if *root != "" {
+			return *root, nil
+		}
+		return os.Getwd()
+	}
 }
 
 func newDaemonStatusCmd() *cobra.Command {
@@ -93,6 +117,9 @@ func newDaemonStatusCmd() *cobra.Command {
 				fmt.Fprintf(w, "Set up:   %s\n", st.SetupURL)
 			}
 			fmt.Fprintf(w, "Daemon:   skylands %s, up %s\n", st.Version, time.Since(st.Started).Round(time.Second))
+			if st.CloneRoot != "" {
+				fmt.Fprintf(w, "Clone root: %s\n", st.CloneRoot)
+			}
 			if len(st.Repos) == 0 {
 				fmt.Fprintln(w, "Repos:    none registered")
 			}

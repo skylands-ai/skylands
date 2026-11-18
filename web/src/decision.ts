@@ -78,6 +78,22 @@ export interface RepoRulesDecision {
 }
 
 /**
+ * Registering a repository on the host, or cloning one onto it, as
+ * internal/approval's RepoAdd. The browser picks id, so a signed addition
+ * adds one repository. path is as sent: relative to the island's clone
+ * root, or absolute; url is "" for a path.
+ */
+export interface RepoAddDecision {
+  v: number
+  kind: 'repo-add'
+  world: string
+  host: string
+  id: string
+  path: string
+  url: string
+}
+
+/**
  * Starting a session with its first prompt, as internal/approval's Start.
  * The browser picks the session's id, so a signed start starts one session.
  */
@@ -153,7 +169,7 @@ export interface TerminalInputDecision {
   data: string
 }
 
-export type Decision = ToolCallDecision | AnswerDecision | TrustDecision | SessionRulesDecision | RepoRulesDecision | StartDecision | PromptDecision | ChangeDecision | TerminalDecision | TerminalInputDecision
+export type Decision = ToolCallDecision | AnswerDecision | TrustDecision | SessionRulesDecision | RepoRulesDecision | RepoAddDecision | StartDecision | PromptDecision | ChangeDecision | TerminalDecision | TerminalInputDecision
 
 /** An approver's signature over a decision, which the command through the citadel carries. */
 export interface DecisionSignature {

@@ -64,3 +64,12 @@ func TestTerrainFollowsHostEvents(t *testing.T) {
 		t.Fatalf("List = %+v", list)
 	}
 }
+
+func TestTerrainKeepsWhoAddedARepository(t *testing.T) {
+	tr := NewTerrain(nil)
+	reg, _ := v1.NewEvent(v1.EventRepoRegistered, "Add1d3ntity", v1.RepoRegistered{RepoID: "r1", Name: "shop", Path: "/code/shop", URL: "git@github.com:org/shop.git", By: "citadel", Approver: "UPHONE", Signature: "sig"})
+	tr.Apply("ws", reg)
+	if r := tr.List()[0]; r.URL != "git@github.com:org/shop.git" || r.RegisteredBy != "citadel" || r.RegisteredApprover != "UPHONE" {
+		t.Errorf("repo = %+v", r)
+	}
+}

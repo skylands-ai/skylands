@@ -259,9 +259,11 @@ type StatusInfo struct {
 	SetupURL string `json:"setupUrl,omitempty"`
 	// Approvers is how many approvers approve for the world, as the daemon
 	// reads them from the world's registry, once it has.
-	Approvers *int          `json:"approvers,omitempty"`
-	Version   string        `json:"version"`
-	Started   time.Time     `json:"started"`
+	Approvers *int      `json:"approvers,omitempty"`
+	Version   string    `json:"version"`
+	Started   time.Time `json:"started"`
+	// CloneRoot is the directory a browser adds repositories in.
+	CloneRoot string        `json:"cloneRoot,omitempty"`
 	Repos     []RepoInfo    `json:"repos"`
 	Sessions  []SessionInfo `json:"sessions,omitempty"`
 	// Agents is what the daemon last found about the agents it can

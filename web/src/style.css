@@ -456,6 +456,11 @@ button.row{ color:inherit; font:inherit; }
 .invite-address select{ flex:1; min-width:0; }
 .invite-address input{ flex:1; min-width:0; min-height:32px; padding:0 8px; border-radius:6px; border:1px solid var(--line); background:var(--surface); color:var(--text); font:inherit; font-size:13px; }
 .approver-error{ margin:0; font-size:13px; color:var(--bad); }
+.add-repo{ display:flex; flex-direction:column; gap:8px; }
+.add-repo input{ box-sizing:border-box; width:100%; min-width:0; min-height:36px; padding:0 8px; border-radius:6px; border:1px solid var(--line); background:var(--surface-2); color:var(--text); font:inherit; font-size:13px; }
+.add-repo-into{ display:flex; flex-direction:column; gap:4px; font-size:12px; }
+.add-repo .btn{ align-self:flex-start; }
+.add-repo-root{ margin:0 0 6px; font-size:12px; overflow-wrap:anywhere; }
 .gone summary{ cursor:pointer; color:var(--muted); font-size:12px; font-weight:600; }
 .gone .sub{ font-size:12px; color:var(--muted); padding:2px 0 0 12px; }
 

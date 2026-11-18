@@ -85,6 +85,8 @@ export interface DaemonInfo {
   os: string
   arch: string
   started: string
+  /** The directory a browser adds repositories in; absent from a daemon older than adding them. */
+  cloneRoot?: string
 }
 
 /** One check that failed or warned for an agent, with what to do about it. */
@@ -178,6 +180,18 @@ export interface Island {
   daemon: DaemonInfo
   /** The agents the host can launch; absent until its daemon has recorded a check. */
   agents?: AgentAvailability[]
+  /** Clones a browser asked for that aren't terraces yet, oldest first: running, or failed with why. */
+  clones?: Clone[]
+}
+
+/** A clone a browser asked an island for. */
+export interface Clone {
+  id: string
+  url: string
+  path: string
+  approver?: string
+  started: string
+  error?: string
 }
 
 export interface TerrainFile {
@@ -216,6 +230,11 @@ export interface Repo {
   rulesRevision: number
   /** The approver who signed the rules no longer approves, so their allow rules ask until they are set again. */
   rulesLapsed?: boolean
+  /** What the island cloned the repository from; absent for one that was on the host already. */
+  url?: string
+  /** Who added it ("local" or "citadel") and the approver key that signed it. */
+  registeredBy?: string
+  registeredApprover?: string
   registeredAt: string
   snapshottedAt: string
 }

@@ -28,6 +28,23 @@ type Island struct {
 	// Agents is which agents the host can launch, as its daemon last
 	// recorded, or nil before the citadel has read a record of it.
 	Agents []v1.AgentAvailability `json:"agents,omitempty"`
+	// Clones are the clones a browser asked the host for that haven't
+	// become terraces, oldest first.
+	Clones []Clone `json:"clones,omitempty"`
+}
+
+// Clone is a clone a browser asked an island for, as the island's events
+// record it: running, or failed and why. One that ends in a terrace is
+// gone from the list, and a later clone into the same directory replaces
+// it.
+type Clone struct {
+	// ID is the id of the AddRepo that asked for the clone.
+	ID       string    `json:"id"`
+	URL      string    `json:"url"`
+	Path     string    `json:"path"`
+	Approver string    `json:"approver,omitempty"`
+	Started  time.Time `json:"started"`
+	Error    string    `json:"error,omitempty"`
 }
 
 // Daemon is what a daemon reports about itself when pinged.
@@ -38,6 +55,8 @@ type Daemon struct {
 	OS      string    `json:"os"`
 	Arch    string    `json:"arch"`
 	Started time.Time `json:"started"`
+	// CloneRoot is the directory a browser adds repositories in.
+	CloneRoot string `json:"cloneRoot,omitempty"`
 }
 
 // Reply is one daemon's answer to a ping.
@@ -145,30 +164,84 @@ func (p *Islands) Observe(replies []Reply, now time.Time) {
 }
 
 // Apply folds one host event into the projection: the agents a host can
-// launch. Other events are ignored, and so is an event for a host the
-// citadel has not seen, which cannot happen because the citadel follows a
-// host's events only once the host has answered a ping.
+// launch, and the clones asked of it. Other events are ignored, and so is
+// an event for a host the citadel has not seen, which cannot happen
+// because the citadel follows a host's events only once the host has
+// answered a ping. A list is replaced, never changed in place, so the
+// copies handed out stay as they were.
 func (p *Islands) Apply(host string, ev v1.Event) {
-	if ev.Type != v1.EventAdapterAvailabilityChanged {
-		return
-	}
-	var d v1.AdapterAvailabilityChanged
-	if ev.Decode(&d) != nil {
-		return
-	}
-	if d.Agents == nil {
-		d.Agents = []v1.AgentAvailability{}
-	}
 	p.mu.Lock()
 	isl, ok := p.byHost[host]
 	if !ok {
 		p.mu.Unlock()
 		return
 	}
-	isl.Agents = d.Agents
+	switch ev.Type {
+	case v1.EventAdapterAvailabilityChanged:
+		var d v1.AdapterAvailabilityChanged
+		if ev.Decode(&d) != nil {
+			p.mu.Unlock()
+			return
+		}
+		if d.Agents == nil {
+			d.Agents = []v1.AgentAvailability{}
+		}
+		isl.Agents = d.Agents
+	case v1.EventRepoCloneStarted:
+		var d v1.RepoCloneStarted
+		if ev.Decode(&d) != nil {
+			p.mu.Unlock()
+			return
+		}
+		clones := []Clone{}
+		for _, c := range isl.Clones {
+			if c.Path != d.Path {
+				clones = append(clones, c)
+			}
+		}
+		isl.Clones = append(clones, Clone{ID: ev.CommandID, URL: d.URL, Path: d.Path, Approver: d.Approver, Started: ev.Time})
+	case v1.EventRepoCloneFailed:
+		var d v1.RepoCloneFailed
+		if ev.Decode(&d) != nil || !replaceClone(isl, ev.CommandID, func(c *Clone) bool { c.Error = d.Error; return true }) {
+			p.mu.Unlock()
+			return
+		}
+	case v1.EventRepoRegistered:
+		if ev.CommandID == "" || !replaceClone(isl, ev.CommandID, func(*Clone) bool { return false }) {
+			p.mu.Unlock()
+			return
+		}
+	default:
+		p.mu.Unlock()
+		return
+	}
 	changed := *isl
 	p.mu.Unlock()
 	p.onChange(changed)
+}
+
+// replaceClone gives isl a new list of clones in which the clone with id
+// is changed by edit, or left out when edit reports false, and reports
+// whether isl had it. The caller holds the projection's lock.
+func replaceClone(isl *Island, id string, edit func(*Clone) bool) bool {
+	found := false
+	clones := []Clone{}
+	for _, c := range isl.Clones {
+		if c.ID == id {
+			found = true
+			if !edit(&c) {
+				continue
+			}
+		}
+		clones = append(clones, c)
+	}
+	if found {
+		if len(clones) == 0 {
+			clones = nil
+		}
+		isl.Clones = clones
+	}
+	return found
 }
 
 func daemonFrom(r Reply) Daemon {
@@ -177,7 +250,7 @@ func daemonFrom(r Reply) Daemon {
 	if version == "" {
 		version = r.Version
 	}
-	return Daemon{ID: r.ID, Version: version, OS: r.Metadata["os"], Arch: r.Metadata["arch"], Started: started}
+	return Daemon{ID: r.ID, Version: version, OS: r.Metadata["os"], Arch: r.Metadata["arch"], Started: started, CloneRoot: r.Metadata["clone_root"]}
 }
 
 // Poll pings on every tick of interval and feeds the replies to islands

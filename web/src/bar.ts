@@ -182,13 +182,13 @@ export class CommandBar {
     if (isStale(s)) return 'The citadel is unreachable, so nothing can be dispatched.'
     if (scope.kind === 'world') {
       const repos = Object.values(s.repos)
-      if (!repos.length) return 'No repository is registered yet. On an island, skylands repo register adds one.'
+      if (!repos.length) return 'No repository is registered yet. Add one from an island’s panel.'
       if (!repos.some((r) => s.islands[r.host]?.reachable)) return 'No island with a repository is reachable, so nothing can be placed yet.'
       return ''
     }
     const island = s.islands[scope.host]
     if (!island?.reachable) return `${scope.host} is unreachable, so the work can’t be delivered yet.`
-    if (scope.kind === 'island' && !Object.values(s.repos).some((r) => r.host === scope.host)) return `No repository is registered on ${scope.host} yet. On it, skylands repo register adds one.`
+    if (scope.kind === 'island' && !Object.values(s.repos).some((r) => r.host === scope.host)) return `No repository is registered on ${scope.host} yet. Add one from its panel.`
     if (!this.chips.hasAgents()) return `${scope.host} can’t run any agent yet. On it, skylands preflight says why.`
     return ''
   }

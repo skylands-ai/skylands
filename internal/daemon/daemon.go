@@ -28,6 +28,7 @@ import (
 	"github.com/skylands-ai/skylands/internal/approval"
 	"github.com/skylands-ai/skylands/internal/daemon/agents"
 	"github.com/skylands-ai/skylands/internal/daemon/blobs"
+	"github.com/skylands-ai/skylands/internal/daemon/clone"
 	"github.com/skylands-ai/skylands/internal/daemon/fetch"
 	"github.com/skylands-ai/skylands/internal/daemon/host"
 	"github.com/skylands-ai/skylands/internal/daemon/placement"
@@ -56,6 +57,10 @@ type Config struct {
 	NATSURL string
 	// CredsFile is the path to the daemon's NATS credentials file.
 	CredsFile string
+	// CloneRoot is the directory a browser adds repositories in: each path
+	// it registers, and each clone, must be inside it. Empty means the
+	// daemon's working directory.
+	CloneRoot string
 	// DataDir holds the leaf node's JetStream store and agent worktrees. The
 	// leaf store lives under DataDir/leaf/<host>, so daemons for different
 	// hosts can share a DataDir.
@@ -186,6 +191,21 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
+	cloneRoot, err := resolveCloneRoot(cfg.CloneRoot)
+	if err != nil {
+		return err
+	}
+	// A clone the daemon was running when it last stopped is over; what it
+	// had fetched is removed.
+	agg.FailInterruptedClones(ctx)
+	agg.AllowAdding(ctx, cloneRoot, func(ctx context.Context, url, dir, partial string) error {
+		return clone.Into(ctx, url, dir, partial, agents.WatchFrom(ctx))
+	})
+	// Clones end with ctx, which Run may return before.
+	defer func() {
+		stop()
+		agg.Wait()
+	}()
 	transcriptsDir := filepath.Join(cfg.DataDir, "transcripts", hostName)
 	kept := blobs.New(filepath.Join(cfg.DataDir, "blobs", hostName))
 	uploads := blobs.NewUploads(filepath.Join(cfg.DataDir, "uploads", hostName), kept)
@@ -212,8 +232,8 @@ func Run(ctx context.Context, cfg Config) error {
 	sessions.PruneWorktreeRecords(ctx)
 	if cfg.StopWhenIdle != nil {
 		go func() {
-			if whenIdle(ctx, cfg.StopWhenIdle, func() bool { return working(sessions) }, idlePoll) {
-				slog.Info("daemon: stopping, now that no agent is working on a turn", "host", hostName)
+			if whenIdle(ctx, cfg.StopWhenIdle, func() bool { return working(sessions) || agg.Cloning() }, idlePoll) {
+				slog.Info("daemon: stopping, now that no agent is working on a turn and nothing is cloning", "host", hostName)
 				stop()
 			}
 		}()
@@ -269,6 +289,11 @@ func Run(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("subscribe to repository commands: %w", err)
 	}
 	defer func() { _ = repoSub.Unsubscribe() }()
+	islandSub, err := nc.Subscribe(v1.IslandCommandFilter(hostName), func(msg *nats.Msg) { go cmds.handleIsland(ctx, msg) })
+	if err != nil {
+		return fmt.Errorf("subscribe to island commands: %w", err)
+	}
+	defer func() { _ = islandSub.Unsubscribe() }()
 	// What people type into terminals is handled in the order it arrives,
 	// so not on goroutines of its own; nothing here waits on the shell.
 	inSub, err := nc.Subscribe(v1.TerminalInputFilter(hostName), func(msg *nats.Msg) { cmds.terminalInput(ctx, msg) })
@@ -293,6 +318,7 @@ func Run(ctx context.Context, cfg Config) error {
 			"arch":             runtime.GOARCH,
 			"started":          started.Format(time.RFC3339),
 			"skylands_version": cfg.Version,
+			"clone_root":       cloneRoot,
 		},
 	})
 	if err != nil {
@@ -490,6 +516,55 @@ func (c *commands) ready(msg *nats.Msg) bool {
 	}
 	c.reply(msg, v1.Reply{Error: errNoWorld.Error()})
 	return false
+}
+
+// handleIsland answers one command for the host itself.
+func (c *commands) handleIsland(ctx context.Context, msg *nats.Msg) {
+	// v1.island.<host>.cmd.<type>
+	parts := strings.Split(msg.Subject, ".")
+	if len(parts) != 5 {
+		c.reply(msg, v1.Reply{Error: "malformed command subject " + msg.Subject})
+		return
+	}
+	commandType := parts[4]
+	if !c.ready(msg) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, v1.CommandTimeoutFor(commandType))
+	defer cancel()
+	switch commandType {
+	case v1.CommandAddRepo:
+		var cmd v1.AddRepo
+		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+			c.reply(msg, v1.Reply{Error: "bad AddRepo: " + err.Error()})
+			return
+		}
+		out, err := c.agg.AddRepo(ctx, cmd)
+		if err != nil {
+			c.reply(msg, v1.Reply{Error: err.Error()})
+			return
+		}
+		c.replyResult(msg, out)
+	default:
+		c.reply(msg, v1.Reply{Error: "unknown command " + commandType})
+	}
+}
+
+// resolveCloneRoot is the clone root as an absolute path: root, or the
+// working directory when it is empty.
+func resolveCloneRoot(root string) (string, error) {
+	if root == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("find the clone root, the working directory: %w", err)
+		}
+		return wd, nil
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("clone root %s: %w", root, err)
+	}
+	return abs, nil
 }
 
 // handleRepo answers one repository command.
@@ -881,7 +956,7 @@ func (a *localAPI) Status(context.Context) socket.StatusInfo {
 	for _, r := range repos {
 		infos = append(infos, repoInfo(r))
 	}
-	st := socket.StatusInfo{Host: a.host, World: a.world, WorldOwner: a.pin.get(), Version: a.version, Started: a.started, Repos: infos, Sessions: a.Sessions(context.Background()), Agents: a.agg.Agents()}
+	st := socket.StatusInfo{Host: a.host, World: a.world, WorldOwner: a.pin.get(), Version: a.version, Started: a.started, CloneRoot: a.agg.Root(), Repos: infos, Sessions: a.Sessions(context.Background()), Agents: a.agg.Agents()}
 	if n, ok := a.approvers.count(); ok {
 		st.Approvers = &n
 	}

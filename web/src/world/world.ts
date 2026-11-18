@@ -7,12 +7,12 @@ import { CameraRig, HOME } from './camera'
 import { attachPointerInput } from './input'
 import { Labels } from './labels'
 import { packEntry } from './pack'
-import { placeIsland, type Placement } from './placement'
+import { placeIsland, ringDistances, type Placement } from './placement'
 import type { Crystal } from './shapes'
 import { Sky } from './sky'
-import { layoutTerraces, placeTerrace, type TerraceSpec } from './terrace'
+import { layoutIsland, placeTerrace, type TerraceSpec } from './terrace'
 import { Tethers } from './tethers'
-import { disposeTree, type BuildingMats, type Citadel, type IslandMeshes, type SelectionRing, type TerraceMeshes, type WorldTheme } from './theme'
+import { disposeTree, type BuildingMats, type Citadel, type IslandMeshes, type IslandShape, type SelectionRing, type TerraceMeshes, type WorldTheme } from './theme'
 import { builtInTheme, defaultTheme } from './themes'
 import { Visitors } from './visitors'
 
@@ -38,11 +38,16 @@ function drawCitadel(theme: WorldTheme): Citadel {
 }
 
 /** A theme's island for a host, with what a click on it means. Its ring is hidden until it is selected. The world moves it to its place each frame. */
-function drawIsland(theme: WorldTheme, host: string, def: Placement): IslandMeshes {
-  const meshes = theme.buildIsland({ R: def.R, depth: def.depth, seed: def.seed, phase: def.phase })
+function drawIsland(theme: WorldTheme, host: string, shape: IslandShape): IslandMeshes {
+  const meshes = theme.buildIsland(shape)
   meshes.group.userData.host = host
   meshes.ring.group.visible = false
   return meshes
+}
+
+/** How a theme draws an island placed at def, at radius R: a grown island's rock reaches deeper too. */
+function shapeOf(def: Placement, R: number): IslandShape {
+  return { R, depth: def.depth + (R - def.R) / 2, seed: def.seed, phase: def.phase }
 }
 
 interface TerraceView {
@@ -57,6 +62,11 @@ interface TerraceView {
 interface IslandView {
   id: string
   def: Placement
+  /** Its radius now: def.R, or more to hold its terraces. */
+  R: number
+  /** How far from the citadel it floats, easing toward distTo, where the ring spaces it at its size. */
+  dist: number
+  distTo: number
   group: THREE.Group
   core: Crystal
   ring: SelectionRing
@@ -175,7 +185,7 @@ export class World {
     let isl = this.islands.get(id)
     if (!isl) {
       const def = placeIsland(id, [...this.islands.values()].map((i) => i.def))
-      const m = drawIsland(this.theme, id, def)
+      const m = drawIsland(this.theme, id, shapeOf(def, def.R))
       this.scene.add(m.group)
       this.pickRoots.push(m.group)
       this.tethers.add(id)
@@ -183,6 +193,9 @@ export class World {
       isl = {
         id,
         def,
+        R: def.R,
+        dist: def.dist,
+        distTo: def.dist,
         group: m.group,
         core: m.core,
         ring: m.ring,
@@ -196,6 +209,9 @@ export class World {
         repos: [],
       }
       this.islands.set(id, isl)
+      this.spaceIslands()
+      // It rises into its place, rather than gliding there from another.
+      isl.dist = isl.distTo
       this.updateIslands(0)
     }
     isl.reachable = reachable
@@ -211,7 +227,13 @@ export class World {
     isl.repos = repos
     for (const t of isl.terraces.values()) disposeTree(t.meshes.group)
     isl.terraces.clear()
-    const specs = layoutTerraces(isl.def.R, repos)
+    const layout = layoutIsland(isl.def.R, repos)
+    if (layout.R !== isl.R) {
+      isl.R = layout.R
+      this.redrawIsland(isl)
+      this.spaceIslands()
+    }
+    const specs = layout.terraces
     specs.forEach((spec, k) => {
       const { meshes, blds } = placeTerrace(this.theme, spec, isl.def.seed * 31 + k)
       isl.group.add(meshes.group)
@@ -273,7 +295,7 @@ export class World {
     for (const isl of this.islands.values()) {
       const was = isl.group
       disposeTree(was)
-      const m = drawIsland(theme, isl.id, isl.def)
+      const m = drawIsland(theme, isl.id, shapeOf(isl.def, isl.R))
       isl.group = m.group
       isl.core = m.core
       isl.ring = m.ring
@@ -288,6 +310,33 @@ export class World {
     this.updateIslands(0)
     this.agents.rebuildShips()
     this.showRings()
+  }
+
+  /**
+   * Draws an island again at its size, where it was, with the airships
+   * that ride on it. Its terraces are built again by the caller.
+   */
+  private redrawIsland(isl: IslandView): void {
+    const was = isl.group
+    const m = drawIsland(this.theme, isl.id, shapeOf(isl.def, isl.R))
+    for (const o of [...was.children]) if (o.userData.agentId) m.group.add(o)
+    m.group.position.copy(was.position)
+    m.group.rotation.copy(was.rotation)
+    disposeTree(was)
+    isl.group = m.group
+    isl.core = m.core
+    isl.ring = m.ring
+    isl.animate = m.animate
+    this.scene.add(m.group)
+    this.pickRoots[this.pickRoots.indexOf(was)] = m.group
+    this.selectedBld = null
+    this.showRings()
+  }
+
+  /** Spaces the islands on the ring at their sizes now; each glides to its place. */
+  private spaceIslands(): void {
+    const dists = ringDistances([...this.islands.values()].map((i) => ({ host: i.id, def: i.def, R: i.R })))
+    for (const isl of this.islands.values()) isl.distTo = dists.get(isl.id) ?? isl.def.dist
   }
 
   /** Gives a host's agents their airships, and takes them away as sessions end. */
@@ -340,9 +389,8 @@ export class World {
     if (id !== 'cit' && !isl) return
     this.setNav({ selected: id, terrace: null, file: null, agent: null })
     if (isl) {
-      const h = isl.def
       const p = isl.pos
-      this.rig.flyTo(new THREE.Vector3(p.x, p.y + 1.5, p.z), h.R * 2.6 + 16, h.angle, 1.0)
+      this.rig.flyTo(new THREE.Vector3(p.x, p.y + 1.5, p.z), isl.R * 2.6 + 16, isl.def.angle, 1.0)
     } else this.rig.flyTo(new THREE.Vector3(0, 10, 0), 52, null, 0.95)
   }
 
@@ -537,8 +585,9 @@ export class World {
       const h = isl.def
       const up = isl.reachable
       isl.drift += ((up ? 0 : 1) - isl.drift) * k
+      isl.dist += (isl.distTo - isl.dist) * k
       const d = isl.drift
-      const dist = h.dist + 12 * d
+      const dist = isl.dist + 12 * d
       const y = h.y - 3 * d
       const bob = reduceMotion ? 0 : Math.sin(this.time * 0.6 + h.phase) * 0.3
       isl.pos.set(Math.cos(h.angle) * dist, y + bob, Math.sin(h.angle) * dist)

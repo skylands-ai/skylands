@@ -56,3 +56,40 @@ export function placeIsland(host: string, taken: Placement[]): Placement {
   p.angle = angle % (Math.PI * 2)
   return p
 }
+
+/** The room between two islands' edges on the ring. */
+const ISLAND_GAP = 1.5
+
+/** How far an island steps out from the citadel at a time while it would touch another. */
+const STEP_OUT = 0.5
+
+/** One island as the ring spaces it: where it was placed, and how big it is now. */
+export interface Sized {
+  host: string
+  def: Placement
+  /** Its radius now, which its terraces may have grown past def.R. */
+  R: number
+}
+
+/**
+ * How far from the citadel each island floats, once its size is known.
+ * An island keeps its angle. One that grew moves out by as much as it
+ * grew, so its edge stays as far from the citadel, and then further while
+ * it would touch an island spaced before it, in the order of their hosts,
+ * so every page spaces the same islands the same way.
+ */
+export function ringDistances(islands: Sized[]): Map<string, number> {
+  const out = new Map<string, number>()
+  const spaced: { x: number; z: number; R: number }[] = []
+  for (const isl of [...islands].sort((a, b) => (a.host < b.host ? -1 : a.host > b.host ? 1 : 0))) {
+    const cx = Math.cos(isl.def.angle)
+    const cz = Math.sin(isl.def.angle)
+    let d = isl.def.dist + Math.max(0, isl.R - isl.def.R)
+    const touches = (): boolean => spaced.some((o) => Math.hypot(cx * d - o.x, cz * d - o.z) < o.R + isl.R + ISLAND_GAP)
+    // Islands at almost the same angle may part only far out, so the steps stop at a limit.
+    for (let steps = 0; steps < 400 && touches(); steps++) d += STEP_OUT
+    spaced.push({ x: cx * d, z: cz * d, R: isl.R })
+    out.set(isl.host, d)
+  }
+  return out
+}

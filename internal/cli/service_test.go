@@ -103,6 +103,7 @@ func TestDaemonInstallRunsUpWithTheGivenFlags(t *testing.T) {
 	}
 	useFakes(t, m)
 	t.Setenv("PATH", "/usr/bin:/home/k/.npm-global/bin")
+	t.Setenv(cloneRootEnv, "")
 	t.Chdir(dir)
 
 	code, stdout, stderr := run(t, "daemon", "install", "--host", "wopr", "--data-dir", "data", "--socket", sock)
@@ -116,8 +117,9 @@ func TestDaemonInstallRunsUpWithTheGivenFlags(t *testing.T) {
 		Name:        "skylands-daemon",
 		Description: "Skylands daemon, which makes this machine an island",
 		// Flags in name order, paths absolute, and flags left at their
-		// defaults left out.
-		Args: []string{"/usr/local/bin/skylands", "daemon", "up", "--data-dir=" + filepath.Join(dir, "data"), "--host=wopr", "--socket=" + sock},
+		// defaults left out, but for the clone root, which is the
+		// directory install ran in, since the service doesn't start there.
+		Args: []string{"/usr/local/bin/skylands", "daemon", "up", "--clone-root=" + dir, "--data-dir=" + filepath.Join(dir, "data"), "--host=wopr", "--socket=" + sock},
 		Env:  map[string]string{"PATH": "/usr/bin:/home/k/.npm-global/bin", service.EnvName: "skylands-daemon"},
 	}
 	if !reflect.DeepEqual(*m.installed, want) {
@@ -135,6 +137,8 @@ func TestDevworldInstallTakesItsOwnFlagsAndName(t *testing.T) {
 	m := &fakeManager{}
 	m.onInstall = func() { serveStatus(t, sock, socket.StatusInfo{Host: "h", Started: time.Now()}) }
 	useFakes(t, m)
+	root := t.TempDir()
+	t.Setenv(cloneRootEnv, root)
 
 	code, _, stderr := run(t, "devworld", "install", "--http", "127.0.0.1:9090", "--url", "https://box.example.ts.net", "--socket", sock, "--name", "sky-test")
 	if code != 0 {
@@ -146,7 +150,26 @@ func TestDevworldInstallTakesItsOwnFlagsAndName(t *testing.T) {
 	if got := m.installed.Env[service.EnvName]; got != "sky-test" {
 		t.Errorf("%s = %q, want the service's own name, sky-test", service.EnvName, got)
 	}
-	if want := []string{"/usr/local/bin/skylands", "devworld", "up", "--http=127.0.0.1:9090", "--socket=" + sock, "--url=https://box.example.ts.net"}; !reflect.DeepEqual(m.installed.Args, want) {
+	// The clone root $SKYLANDS_CLONE_ROOT names is the service's too.
+	if want := []string{"/usr/local/bin/skylands", "devworld", "up", "--clone-root=" + root, "--http=127.0.0.1:9090", "--socket=" + sock, "--url=https://box.example.ts.net"}; !reflect.DeepEqual(m.installed.Args, want) {
+		t.Errorf("args = %q, want %q", m.installed.Args, want)
+	}
+}
+
+func TestDaemonInstallMakesTheCloneRootAbsolute(t *testing.T) {
+	dir := shortDir(t)
+	sock := filepath.Join(dir, "d.sock")
+	m := &fakeManager{}
+	m.onInstall = func() { serveStatus(t, sock, socket.StatusInfo{Host: "h", Started: time.Now()}) }
+	useFakes(t, m)
+	t.Setenv(cloneRootEnv, "/elsewhere")
+	t.Chdir(dir)
+
+	code, _, stderr := run(t, "daemon", "install", "--clone-root", "code", "--socket", sock)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	if want := []string{"/usr/local/bin/skylands", "daemon", "up", "--clone-root=" + filepath.Join(dir, "code"), "--socket=" + sock}; !reflect.DeepEqual(m.installed.Args, want) {
 		t.Errorf("args = %q, want %q", m.installed.Args, want)
 	}
 }

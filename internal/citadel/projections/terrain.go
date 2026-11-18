@@ -31,8 +31,14 @@ type Repo struct {
 	RulesApprover string    `json:"rulesApprover,omitempty"`
 	RulesRevision int       `json:"rulesRevision"`
 	RulesLapsed   bool      `json:"rulesLapsed,omitempty"`
-	RegisteredAt  time.Time `json:"registeredAt"`
-	SnapshottedAt time.Time `json:"snapshottedAt"`
+	// URL is what the island cloned the repository from, and empty for
+	// one that was on the host already. RegisteredBy and
+	// RegisteredApprover are who added it, as RepoRegistered records it.
+	URL                string    `json:"url,omitempty"`
+	RegisteredBy       string    `json:"registeredBy,omitempty"`
+	RegisteredApprover string    `json:"registeredApprover,omitempty"`
+	RegisteredAt       time.Time `json:"registeredAt"`
+	SnapshottedAt      time.Time `json:"snapshottedAt"`
 }
 
 // Terrain is the projection of every host's repositories, built from host
@@ -66,7 +72,7 @@ func (t *Terrain) Apply(host string, ev v1.Event) {
 	case v1.EventRepoRegistered:
 		var d v1.RepoRegistered
 		if ev.Decode(&d) == nil {
-			r := &Repo{Host: host, ID: d.RepoID, Name: d.Name, Path: d.Path, Files: []v1.TerrainFile{}, Rules: []v1.Rule{}, RegisteredAt: ev.Time}
+			r := &Repo{Host: host, ID: d.RepoID, Name: d.Name, Path: d.Path, Files: []v1.TerrainFile{}, Rules: []v1.Rule{}, URL: d.URL, RegisteredBy: d.By, RegisteredApprover: d.Approver, RegisteredAt: ev.Time}
 			repos[d.RepoID] = r
 			changed = r
 		}

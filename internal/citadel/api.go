@@ -79,6 +79,7 @@ func (c *citadel) api() http.Handler {
 	signedIn("POST /api/sessions/{host}/{id}/trust", c.trust)
 	signedIn("POST /api/sessions/{host}/{id}/rules", c.sessionRules)
 	signedIn("POST /api/repos/{host}/{id}/rules", c.repoRules)
+	signedIn("POST /api/islands/{host}/repos", c.addRepo)
 	signedIn("POST /api/sessions/{host}/{id}/commit", c.commit)
 	signedIn("POST /api/sessions/{host}/{id}/merge", c.merge)
 	signedIn("POST /api/sessions/{host}/{id}/pull-request", c.pullRequest)
@@ -130,6 +131,29 @@ func (c *citadel) repoRules(w http.ResponseWriter, r *http.Request) {
 	}
 	cmd := v1.SetRepoRules{ID: nuid.Next(), RepoID: id, Rules: body.Rules, Revision: body.Revision, Signature: body.Signature}
 	c.relay(w, host, v1.RepoCommandSubject(host, id, v1.CommandSetRepoRules), cmd, http.StatusOK)
+}
+
+// addRepo registers a repository on an island, or clones one onto it. The
+// browser picks the addition's id, which its signature names, and the
+// path and URL are relayed exactly as signed.
+func (c *citadel) addRepo(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+	var body struct {
+		ID        string                `json:"id"`
+		Path      string                `json:"path"`
+		URL       string                `json:"url"`
+		Signature *v1.DecisionSignature `json:"signature"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || !sessionIDPattern.MatchString(body.ID) {
+		writeError(w, http.StatusBadRequest, "an id of 8 to 64 letters and digits is required")
+		return
+	}
+	if strings.TrimSpace(body.Path) == "" {
+		writeError(w, http.StatusBadRequest, "a path is required")
+		return
+	}
+	cmd := v1.AddRepo{ID: body.ID, Path: body.Path, URL: body.URL, Signature: body.Signature}
+	c.relay(w, host, v1.IslandCommandSubject(host, v1.CommandAddRepo), cmd, http.StatusOK)
 }
 
 // commit commits everything in a session's worktree on its island.

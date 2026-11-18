@@ -38,6 +38,9 @@ type installOptions struct {
 	// pathFlags are the flags that hold paths, which the service gets as
 	// absolute paths because it does not start in this directory.
 	pathFlags []string
+	// always are flags the service gets even when they aren't given here,
+	// each with the value "up" would take from this shell.
+	always map[string]func() (string, error)
 	// socket is the daemon socket the flags resolve to.
 	socket func() string
 }
@@ -66,6 +69,18 @@ gone for a few minutes. "skylands %[1]s uninstall" stops and removes it.`, o.rol
 			exe, err := executable()
 			if err != nil {
 				return err
+			}
+			for flag, value := range o.always {
+				if cmd.Flags().Changed(flag) {
+					continue
+				}
+				v, err := value()
+				if err != nil {
+					return err
+				}
+				if err := cmd.Flags().Set(flag, v); err != nil {
+					return err
+				}
 			}
 			upArgs, err := serviceArgs(cmd.Flags(), o.pathFlags)
 			if err != nil {
