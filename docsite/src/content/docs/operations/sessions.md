@@ -19,7 +19,7 @@ When the agent isn't in the middle of a turn, the conversation shows where its c
 
 ### Commit Messages and Pull Request Text
 
-Leave the commit message blank and it's written from the changes. Pull requests from the conversation are always written that way. The text describes only the work in the commit or pull request. Neither the prompt nor the conversation's title goes into it, since either can hold things that don't belong in a repository or a public pull request.
+Leave the commit message blank and it's written from the changes. Pull requests from the conversation are always written that way. The text describes only the work in the commit or pull request. Neither the prompt nor the conversation's title goes into it, since either can hold things that don't belong in a repository or a public pull request. A pull request for a session [started from an issue](../issues) ends with `Closes owner/name#12`.
 
 While the session's agent is running, it writes the text in a side request that sees only the diff, plus the branch's commit messages for a pull request. The request doesn't see the conversation, and its tokens count toward the session. When no agent is running, or it doesn't answer within 90 seconds, git supplies the text instead:
 
