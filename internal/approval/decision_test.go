@@ -240,9 +240,15 @@ func TestVerifyDecisionRefuses(t *testing.T) {
 			// A start with attachments is refused without them, which is
 			// what keeps an image or a mention from being dropped or added
 			// on the way.
-			if x.Attachments != "" {
+			// A start from an issue is refused without it, or naming
+			// another, so a start signed for words alone can't take an
+			// issue's place in a pull request.
+			switch {
+			case x.Issue != "":
+				x.Issue = ""
+			case x.Attachments != "":
 				x.Attachments = ""
-			} else {
+			default:
 				x.Mode = ""
 			}
 			changed = x

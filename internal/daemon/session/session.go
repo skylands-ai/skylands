@@ -32,6 +32,7 @@ import (
 	"github.com/skylands-ai/skylands/internal/daemon/blobs"
 	"github.com/skylands-ai/skylands/internal/daemon/host"
 	"github.com/skylands-ai/skylands/internal/es"
+	"github.com/skylands-ai/skylands/internal/issuelink"
 	"github.com/skylands-ai/skylands/internal/rules"
 )
 
@@ -65,6 +66,9 @@ type Session struct {
 	ID     string
 	RepoID string
 	Agent  string
+	// Issue is the link of the issue the session was started from, or
+	// empty for one started from words alone.
+	Issue string
 	// Model is the model the session runs on, or empty for the agent's
 	// own default, and Mode the mode it is in, one its adapter lists, or
 	// empty for the first, in a session from before modes were recorded.
@@ -586,6 +590,28 @@ func (m *Manager) stands(ctx context.Context, by, approver string, lapsed bool) 
 		return false
 	}
 	return m.cfg.Valid(ctx, approver)
+}
+
+// ErrIssueElsewhere is an issue a session would start from that isn't in
+// the repository it starts on.
+var ErrIssueElsewhere = errors.New("the issue isn't in a repository this one's remotes point to")
+
+// checkIssue refuses an issue link that isn't one, as issuelink reads
+// it, or whose repository none of repo's remotes points to. A link the
+// browser sends is the one the citadel read, without anything after the
+// issue's number.
+func checkIssue(issue string, repo host.Repo) error {
+	if issue == "" {
+		return nil
+	}
+	l, ok := issuelink.Parse(issue)
+	if !ok || l.URL() != issue {
+		return fmt.Errorf("%q isn't an issue's link", issue)
+	}
+	if !l.InAny(repo.Remotes) {
+		return fmt.Errorf("%w: %s", ErrIssueElsewhere, l.Ref())
+	}
+	return nil
 }
 
 // byPerson reports whether by names a person's decision, which must be
@@ -1335,6 +1361,9 @@ func (m *Manager) Start(ctx context.Context, cmd v1.StartSession) (Session, erro
 	if err := checkAttachments(cmd.Mentions, cmd.Images); err != nil {
 		return Session{}, err
 	}
+	if err := checkIssue(cmd.Issue, repo); err != nil {
+		return Session{}, err
+	}
 	// Until the agent is up, what it accepts is what the host last found.
 	accepts := m.accepts(cmd.Agent)
 	if len(cmd.Images) > 0 && !accepts.Images {
@@ -1358,7 +1387,7 @@ func (m *Manager) Start(ctx context.Context, cmd v1.StartSession) (Session, erro
 	approver, signature, err := m.signed(ctx, "citadel", cmd.Signature, "the start of "+id, func(world string) approval.Decision {
 		attachments, _ := approval.AttachmentsHash(cmd.Mentions, cmd.Images)
 		return approval.Start{V: approval.DecisionVersion, Kind: approval.KindStart, World: world, Host: m.cfg.Host, Session: cmd.SessionID, Repo: cmd.RepoID, Agent: cmd.Agent,
-			Mode: cmd.Mode, Model: cmd.Model, InCheckout: cmd.InCheckout, Prompt: approval.TextHash(cmd.Prompt), Attachments: attachments}
+			Mode: cmd.Mode, Model: cmd.Model, InCheckout: cmd.InCheckout, Prompt: approval.TextHash(cmd.Prompt), Attachments: attachments, Issue: cmd.Issue}
 	})
 	if err != nil {
 		return Session{}, err
@@ -1383,7 +1412,7 @@ func (m *Manager) Start(ctx context.Context, cmd v1.StartSession) (Session, erro
 	// The copy of the repository's rules stands on the signature of the
 	// list it copies.
 	started := v1.SessionStarted{SessionID: id, RepoID: repo.ID, Agent: cmd.Agent, Model: cmd.Model, Mode: mode, Worktree: worktree, Branch: branch, Base: base, InCheckout: cmd.InCheckout, Rules: rules.Inherit(repo.Rules),
-		RulesBy: repo.RulesBy, RulesApprover: repo.RulesApprover, RulesSignature: repo.RulesSignature, RulesRevision: max(repo.RulesRevision-1, 0), RulesLapsed: repo.RulesLapsed}
+		RulesBy: repo.RulesBy, RulesApprover: repo.RulesApprover, RulesSignature: repo.RulesSignature, RulesRevision: max(repo.RulesRevision-1, 0), RulesLapsed: repo.RulesLapsed, Issue: cmd.Issue}
 	// The prompt's mentions are resolved in the session's own directory,
 	// by the rules it starts with. A prompt refused for one leaves no
 	// worktree behind.
@@ -1625,7 +1654,7 @@ func (m *Manager) apply(ev v1.Event) {
 		if ev.Decode(&d) != nil {
 			return
 		}
-		m.sessions[d.SessionID] = &Session{ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Mode: d.Mode, Worktree: d.Worktree, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Rules: d.Rules, RulesBy: d.RulesBy, RulesApprover: d.RulesApprover, RulesSignature: d.RulesSignature, RulesLapsed: d.RulesLapsed, Status: StatusRunning, StartedAt: ev.Time, UpdatedAt: ev.Time}
+		m.sessions[d.SessionID] = &Session{ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Issue: d.Issue, Model: d.Model, Mode: d.Mode, Worktree: d.Worktree, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Rules: d.Rules, RulesBy: d.RulesBy, RulesApprover: d.RulesApprover, RulesSignature: d.RulesSignature, RulesLapsed: d.RulesLapsed, Status: StatusRunning, StartedAt: ev.Time, UpdatedAt: ev.Time}
 		if ev.CommandID != "" {
 			m.handled[ev.CommandID] = d.SessionID
 		}

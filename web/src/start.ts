@@ -94,6 +94,8 @@ export interface Start {
   /** The files the prompt mentions and the images uploaded for it, which its signature covers. */
   mentions?: string[]
   images?: PromptImage[]
+  /** The link of the issue the session starts from, which its signature names, and a pull request written for it closes. */
+  issue?: string
 }
 
 /**
@@ -121,7 +123,7 @@ export async function startSession(s: State, start: Start, session = newSessionI
     const resp = await api('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ host: start.host, sessionId: session, repoId: start.repo, agent: start.agent, model: start.model, mode: start.mode, prompt: start.prompt, mentions: start.mentions ?? [], images: start.images ?? [], inCheckout: start.inCheckout, signature: signed.signature }),
+      body: JSON.stringify({ host: start.host, sessionId: session, repoId: start.repo, agent: start.agent, model: start.model, mode: start.mode, prompt: start.prompt, mentions: start.mentions ?? [], images: start.images ?? [], inCheckout: start.inCheckout, issue: start.issue ?? '', signature: signed.signature }),
     })
     const body = (await resp.json().catch(() => ({}))) as { error?: string }
     if (!resp.ok) return { error: body.error ?? `The citadel answered ${resp.status}.` }

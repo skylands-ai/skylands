@@ -352,6 +352,9 @@ type SessionStarted struct {
 	RulesSignature string `json:"rulesSignature,omitempty"`
 	RulesRevision  int    `json:"rulesRevision,omitempty"`
 	RulesLapsed    bool   `json:"rulesLapsed,omitempty"`
+	// Issue is the link of the issue the session was started from, as
+	// its start was signed, and absent for one started from words alone.
+	Issue string `json:"issue,omitempty"`
 }
 
 // PromptSent records what a person asked the session to do, and the
@@ -563,6 +566,10 @@ type StartSession struct {
 	// InCheckout runs the agent in the registered checkout itself instead
 	// of a worktree of its own. One session at a time may work there.
 	InCheckout bool `json:"inCheckout,omitempty"`
+	// Issue is the link of an issue in the repository the session starts
+	// from, whose text the prompt carries. A pull request the daemon
+	// writes for the session closes it.
+	Issue string `json:"issue,omitempty"`
 	// Signature is an approver's signature over the command, as in
 	// ApproveToolCall, which a command through the citadel needs once the
 	// world exists. It names SessionID, which

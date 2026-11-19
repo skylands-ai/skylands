@@ -14,6 +14,7 @@ import (
 	v1 "github.com/skylands-ai/skylands/api/v1"
 	"github.com/skylands-ai/skylands/internal/citadel/projections"
 	"github.com/skylands-ai/skylands/internal/dispatch"
+	"github.com/skylands-ai/skylands/internal/issuelink"
 )
 
 // Work asked for at the world or an island goes where it fits, in two
@@ -45,6 +46,23 @@ type dispatchResult struct {
 	// NamedIsland is the island the prompt named at the world, which the
 	// work was placed on.
 	NamedIsland string `json:"namedIsland,omitempty"`
+	// Issue is the issue the prompt links to, which places the work ahead
+	// of its words. IssueRepos are the repositories it is in, on every
+	// island, in scope or not and reachable or not, so the browser can
+	// say where the issue's repository is when none in scope can take the
+	// work, or offer to clone it onto an island when no island has it.
+	Issue      *issueLink           `json:"issue,omitempty"`
+	IssueRepos []dispatch.Candidate `json:"issueRepos,omitempty"`
+}
+
+// issueLink is an issue a prompt links to, with its link without
+// anything after its number, its name across repositories, such as
+// org/storefront#12, and the https URL its repository clones from.
+type issueLink struct {
+	issuelink.Link
+	URL      string `json:"url"`
+	Ref      string `json:"ref"`
+	CloneURL string `json:"cloneUrl"`
 }
 
 // leftOut is an island whose repositories weren't considered.
@@ -85,6 +103,9 @@ func (c *citadel) dispatchWork(w http.ResponseWriter, r *http.Request) {
 
 // place decides where the work goes.
 func (c *citadel) place(ctx context.Context, req dispatchRequest) dispatchResult {
+	if l, ok := issuelink.Find(req.Prompt); ok {
+		return c.placeIssue(l, req.Host)
+	}
 	prompt := dispatch.ParsePrompt(req.Prompt)
 	reachable := map[string]bool{}
 	var hosts []string
@@ -194,6 +215,60 @@ func (c *citadel) place(ctx context.Context, req dispatchRequest) dispatchResult
 	slices.Sort(res.Asked)
 	slices.SortFunc(res.LeftOut, func(a, b leftOut) int { return strings.Compare(a.Host, b.Host) })
 	res.Verdict = dispatch.Decide(answers)
+	return res
+}
+
+// placeIssue places work whose prompt links to an issue on the repository
+// the issue is in: one with a remote on the link's host at the link's
+// owner and name. At an island, it must be on that island. Nothing is
+// scored, and no island is asked. One such repository on a reachable
+// island takes the work; several are offered to a person, as are those
+// only on islands that can't be reached, and with none in scope the
+// person is told where the issue's repository is, or that no island has
+// it.
+func (c *citadel) placeIssue(l issuelink.Link, host string) dispatchResult {
+	res := dispatchResult{Asked: []string{}, LeftOut: []leftOut{}, Issue: &issueLink{Link: l, URL: l.URL(), Ref: l.Ref(), CloneURL: l.CloneURL()}, IssueRepos: []dispatch.Candidate{}}
+	reachable := map[string]bool{}
+	for _, isl := range c.islands.List() {
+		reachable[isl.Host] = isl.Reachable
+	}
+	var up, down []dispatch.Candidate
+	away := map[string]bool{}
+	for _, r := range c.terrain.List() {
+		inScope := host == "" || r.Host == host
+		if inScope {
+			res.Repos++
+		}
+		i := slices.IndexFunc(r.Remotes, l.In)
+		if i < 0 {
+			continue
+		}
+		rem := r.Remotes[i]
+		cand := dispatch.Candidate{Host: r.Host, MatchCandidate: v1.MatchCandidate{RepoID: r.ID, Name: r.Name, Confidence: 1, Named: true,
+			Reasons: []string{"its remote " + rem.Name + " is " + rem.Host + "/" + rem.Path + ", where the issue is"}}}
+		res.IssueRepos = append(res.IssueRepos, cand)
+		switch {
+		case !inScope:
+		case reachable[r.Host]:
+			up = append(up, cand)
+		default:
+			down = append(down, cand)
+			if !away[r.Host] {
+				away[r.Host] = true
+				res.LeftOut = append(res.LeftOut, leftOut{Host: r.Host, Why: leftUnreachable})
+			}
+		}
+	}
+	switch {
+	case len(up) == 1:
+		res.Verdict = dispatch.Verdict{Do: dispatch.Start, Why: dispatch.WhyIssue, Target: &up[0], Ranked: up}
+	case len(up) > 1:
+		res.Verdict = dispatch.Verdict{Do: dispatch.AskPerson, Why: dispatch.WhyIssue, Among: up, Ranked: up}
+	case len(down) > 0:
+		res.Verdict = dispatch.Verdict{Do: dispatch.AskPerson, Why: dispatch.WhyIssue, Among: down, Ranked: down}
+	default:
+		res.Verdict = dispatch.Verdict{Do: dispatch.AskPerson, Why: dispatch.WhyIssue, Ranked: []dispatch.Candidate{}}
+	}
 	return res
 }
 

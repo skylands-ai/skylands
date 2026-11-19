@@ -20,6 +20,8 @@ The inbox's _New_ form asks for:
 
 Press _Start_, or ⌘ Enter (Ctrl Enter on Linux and Windows), and the new conversation opens in the inbox. Only a browser that's an approver for the world can start a session. The form keeps your choices until you reload the page.
 
+To start work on an issue, paste its link into the command bar. See [Start From an Issue](../../operations/issues).
+
 ## Mention Files and Attach Images
 
 In the command bar, the _New_ form, and the reply box under a conversation, you can point the agent at files and show it images.

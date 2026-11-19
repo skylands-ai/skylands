@@ -57,6 +57,9 @@ const (
 	// The scope is one island with one repository, the target, so there
 	// was nothing to choose between.
 	WhyOnly = "only"
+	// The prompt links to an issue, and the target is the repository it
+	// is in, or Among are those that are, or none in scope is.
+	WhyIssue = "issue"
 )
 
 // Verdict is where the work goes.

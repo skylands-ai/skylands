@@ -1,7 +1,9 @@
 import { compose, Draft, type ComposeParts } from './composer'
-import { askingText, becauseText, choseText, joined, leftOutText, pick, place as placeWork, targetText, undecidedText, type Candidate, type Placement } from './dispatch'
-import { newSessionId } from './approvers'
+import type { CloneAsk } from './clonedialog'
+import { askingText, becauseText, choseText, fetchIssue, joined, leftOutText, pick, place as placeWork, targetText, undecidedText, type Candidate, type Placement } from './dispatch'
+import { canSign, newSessionId } from './approvers'
 import { byId, el } from './dom'
+import { issuePrompt, mayLinkIssue, type IssueLink } from './issue'
 import type { Choosing } from './newsession'
 import { imagesRefused, startSession } from './start'
 import { StartChips } from './startchips'
@@ -12,6 +14,8 @@ import { level, type State } from './store'
 export interface BarActions {
   /** Opens the target dialog, for the person to choose where work goes. */
   choose: (c: Choosing) => void
+  /** Offers to clone the repository an issue is in onto an island, when no island has it. */
+  clone: (ask: CloneAsk) => void
   /** Flies to a terrace. */
   land: (host: string, repo: string) => void
 }
@@ -213,7 +217,9 @@ export class CommandBar {
     this.go.disabled = true
     try {
       const scope = this.scope
-      if (scope.kind === 'terrace') await this.start(prompt, scope.host, scope.repo, newSessionId())
+      // A link to an issue goes to the citadel even on a terrace, which
+      // reads it.
+      if (scope.kind === 'terrace' && !mayLinkIssue(prompt)) await this.start(prompt, scope.host, scope.repo, newSessionId())
       else if (this.preview && this.preview.prompt === prompt) await this.start(prompt, this.preview.target.host, this.preview.target.repoId, this.preview.session)
       else await this.place(prompt, scope)
     } finally {
@@ -222,16 +228,29 @@ export class CommandBar {
     }
   }
 
-  /** Finds where work asked for at an island or the world goes, and shows it, or hands it to the person. */
-  private async place(prompt: string, scope: Scope & { kind: 'island' | 'world' }): Promise<void> {
+  /**
+   * Finds where work asked for at an island or the world goes, and shows
+   * it, or hands it to the person. Work on an issue, from anywhere, goes
+   * to the person to read before it starts.
+   */
+  private async place(prompt: string, scope: Scope): Promise<void> {
     this.setWhy('Finding where this goes…', 'info')
     // An answer to work since edited, or asked at a place since left,
     // is dropped.
     const current = (): boolean => this.input.value.trim() === prompt && CommandBar.same(this.scope, scope)
-    const res = await placeWork(prompt, scope.kind === 'island' ? scope.host : null)
+    const res = await placeWork(prompt, scope.kind === 'world' ? null : scope.host)
     if (!current()) return
     if ('error' in res) {
       this.setWhy(res.error, 'error')
+      return
+    }
+    if (res.issue) {
+      await this.fromIssue(prompt, res, res.issue, scope, current)
+      return
+    }
+    // What looked like an issue's link on a terrace wasn't one.
+    if (scope.kind === 'terrace') {
+      await this.start(prompt, scope.host, scope.repo, newSessionId())
       return
     }
     const session = newSessionId()
@@ -254,6 +273,70 @@ export class CommandBar {
       return
     }
     this.handOver(prompt, session, res, `${undecidedText(res, where)} ${away}`.trim())
+  }
+
+  /**
+   * Takes work on an issue to the repository the issue is in, among those
+   * in scope that can be reached, for the person to read and sign. With
+   * none, it says where the issue's repository is, or offers to clone it
+   * when no island has it.
+   */
+  private async fromIssue(prompt: string, res: Placement, link: IssueLink, scope: Scope, current: () => boolean): Promise<void> {
+    const s = this.state
+    if (!s) return
+    const all = res.issueRepos ?? []
+    const inScope = all.filter((c) => scope.kind === 'world' || (c.host === scope.host && (scope.kind !== 'terrace' || c.repoId === scope.repo)))
+    const up = inScope.filter((c) => s.islands[c.host]?.reachable)
+    if (up.length) {
+      await this.review(prompt, link, up, current)
+      return
+    }
+    if (inScope.length === 1) {
+      this.setWhy(`${link.ref} is in ${targetText(inScope[0])}, and ${inScope[0].host} is unreachable.`, 'error')
+      return
+    }
+    if (inScope.length) {
+      this.setWhy(`${link.ref} is in ${joined(inScope.map(targetText))}, and none of those islands can be reached.`, 'error')
+      return
+    }
+    if (all.length) {
+      const where = `${link.ref} is in ${joined(all.map(targetText))}.`
+      if (all.length === 1) this.setWhy(`${where} `, 'error', el('button', { type: 'button', class: 'linkish', text: 'Go there', onclick: () => this.actions.land(all[0].host, all[0].repoId) }))
+      else this.setWhy(where, 'error')
+      return
+    }
+    const name = `${link.owner}/${link.repo}`
+    if (!canSign(s)) {
+      this.setWhy(`No island has ${name}.`, 'error')
+      return
+    }
+    this.setWhy('', 'none')
+    this.actions.clone({ link, cloned: (host, repoId) => void this.review(prompt, link, [{ host, repoId, name: this.state?.repos[repoId]?.name ?? link.repo }]) })
+  }
+
+  /**
+   * Reads the issue on the island of the first repository it is in, and
+   * opens the New form there with the prompt written from it, for the
+   * person to read, change, and sign.
+   */
+  private async review(prompt: string, link: IssueLink, among: { host: string; repoId: string; name: string }[], current?: () => boolean): Promise<void> {
+    this.setWhy(`Reading ${link.ref}…`, 'info')
+    const issue = await fetchIssue(among[0].host, among[0].repoId, link.url)
+    if (current && !current()) return
+    if ('error' in issue) {
+      this.setWhy(issue.error, 'error')
+      return
+    }
+    this.setWhy('', 'none')
+    this.actions.choose({
+      prompt: issuePrompt(prompt, link, issue),
+      among,
+      note: `${link.ref} is in ${joined(among.map(targetText))}.${issue.state === 'CLOSED' ? ' It’s closed.' : ''}`,
+      title: `Start on ${link.ref}`,
+      session: newSessionId(),
+      issue: link.url,
+      started: (id, host, repo) => this.started(id, host, repo),
+    })
   }
 
   /** Shows where the work would go, in the scope, and why, for the next Enter to start it there. */

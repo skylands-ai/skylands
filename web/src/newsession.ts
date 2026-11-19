@@ -22,6 +22,13 @@ export interface Choosing {
   session: string
   /** Runs instead of opening the conversation, once the session starts. */
   started: (session: string, host: string, repo: string) => void
+  /** The form's heading, when it isn't asking where work goes. */
+  title?: string
+  /**
+   * The link of the issue the prompt was written from, which the start
+   * names when it is on one of among, the repositories the issue is in.
+   */
+  issue?: string
 }
 
 /**
@@ -130,9 +137,11 @@ export class NewSessionForm {
   open(s: State, choosing?: Choosing): void {
     this.choosing = choosing ?? null
     this.reposShown = null
-    this.title.textContent = choosing ? 'Where should this go?' : 'New conversation'
+    this.title.textContent = choosing ? (choosing.title ?? 'Where should this go?') : 'New conversation'
     this.why.textContent = choosing?.note ?? ''
     this.why.hidden = !choosing
+    // An issue's text is read before it is signed, so it gets room.
+    this.dialog.classList.toggle('reviewing', !!choosing?.issue)
     if (choosing) {
       this.prompt.value = choosing.prompt
       this.draft.clear()
@@ -234,7 +243,9 @@ export class NewSessionForm {
     this.refresh()
     const choosing = this.choosing
     const carried = await this.draft.carried(prompt, repo.host)
-    const out = typeof carried === 'string' ? { error: carried } : await startSession(s, { host: repo.host, repo: repo.id, ...this.chips.chosen(), prompt, ...carried }, choosing?.session)
+    // Another repository than the issue's starts from the words alone.
+    const issue = choosing?.issue && choosing.among.some((c) => c.repoId === repo.id) ? choosing.issue : undefined
+    const out = typeof carried === 'string' ? { error: carried } : await startSession(s, { host: repo.host, repo: repo.id, ...this.chips.chosen(), prompt, ...carried, issue }, choosing?.session)
     this.busy = false
     if (out.error !== undefined) {
       this.error = out.error

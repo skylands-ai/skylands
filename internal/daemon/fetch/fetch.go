@@ -2,7 +2,8 @@
 // transcript, the diff in its worktree, where its changes stand, the
 // record of one of its tool calls, the images its prompts carried, the
 // files a prompt can mention, and what one of its terminals shows. It
-// also answers which repository a prompt is for, through Placement. The
+// also answers which repository a prompt is for, through Placement, and
+// reads an issue in a registered repository with the host's gh. The
 // citadel asks through the island's fetch subjects, and the daemon decides
 // what leaves the host.
 package fetch
@@ -80,6 +81,10 @@ func (r *Responder) Handle(ctx context.Context, msg *nats.Msg) {
 	kind := msg.Subject[strings.LastIndex(msg.Subject, ".")+1:]
 	if kind == v1.FetchMatch || kind == v1.FetchPick {
 		r.place(ctx, msg, kind)
+		return
+	}
+	if kind == v1.FetchIssue {
+		r.issue(ctx, msg)
 		return
 	}
 	var req v1.FetchSessionRequest

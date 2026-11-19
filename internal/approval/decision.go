@@ -174,6 +174,10 @@ type Start struct {
 	// Attachments is AttachmentsHash of what goes with the prompt, and
 	// absent for a prompt that carries nothing else.
 	Attachments string `json:"attachments,omitempty"`
+	// Issue is the link of the issue the session starts from, and absent
+	// for one started from words alone, so such a start signs as it
+	// always has.
+	Issue string `json:"issue,omitempty"`
 }
 
 func (d Start) header() (int, string, string) { return d.V, d.Kind, KindStart }

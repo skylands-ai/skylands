@@ -1,3 +1,4 @@
+import type { Issue, IssueLink } from './issue'
 import { api } from './signin'
 import { agentLabel } from './status'
 
@@ -25,7 +26,7 @@ export interface Candidate {
 export interface Placement {
   /** Start it in target, ask host's agent to choose among, or ask the person. */
   do: 'start' | 'agent' | 'person'
-  why: 'named' | 'clear' | 'close' | 'weak' | 'nothing' | 'only'
+  why: 'named' | 'clear' | 'close' | 'weak' | 'nothing' | 'only' | 'issue'
   target?: Candidate
   host?: string
   among?: Candidate[]
@@ -38,6 +39,10 @@ export interface Placement {
   leftOut: { host: string; why: string }[]
   /** The island the prompt named at the world. */
   namedIsland?: string
+  /** The issue the prompt links to, which placed the work ahead of its words. */
+  issue?: IssueLink
+  /** Every repository the issue is in, on any island, in scope or not, reachable or not. */
+  issueRepos?: Candidate[]
 }
 
 /** What an island's agent chose: a repository, or none when it couldn't tell. */
@@ -65,6 +70,18 @@ export function place(prompt: string, host: string | null): Promise<Placement | 
 /** Asks host's agent which of the repositories among the work is for. Its cost goes on session once it starts. */
 export function pick(prompt: string, host: string, among: string[], agent: string, session: string): Promise<Picked | { error: string }> {
   return post<Picked>('/api/dispatch/pick', { prompt, host, among, agent, sessionId: session })
+}
+
+/** Reads an issue in a repository, with the gh of the island that holds it. */
+export async function fetchIssue(host: string, repoId: string, url: string): Promise<Issue | { error: string }> {
+  try {
+    const resp = await api(`/api/repos/${encodeURIComponent(host)}/${encodeURIComponent(repoId)}/issue?url=${encodeURIComponent(url)}`)
+    const out = (await resp.json().catch(() => ({}))) as Issue & { error?: string }
+    if (!resp.ok) return { error: out.error ?? `The citadel answered ${resp.status}.` }
+    return out
+  } catch (err) {
+    return { error: `Could not reach the citadel: ${(err as Error).message}` }
+  }
 }
 
 /** "storefront on workstation" */

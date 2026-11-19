@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	v1 "github.com/skylands-ai/skylands/api/v1"
+	"github.com/skylands-ai/skylands/internal/issuelink"
 )
 
 // Snapshot is a repository's tracked files at one moment.
@@ -94,4 +95,29 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 		return "", errors.New(msg)
 	}
 	return string(out), nil
+}
+
+// Remotes reads the git remotes of the repository at path, by name, each
+// as issuelink.Remote keeps it: without credentials, and with the host and
+// path of the repository it points to. A repository with none has none.
+func Remotes(ctx context.Context, path string) ([]v1.RepoRemote, error) {
+	out, err := git(ctx, path, "config", "--get-regexp", `^remote\..*\.url$`)
+	if err != nil {
+		// git config exits 1, saying nothing, when nothing matches.
+		if err.Error() == "exit status 1" {
+			return []v1.RepoRemote{}, nil
+		}
+		return nil, err
+	}
+	remotes := []v1.RepoRemote{}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		key, url, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok {
+			continue
+		}
+		name := strings.TrimSuffix(strings.TrimPrefix(key, "remote."), ".url")
+		remotes = append(remotes, issuelink.Remote(name, url))
+	}
+	sort.Slice(remotes, func(i, j int) bool { return remotes[i].Name < remotes[j].Name })
+	return remotes, nil
 }

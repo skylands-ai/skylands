@@ -73,3 +73,15 @@ func TestTerrainKeepsWhoAddedARepository(t *testing.T) {
 		t.Errorf("repo = %+v", r)
 	}
 }
+
+func TestTerrainKeepsARepositorysRemotes(t *testing.T) {
+	tr := NewTerrain(nil)
+	reg, _ := v1.NewEvent(v1.EventRepoRegistered, "", v1.RepoRegistered{RepoID: "r1", Name: "shop", Path: "/code/shop"})
+	tr.Apply("ws", reg)
+	remotes := []v1.RepoRemote{{Name: "origin", URL: "https://github.com/org/shop.git", Host: "github.com", Path: "org/shop"}}
+	ev, _ := v1.NewEvent(v1.EventRepoRemotesChanged, "", v1.RepoRemotesChanged{RepoID: "r1", Remotes: remotes})
+	tr.Apply("ws", ev)
+	if r := tr.List()[0]; len(r.Remotes) != 1 || r.Remotes[0] != remotes[0] {
+		t.Errorf("remotes = %+v", r.Remotes)
+	}
+}

@@ -86,6 +86,8 @@ type Session struct {
 	Branch     string `json:"branch"`
 	Base       string `json:"base,omitempty"`
 	InCheckout bool   `json:"inCheckout,omitempty"`
+	// Issue is the link of the issue the session was started from.
+	Issue string `json:"issue,omitempty"`
 	// Commit is the latest commit made through Skylands and Commits counts
 	// them; MergedInto and MergedCommit record the latest merge into the
 	// checkout, PullRequest the pull request opened from the branch, and
@@ -198,7 +200,7 @@ func (p *Sessions) Apply(host string, ev v1.Event) {
 	case v1.EventSessionStarted:
 		var d v1.SessionStarted
 		if ev.Decode(&d) == nil {
-			s := &Session{Host: host, ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Mode: d.Mode, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Rules: append([]v1.Rule{}, d.Rules...), RulesBy: d.RulesBy, RulesApprover: d.RulesApprover, RulesLapsed: d.RulesLapsed, Status: "running", StartedAt: ev.Time, ActiveAt: ev.Time, Recent: []ToolCall{}, Files: map[string]string{}, Pending: []Permission{}, Questions: []Question{}, Terminals: []Terminal{}}
+			s := &Session{Host: host, ID: d.SessionID, RepoID: d.RepoID, Agent: d.Agent, Model: d.Model, Mode: d.Mode, Branch: d.Branch, Base: d.Base, InCheckout: d.InCheckout, Issue: d.Issue, Rules: append([]v1.Rule{}, d.Rules...), RulesBy: d.RulesBy, RulesApprover: d.RulesApprover, RulesLapsed: d.RulesLapsed, Status: "running", StartedAt: ev.Time, ActiveAt: ev.Time, Recent: []ToolCall{}, Files: map[string]string{}, Pending: []Permission{}, Questions: []Question{}, Terminals: []Terminal{}}
 			p.byID[d.SessionID] = s
 			changed = s
 		}
